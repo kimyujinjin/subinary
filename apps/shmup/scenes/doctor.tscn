@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tools/doctor_runner.gd" id="1_doc"]
+
+[node name="DoctorRunner" type="Node"]
+script = ExtResource("1_doc")
