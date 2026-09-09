@@ -1,0 +1,19 @@
+# Godot 에디터 캐시 — 첫 실행에 수천 개 파일이 생긴다. 반드시 무시.
+.godot/
+
+# .uid 는 커밋한다 — 무시하면 클론마다 UID가 새로 생겨 씬–스크립트 링크가 깨진다.
+!*.uid
+
+# 서명 비밀 (export_presets.cfg 는 커밋, credentials 는 분리)
+export_credentials.cfg
+*.keystore
+*.jks
+*.mobileprovision
+*.p12
+
+# 산출물. 루트 .gitignore 의 bare build/·dist/·out/ 가 모든 깊이에 매칭되므로
+# 폴더 이름에 그 세 단어를 쓰지 않는다. (쓰면 소스가 조용히 커밋에서 빠진다)
+builds/
+
+# 실기에서 뽑아온 계측 로그
+runlog-*.csv
