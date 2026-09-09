@@ -12,25 +12,30 @@ const SIDE_W := 8.0
 const MIN_ALPHA := 0.35     # 야외 직사광 판정용 하한
 
 var vh: float = Tune.PF_H
+var gutter: float = 0.0     ## 좌우 거터 폭(유닛). 태블릿에서만 0 이 아니다.
 var tick: int = 0
 
 func _draw() -> void:
 	# 배경 그라디언트 — 세로 8분할 사각형. 실기에서 밴딩이 보이면 분할을 늘린다.
+	# 필드가 축소되면(태블릿) 좌우·하단에 거터가 생기므로 넉넉히 넘겨 칠한다.
 	var steps := 8
 	for i in steps:
 		var f := float(i) / float(steps - 1)
 		var c := Tune.COL_ABYSS_TOP.lerp(Tune.COL_ABYSS_BOT, f)
 		var y0 := vh * float(i) / float(steps)
 		var y1 := vh * float(i + 1) / float(steps)
-		draw_rect(Rect2(0.0, y0, Tune.PF_W, y1 - y0 + 1.0), c, true)
+		draw_rect(Rect2(-gutter, y0, Tune.PF_W + gutter * 2.0, y1 - y0 + 1.0), c, true)
 
 	# 플레이필드 하단 경계 — 남는 하단이 손가락 영역임을 시각적으로 못 박는다
 	if vh > Tune.PF_H + 1.0:
-		draw_rect(Rect2(0.0, Tune.PF_H, Tune.PF_W, vh - Tune.PF_H),
+		draw_rect(Rect2(-gutter, Tune.PF_H, Tune.PF_W + gutter * 2.0, vh - Tune.PF_H),
 				Color(0.0, 0.0, 0.0, 0.35), true)
 		draw_line(Vector2(0.0, Tune.PF_H), Vector2(Tune.PF_W, Tune.PF_H),
 				Color(Tune.COL_FLOW, 0.18), 1.0)
 
+	# 거터가 있으면 어디까지가 판정 영역인지 보여야 한다
+	if gutter > 0.5:
+		draw_rect(Rect2(0.0, 0.0, Tune.PF_W, Tune.PF_H), Color(Tune.COL_FLOW, 0.12), false, 1.5)
 	var c_t := BulletField.flow_c(tick)
 	_draw_top_band(c_t)
 	_draw_side_profile(c_t)

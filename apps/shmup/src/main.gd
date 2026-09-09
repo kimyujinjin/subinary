@@ -31,9 +31,18 @@ var lesson_death_pos: Vector2 = Vector2.ZERO
 var _restart_armed: bool = false
 var _death_wall_tick: int = -1
 
+## 플레이필드의 가로 오프셋. expand 는 여유 축을 늘리므로 태블릿에서는 가시영역 폭이
+## 889 유닛이 되고(실측) 플레이필드 720 이 좌측에 붙어 우측 169유닛이 죽는다.
+## 중앙에 놓으면 남는 좌우가 대칭 거터가 되고 엄지 도달 거리도 좌우 대칭이 된다.
+var field_dx: float = 0.0
+var view_w: float = Tune.PF_W
+
+var _field: Node2D = null           # 스케일되는 월드 공간
+var _screen: Node2D = null          # 뷰포트 공간 UI
 var _backdrop: Backdrop = null
 var _bullets: BulletRenderer = null
-var _overlay: Overlay = null
+var _overlay: FieldOverlay = null
+var _screen_ui: ScreenOverlay = null
 var _wave_cursor: int = 0
 var _rng_enemy := RandomNumberGenerator.new()
 var _cap_tick: int = 0
@@ -48,13 +57,20 @@ func _ready() -> void:
 	fairness = Fairness.new()
 	replay = Replay.new()
 
+	_field = Node2D.new()
+	_screen = Node2D.new()
+	add_child(_field)
+	add_child(_screen)
 	_backdrop = Backdrop.new()
 	_bullets = BulletRenderer.new()
-	_overlay = Overlay.new()
+	_overlay = FieldOverlay.new()
 	_overlay.main = self
-	add_child(_backdrop)
-	add_child(_bullets)
-	add_child(_overlay)
+	_field.add_child(_backdrop)
+	_field.add_child(_bullets)
+	_field.add_child(_overlay)
+	_screen_ui = ScreenOverlay.new()
+	_screen_ui.main = self
+	_screen.add_child(_screen_ui)
 
 	get_viewport().size_changed.connect(_on_resize)
 	_on_resize()
@@ -62,7 +78,7 @@ func _ready() -> void:
 	_reset(FIXED_SEED)
 	RunLog.write("run", [SimClock.run_index, 0, SimClock.run_seed, 0, 0, "", 0, 0, 0,
 			0.0, false, 0, 0, 0.0, 0.0, 0, 0, _build_tag(),
-			TouchRouter.units_per_px, TouchRouter.screen_width_mm()])
+			TouchRouter.field_per_px, TouchRouter.screen_width_mm()])
 
 ## --capture=<tick>:<경로> — 지정 틱의 프레임을 PNG 로 저장하고 종료한다.
 ## 게이트 1 지표 ④(조류 표시 대 배경의 Weber 콘트라스트 ≥ 0.25)는 스크린샷 픽셀값으로
@@ -103,9 +119,14 @@ func _on_resize() -> void:
 	var vh := get_viewport().get_visible_rect().size.y
 	if "--force-16x9" in OS.get_cmdline_user_args():
 		vh = Tune.PF_H
+	view_w = get_viewport().get_visible_rect().size.x
+	field_dx = floorf((view_w - Tune.PF_W) * 0.5)
+	_field.position = Vector2(field_dx, 0.0)
 	_backdrop.vh = vh
-	_overlay.vh = vh
-	TouchRouter.view_size = Vector2(Tune.PF_W, vh)
+	_backdrop.gutter = field_dx
+	_screen_ui.vh = vh
+	_screen_ui.view_w = view_w
+	TouchRouter.view_size = Vector2(view_w, vh)
 	TouchRouter._refresh_metrics()
 
 func _reset(seed_value: int) -> void:
@@ -215,6 +236,7 @@ func _physics_process(_delta: float) -> void:
 	_backdrop.queue_redraw()
 	_bullets.queue_redraw()
 	_overlay.queue_redraw()
+	_screen_ui.queue_redraw()
 
 # ── 사망 ────────────────────────────────────────────────────────────────
 func _on_death() -> void:
@@ -247,6 +269,7 @@ func _step_lesson() -> void:
 		if lesson_hold >= LESSON_HOLD_TICKS:
 			SimClock.state = SimClock.State.DEATH_FROZEN
 	_overlay.queue_redraw()
+	_screen_ui.queue_redraw()
 
 # ── 자탄 ────────────────────────────────────────────────────────────────
 func _fire() -> void:

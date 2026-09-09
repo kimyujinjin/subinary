@@ -6,7 +6,15 @@ extends Node
 ## 앵커 자동 재설정은 하지 않는다: 매핑이 델타 기반이라 앵커 위치는 도달력에
 ## 아무 영향이 없다 — 무의미한 수정이다.
 
-var units_per_px: float = 720.0 / 1080.0
+## 물리 px → 유닛. 가시영역 / 창 픽셀로 직접 유도한다.
+##
+## 실측(tools/viewport_probe.gd): stretch = canvas_items + expand 는 여유가 있는 축을 늘리고
+## 절대 자르지 않는다. 폰(9:19.5)은 폭 720 고정·높이 1555~1562, 태블릿(1640x2360)은
+## **폭이 889 로 늘고 높이가 1280 고정**이다. 설계서의 "폭은 모든 폰에서 정확히 720유닛"은
+## 폰에서만 참이다.
+##
+## 그래서 720/창폭 으로 계산하면 태블릿에서 23% 어긋난다(0.878 대 실제 1.084).
+var field_per_px: float = 1.0
 var view_size: Vector2 = Vector2(Tune.PF_W, Tune.PF_H)
 
 # ── 드래그 손가락
@@ -39,7 +47,8 @@ var regrip_count: int = 0
 var last_regrip_tick: int = -9999
 var focus_toggles: int = 0
 
-var _touch: Dictionary = {}                   # index -> Vector2 (유닛)
+var _touch: Dictionary = {}                   # index -> Vector2 (뷰포트 유닛)
+var _touch_delta: Dictionary = {}             # index -> Vector2 (물리 px, 이 프레임)
 
 func _ready() -> void:
 	_refresh_metrics()
@@ -47,9 +56,9 @@ func _ready() -> void:
 
 func _refresh_metrics() -> void:
 	var win := DisplayServer.window_get_size()
-	if win.x > 0:
-		units_per_px = Tune.PF_W / float(win.x)
 	view_size = get_viewport().get_visible_rect().size
+	if win.x > 0:
+		field_per_px = view_size.x / float(win.x)
 
 ## 물리 화면 폭(mm). k 는 유닛 공간의 무차원 이득이므로 이 값이 곧 조작감의 척도다.
 ## 설계의 "물리 폭 70mm 고정"은 태블릿 대응이고, 게이트 1 은 실측 표시까지만 한다.
@@ -69,6 +78,7 @@ func _notification(what: int) -> void:
 
 func clear_touches() -> void:
 	_touch.clear()
+	_touch_delta.clear()
 	drag_idx = -1
 	_pending_px = Vector2.ZERO
 	edge_push = Vector2.ZERO
@@ -79,6 +89,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		var t := event as InputEventScreenTouch
 		if t.pressed:
 			_touch[t.index] = t.position
+			_touch_delta[t.index] = Vector2.ZERO
 			_on_press(t.index, t.position)
 		else:
 			# iOS 는 canceled 를 세팅하지 않고 position=(-1,-1) 의 release 를 보낸다.
@@ -86,12 +97,14 @@ func _unhandled_input(event: InputEvent) -> void:
 			var last: Vector2 = _touch.get(t.index, Vector2.ZERO)
 			# Android 는 MotionEvent pointer id 원본을 재사용한다 — 반드시 지운다.
 			_touch.erase(t.index)
+			_touch_delta.erase(t.index)
 			if t.index == drag_idx:
 				_on_drag_release(last)
 		get_viewport().set_input_as_handled()
 	elif event is InputEventScreenDrag:
 		var d := event as InputEventScreenDrag
 		_touch[d.index] = d.position
+		_touch_delta[d.index] = _touch_delta.get(d.index, Vector2.ZERO) + d.screen_relative
 		if d.index == drag_idx:
 			_pending_px += d.screen_relative
 			drag_pos = d.position
@@ -159,7 +172,7 @@ func consume(tick: int) -> Vector2:
 	else:
 		k = _k_to
 
-	var d_units := _pending_px * units_per_px
+	var d_units := _pending_px * field_per_px
 	_pending_px = Vector2.ZERO
 
 	# 엣지 푸시 — 손가락이 밴드 안에 있고 바깥 방향 델타면 그 축에 속도를 더한다.
@@ -189,15 +202,31 @@ func _edge_axis(axis: int, pos: float, delta: float, extent: float) -> void:
 		_edge_ramp[axis] = 0.0                   # 안쪽 델타 1개로 해제
 		edge_push[axis] = 0.0
 
+## 화면에 찍을 터치 상태. 프레임당 델타는 표시 후 비운다.
+func debug_touches() -> Array:
+	var out: Array = []
+	for idx in _touch:
+		out.append({
+			"index": idx,
+			"pos": _touch[idx],
+			"delta_px": _touch_delta.get(idx, Vector2.ZERO),
+			"role": "DRAG" if idx == drag_idx else ("EXCL" if _excluded(_touch[idx]) else "-"),
+		})
+	out.sort_custom(func(a, b): return a["index"] < b["index"])
+	for idx in _touch_delta.keys():
+		_touch_delta[idx] = Vector2.ZERO
+	return out
+
 ## 남은 도달 여유(유닛) — 덱에 상시 표시한다. 축별 [좌, 우, 상, 하].
 func reach_margin() -> Vector4:
 	if drag_idx < 0:
 		return Vector4.ZERO
+	var g := k
 	return Vector4(
-		drag_pos.x * k,
-		(view_size.x - drag_pos.x) * k,
-		drag_pos.y * k,
-		(view_size.y - drag_pos.y) * k)
+		drag_pos.x * g,
+		(view_size.x - drag_pos.x) * g,
+		drag_pos.y * g,
+		(view_size.y - drag_pos.y) * g)
 
 func reset_run() -> void:
 	regrip_count = 0
