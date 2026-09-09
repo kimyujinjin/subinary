@@ -58,6 +58,15 @@ if (!ResourceImporterTextureSettings::should_import_etc2_astc()) {
 대조 목록에 넣어 다시 꺼지지 않게 한다. 나머지 실패 모드의 점검 순서는
 `scripts/export-ios.sh` 가 실패 시 출력한다.
 
+## iOS 시뮬레이터로는 기동 확인조차 안 된다 (시도하지 말 것)
+
+`generate_simulator_library_if_missing` 가 만드는 시뮬레이터 슬라이스는 기기 라이브러리에서
+생성한 대체물이라 실제로 링크되지 않는다 — `ld: Undefined symbols: _main (arm64)`.
+슬라이스 안에 `_main` 은 있지만 아키텍처가 맞지 않는다.
+
+설계서가 이미 시뮬레이터를 판정 면에서 제외했고(Metal/Vulkan 미지원으로 Compatibility 로
+떨어져 가독성 판단이 틀린다), 링크조차 안 되므로 **크래시 스모크 테스트도 실기 전용**이다.
+
 ## 실측된 플랫폼 사실
 
 | 항목 | 값 |
