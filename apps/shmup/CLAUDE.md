@@ -34,8 +34,40 @@ GODOT=... godot --headless --path . scenes/soak.tscn   # 30초 루프 5회 — �
 ../../scripts/pull-shmup-runlog.sh {ios|android|local}  # 실기 CSV → 게이트 1 판정
 ```
 
-캡처: `godot --path . -- --capture=<틱>:<경로.png>` — 지표 ④(Weber 콘트라스트)용.
-캡처 모드는 무적이 켜진다(입력 없는 실행은 첫 벽에 죽어 sim_tick 이 멈춘다).
+```bash
+scripts/export-ios.sh debug     # 서명된 .ipa + 프로파일 만료·서명 자동 확인
+```
+
+캡처: `godot --path . -- --capture=<틱|w틱>:<경로.png>` — 지표 ④(Weber 콘트라스트)용.
+`w` 접두는 벽시계 틱(사망 교재 캡처용). 캡처 모드는 무적이 켜진다
+(입력 없는 실행은 첫 벽에 죽어 sim_tick 이 멈춘다).
+
+## iOS export 가 메시지 없이 실패하는 함정
+
+`rendering/textures/vram_compression/import_etc2_astc` 가 꺼져 있으면
+Godot 은 `configuration errors:` 뒤에 **아무 메시지도 없이** export 를 거부한다.
+근거 — 4.7.2 소스 `editor/export/editor_export_platform_apple_embedded.cpp`:
+
+```cpp
+if (!ResourceImporterTextureSettings::should_import_etc2_astc()) {
+    valid = false;          // r_error 를 채우지 않는다
+}
+```
+
+기본값이 false 라 새 프로젝트는 항상 여기 걸린다. `scripts/doctor.sh` 가 이 값을
+대조 목록에 넣어 다시 꺼지지 않게 한다. 나머지 실패 모드의 점검 순서는
+`scripts/export-ios.sh` 가 실패 시 출력한다.
+
+## 실측된 플랫폼 사실
+
+| 항목 | 값 |
+|---|---|
+| Apple Developer Program | **유료 유효** (프로파일 365일·기기 3대, 2026-09-09 발급) |
+| Team ID | `YDQ6FSA38K` · Apple Development: SooBeen Lee |
+| 번들 ID | `dev.subinary.lumendrift` (잠정 — 제목 확정 시 변경) |
+| MinimumOSVersion | 16.0 (Metal 요구. 기존 앱의 15.0 을 그대로 쓰면 안 된다) |
+| 기기 | iPhone 14 · iPhone 16 · iPad 10세대. **16:9 없음** → `--force-16x9` 로 대체 검증 |
+| stretch 실측 | expand 는 자르지 않는다. 폰은 720×1555~1562, iPad 는 **889×1280**(폭이 늘어난다) |
 
 ## 측정으로 고른 값 — 추측한 값이 아니다
 

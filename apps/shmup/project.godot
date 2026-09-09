@@ -15,6 +15,8 @@ config/features=PackedStringArray("4.7", "Mobile")
 run/max_fps=60
 ; 기본값 true 면 Android 백 버튼이 경고 없이 앱을 종료해 진행 중인 런이 사라진다.
 config/quit_on_go_back=false
+; 아이콘은 tools/make_icon.gd 가 생성한다 — 손으로 그린 이미지 애셋이 아니다.
+config/icon="res://icon.png"
 
 [autoload]
 
@@ -67,3 +69,8 @@ renderer/rendering_method.mobile="mobile"
 ; 전역 블룸은 탄 엣지를 뭉개서 가독성을 직접 해친다. 성능이 아니라 가독성 근거로 기각.
 viewport/hdr_2d=false
 textures/canvas_textures/default_texture_filter=1
+; iOS/Android export 의 필수 조건이다. 끄면 export 가 실패하는데
+; Godot 이 메시지를 하나도 내지 않는다 — editor/export/editor_export_platform_apple_embedded.cpp
+; 의 has_valid_project_configuration 이 should_import_etc2_astc() 실패 시 valid=false 만 하고
+; r_error 에 아무것도 넣지 않는다. 그래서 doctor.sh 의 대조 목록에 넣어 다시 꺼지지 않게 한다.
+textures/vram_compression/import_etc2_astc=true

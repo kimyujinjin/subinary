@@ -18,6 +18,8 @@ const EXPECT := {
 	"rendering/renderer/rendering_method.mobile": "mobile",
 	"rendering/viewport/hdr_2d": false,
 	"display/window/frame_pacing/android/swappy_mode": 0,
+	# iOS/Android export 의 필수 조건. 꺼져 있으면 export 가 메시지 없이 실패한다.
+	"rendering/textures/vram_compression/import_etc2_astc": true,
 }
 ## 존재만 확인 — 값은 실기 판정 후 정한다
 const EXIST := [
