@@ -85,7 +85,15 @@ func _ready() -> void:
 ## 재야 하고, 야외 직사광 판정도 같은 경로를 쓴다. 헤드리스에는 렌더링 장치가 없으므로
 ## 창을 띄운 실행에서만 동작한다.
 func _parse_capture() -> void:
-	for a in OS.get_cmdline_user_args():
+	# 두 배열을 모두 본다. 데스크톱에서 "-- --flag" 로 준 것은 get_cmdline_user_args() 에
+	# 들어오지만, Android export 의 command_line/extra_args 는 get_cmdline_args() 로 온다 —
+	# 실기에서 --screen-mm 이 조용히 무시되는 것으로 확인했다.
+	var args: PackedStringArray = OS.get_cmdline_user_args()
+	args.append_array(OS.get_cmdline_args())
+	for a in args:
+		if a.begins_with("--screen-mm="):
+			# 실측 물리 폭 주입. 엔진의 screen_get_dpi() 는 Android 에서 논리 density 다.
+			TouchRouter.screen_mm_override = maxf(0.0, a.substr(12).to_float())
 		if a.begins_with("--capture="):
 			var v := a.substr(10).split(":")
 			if v.size() == 2:

@@ -88,11 +88,13 @@ func _draw_hud() -> void:
 		Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0,
 		int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
 		m.fairness.gap_w]
-	var l2 := "k%.2f %s  C%+.2f  gz%d  rg%d  fpp%.3f  %.0fmm  %dx%d  run%d  d%d" % [
+	var l2 := "k%.2f %s  C%+.2f  gz%d  rg%d  fpp%.3f  %.0fmm%s  %dx%d  run%d  d%d" % [
 		TouchRouter.k, "FOCUS" if TouchRouter.focus else "     ",
 		BulletField.flow_c(SimClock.sim_tick), BulletField.graze_events,
 		TouchRouter.regrip_count, TouchRouter.field_per_px,
-		TouchRouter.screen_width_mm(), int(m.view_w), int(vh),
+		TouchRouter.screen_width_mm(),
+		"" if TouchRouter.screen_mm_measured() else "?",
+		int(m.view_w), int(vh),
 		SimClock.run_index, m.deaths]
 	var y := Backdrop.BAND_H + float(fs) + 8.0
 	draw_string(f, Vector2(10.0, y), l1, HORIZONTAL_ALIGNMENT_LEFT, -1, fs,

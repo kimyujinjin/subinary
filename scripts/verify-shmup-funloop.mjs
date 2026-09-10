@@ -24,16 +24,24 @@ const flag = (n, d = null) => {
 const lines = readFileSync(file, 'utf8').trim().split('\n')
 const head = lines[0].split(',')
 const col = Object.fromEntries(head.map((h, i) => [h, i]))
-const rows = lines.slice(1).map(l => l.split(','))
+const allRows = lines.slice(1).map(l => l.split(','))
 const of = (r, k) => r[col[k]]
 const num = (r, k) => Number(of(r, k))
+
+// ── 세션 분리
+// RunLog 는 앱 실행마다 append 되고 "run" 행이 실행 1회의 시작이다.
+// 기본은 마지막 세션만 판정한다 — 설정을 바꾸기 전 세션이 섞이면 판정이 오염된다.
+const runIdx = allRows.map((r, i) => (r[0] === 'run' ? i : -1)).filter(i => i >= 0)
+const allSessions = argv.includes('--all-sessions')
+const rows = (!allSessions && runIdx.length > 1)
+  ? allRows.slice(runIdx[runIdx.length - 1])
+  : allRows
+const droppedSessions = allSessions ? 0 : Math.max(0, runIdx.length - 1)
 
 const deaths = rows.filter(r => r[0] === 'death')
 const restarts = rows.filter(r => r[0] === 'restart')
 const ticks = rows.filter(r => r[0] === 'tick')
-const builds = new Set(rows.filter(r => of(r, 'build')).map(r => of(r, 'build')))
-
-// 판정은 실기 release 빌드에서만 유효하다. debug 로그로 판정하면 양방향 모두 틀린다.
+const builds = new Set(allRows.filter(r => of(r, 'build')).map(r => of(r, 'build')))
 const isRelease = [...builds].some(b => b.includes('release'))
 
 const p = (arr, q) => {
@@ -42,11 +50,31 @@ const p = (arr, q) => {
   return s[Math.min(s.length - 1, Math.floor(q * (s.length - 1)))]
 }
 
-// ③ restart 행의 gap_w 칼럼 = 사망 → 다음 입력 (벽시계 틱)
-const respond = restarts.map(r => num(r, 'gap_w') / 60)
-// ⑤ 재파지: 마지막 tick 행의 regrip 누적 / 총 플레이 시간
-const playMin = ticks.length ? (Math.max(...ticks.map(r => num(r, 'tick'))) / 60) / 60 : 0
-const regripTotal = Math.max(0, ...rows.map(r => num(r, 'regrip') || 0))
+// ③ restart 행의 gap_w 칼럼 = 사망 → 다음 입력 (벽시계 틱).
+// wall_tick 은 런 리셋과 무관하게 단조 증가하므로 값 자체는 맞다.
+// 다만 앱을 켜 둔 채 방치한 구간이 섞이면 p90 이 무의미해지므로
+// 30초를 넘는 간격은 "세션 이탈"로 분리해 개수를 명시한다 — 잘라내지 않고 드러낸다.
+const AWAY_S = 30
+const respondAll = restarts.map(r => num(r, 'gap_w') / 60)
+const respond = respondAll.filter(v => v <= AWAY_S)
+const away = respondAll.length - respond.length
+
+// 플레이 시간: tick 행은 sim_tick 60틱마다 1행이므로 행 수 = 초.
+// max(tick) 을 쓰면 안 된다 — sim_tick 은 런마다 0 으로 리셋되므로
+// "마지막 런의 길이"를 재게 되고, 재파지율 분모가 폭주한다(실측: 0.1분 → 15회/분).
+const playMin = ticks.length / 60
+
+// ⑤ 재파지: TouchRouter.reset_run() 이 런마다 0 으로 되돌리므로 누적이 아니다.
+// 런별 최대값을 합산해야 세션 누적이 된다.
+const perRun = new Map()
+for (const r of rows) {
+  if (r[0] !== 'death' && r[0] !== 'restart' && r[0] !== 'tick') continue
+  const k = of(r, 'run')
+  const v = num(r, 'regrip')
+  if (!Number.isFinite(v)) continue
+  perRun.set(k, Math.max(perRun.get(k) ?? 0, v))
+}
+const regripTotal = [...perRun.values()].reduce((a, b) => a + b, 0)
 const regripRate = playMin > 0 ? regripTotal / playMin : NaN
 const regripDeaths = deaths.filter(r => {
   const s = num(r, 'since_regrip')
@@ -69,7 +97,9 @@ judge('②', '틈 방향 예측 ≥ 15/20 (실내·야외)',
   predIn === null || predOut === null ? '미측정' : `실내 ${predIn}/20 · 야외 ${predOut}/20`,
   predIn === null || predOut === null ? null : predIn >= 15 && predOut >= 15, '사람이 센다')
 judge('③', '사망 → 다음 입력 p90 < 1.0s',
-  respond.length ? `p90 ${p(respond, 0.9).toFixed(2)}s (n=${respond.length})` : '미측정',
+  respond.length
+    ? `p90 ${p(respond, 0.9).toFixed(2)}s · p50 ${p(respond, 0.5).toFixed(2)}s (n=${respond.length}${away ? `, 이탈 ${away} 제외` : ''})`
+    : `미측정${away ? ` (전부 ${AWAY_S}s 초과 이탈 ${away}건)` : ''}`,
   respond.length ? p(respond, 0.9) < 1.0 : null)
 judge('④', 'Weber 콘트라스트 ≥ 0.25', weber === null ? '미측정' : weber.toFixed(3),
   weber === null ? null : weber >= 0.25, '야외 최대 밝기 스크린샷')
@@ -82,7 +112,8 @@ judge('⑤b', '재파지 후 400ms 내 사망 ≤ 15%',
 
 console.log(`\n게이트 1 판정 — ${file}`)
 console.log(`빌드: ${[...builds].join(', ') || '불명'}${isRelease ? '' : '   ← release 아님. 이 판정은 무효다'}`)
-console.log(`사망 ${deaths.length}회 · 재시작 ${restarts.length}회 · 플레이 ${(playMin).toFixed(1)}분\n`)
+console.log(`사망 ${deaths.length}회 · 재시작 ${restarts.length}회 · 플레이 ${playMin.toFixed(1)}분 · 런 ${perRun.size}개`
+  + (droppedSessions ? `   (이전 세션 ${droppedSessions}개 제외 — --all-sessions 로 포함)` : '') + '\n')
 for (const r of out) {
   const mark = r.ok === null ? '· ' : r.ok ? 'OK' : '✗ '
   console.log(`  ${mark} ${r.id} ${r.label.padEnd(34)} ${String(r.value).padEnd(30)} ${r.note}`)

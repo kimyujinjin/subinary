@@ -9,7 +9,9 @@ const EXPECT := {
 	"display/window/size/viewport_height": 1280,
 	"display/window/stretch/mode": "canvas_items",
 	"display/window/stretch/aspect": "expand",
-	"display/window/handheld/orientation": "portrait",
+	# int enum 이다. 기대값을 문자열로 적어 두면 이 검사가 통과해 버리고,
+	# 실기에서 조용히 가로로 뜬다 — 실제로 그렇게 놓쳤다.
+	"display/window/handheld/orientation": 1,
 	"input_devices/buffering/agile_event_flushing": true,
 	"physics/common/max_physics_steps_per_frame": 2,
 	"physics/common/physics_interpolation": false,

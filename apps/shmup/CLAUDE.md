@@ -105,6 +105,23 @@ iOS export 산출물의 PNG 가 프로젝트 리소스로 임포트되어 `.godo
 | MinimumOSVersion | 16.0 (Metal 요구. 기존 앱의 15.0 을 그대로 쓰면 안 된다) |
 | 기기 | iPhone 14 · iPhone 16 · iPad 10세대. **16:9 없음** → `--force-16x9` 로 대체 검증 |
 | stretch 실측 | expand 는 자르지 않는다. 폰은 720×1555~1562, iPad 는 **889×1280**(폭이 늘어난다) |
+| Android 실기 | Galaxy S25+ (SM-S942N) · Android 16 · Vulkan 1.4.304 Forward Mobile · Xclipse 960 |
+| 실기 가시영역 | 720×1560 (1080×2340). 플레이필드 1280 + 하단 여백 280 → 덱 240 이 여백 안에 들어간다 |
+| 실기 프레임 | 121탄 debug: phys 4.60ms · proc 15.95ms · dc 39 · fps 60 (120Hz 패널에서 max_fps 60 적중) |
+| gfxinfo | 50th 5ms · 90th 5ms · 95th 7~8ms · 99th 15~19ms · Missed Vsync 0 |
+
+## 화면 물리 폭은 엔진 API 로 알 수 없다
+
+`DisplayServer.screen_get_dpi()` 는 Android 에서 **논리 density 버킷**을 돌려준다.
+Galaxy S25+ 실측: 보고 454~480 → 60mm 인데 실제 `xDpi=409.43` → **67.0mm**. 11~17% 과소보고.
+
+k 는 유닛 공간의 무차원 이득이므로 이 값이 곧 조작감의 척도다. 틀린 mm 로 계산하면
+"720유닛 횡단 = 손가락 57.5mm" 라는 k=1.20 의 근거 자체가 틀어진다.
+그래서 실측값을 주입한다 — `command_line/extra_args="--screen-mm=67.0"`.
+확인: `adb shell dumpsys display | grep xDpi`. HUD 는 주입값이 없으면 `mm?` 로 표시한다.
+
+**Android 의 extra_args 는 `OS.get_cmdline_user_args()` 가 아니라 `get_cmdline_args()` 로 온다.**
+두 배열을 모두 봐야 데스크톱의 `-- --flag` 와 실기의 extra_args 가 같이 동작한다.
 
 ## 측정으로 고른 값 — 추측한 값이 아니다
 

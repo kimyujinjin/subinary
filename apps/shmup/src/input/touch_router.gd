@@ -60,13 +60,27 @@ func _refresh_metrics() -> void:
 	if win.x > 0:
 		field_per_px = view_size.x / float(win.x)
 
-## 물리 화면 폭(mm). k 는 유닛 공간의 무차원 이득이므로 이 값이 곧 조작감의 척도다.
-## 설계의 "물리 폭 70mm 고정"은 태블릿 대응이고, 게이트 1 은 실측 표시까지만 한다.
+## 물리 화면 폭(mm) — **추정치다. 판정에 그대로 쓰지 말 것.**
+##
+## k 는 유닛 공간의 무차원 이득이므로 이 값이 곧 조작감의 척도이고,
+## 설계의 "물리 폭 70mm 고정"도 이 값을 알아야 성립한다. 그런데
+## DisplayServer.screen_get_dpi() 는 Android 에서 **논리 density 버킷**을 돌려준다 —
+## Galaxy S25+ 실측: 보고 480 → 57.1mm 인데 실제 xDpi 409.4 → 67.0mm. 17% 과소보고다.
+## 엔진 API 로는 물리 DPI 를 얻을 수 없으므로 실측값을 --screen-mm=<값> 으로 주입한다.
+##   adb shell dumpsys display | grep xDpi
+var screen_mm_override: float = 0.0
+
 func screen_width_mm() -> float:
+	if screen_mm_override > 0.0:
+		return screen_mm_override
 	var dpi := DisplayServer.screen_get_dpi()
 	if dpi <= 0:
 		return 0.0
 	return float(DisplayServer.window_get_size().x) / float(dpi) * 25.4
+
+## 값이 실측 주입인가. HUD 가 추정치와 실측을 구분해 표시한다.
+func screen_mm_measured() -> bool:
+	return screen_mm_override > 0.0
 
 func _notification(what: int) -> void:
 	# release_pressed_events() 는 키·조이패드·액션만 해제하고 터치는 손대지 않는다.

@@ -34,8 +34,12 @@ window/size/viewport_width=720
 window/size/viewport_height=1280
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
-; orientation 은 해상도를 자동으로 뒤집지 않는다 — viewport_width/height 를 직접 세로비로 둔다.
-window/handheld/orientation="portrait"
+; 이 값은 **int enum** 이다 (0 Landscape / 1 Portrait / 2 ReverseLandscape / ...).
+; 문자열 "portrait" 를 넣으면 main.cpp 의 int(GLOBAL_DEF_BASIC(...)) 캐스팅에서 0 이 되어
+; 조용히 가로로 뜬다 — 실기에서 가시영역이 2773x1280 이 되고 플레이필드 720 이
+; 화면 중앙에 좁게 서는 것으로 실측 확인했다.
+; 그리고 orientation 은 해상도를 자동으로 뒤집지 않으므로 viewport_width/height 도 세로비로 둔다.
+window/handheld/orientation=1
 ; 기본 auto_fps_auto_pipeline(2) 은 40~60 구간에서 흔들리면 최대 FPS 를 30 으로 내려
 ; 고정한다 — 탄 1,000개 구간에서 정확히 발생할 상황이다. 0 = off.
 window/frame_pacing/android/swappy_mode=0
