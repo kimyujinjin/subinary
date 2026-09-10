@@ -36,6 +36,7 @@ GODOT=... godot --headless --path . scenes/soak.tscn   # 30초 루프 5회 — �
 
 ```bash
 scripts/export-ios.sh debug     # 서명된 .ipa + 프로파일 만료·서명 자동 확인
+scripts/run-android.sh debug    # export → 설치 → 기동 → 기기 사양 기록
 ```
 
 캡처: `godot --path . -- --capture=<틱|w틱>:<경로.png>` — 지표 ④(Weber 콘트라스트)용.
@@ -66,6 +67,33 @@ if (!ResourceImporterTextureSettings::should_import_etc2_astc()) {
 
 설계서가 이미 시뮬레이터를 판정 면에서 제외했고(Metal/Vulkan 미지원으로 Compatibility 로
 떨어져 가독성 판단이 틀린다), 링크조차 안 되므로 **크래시 스모크 테스트도 실기 전용**이다.
+
+## Android 는 블로커가 4건이 아니라 0건이었다
+
+설계서는 "cmdline-tools 없음 · JDK 17 없음 · build-tools 35.0.1 없음 · platforms android-35 없음"
+4건을 블로커로 적었다. 그건 **Gradle 커스텀 빌드 경로**의 요구사항이고,
+기본 export(prebuilt 템플릿) 경로는 4.7.2 소스 확인 결과 이것만 본다:
+
+| 검사 | 근거 (platform/android/export/export_plugin.cpp) | 상태 |
+|---|---|---|
+| `android_debug.apk` 템플릿 | `exists_export_template` | OK |
+| `export/android/java_sdk_path` 의 `bin/java` | **존재만 확인 · 버전 검사 없음** | JDK 21 로 OK |
+| `export/android/android_sdk_path` 의 `platform-tools/adb` | `FileAccess::exists` | OK |
+| `build-tools/<ver>/apksigner` | target_sdk 기준 탐색 | 36.0.0 OK |
+| 디버그 keystore | Editor Settings 또는 preset | `~/.android/debug.keystore` |
+
+즉 JDK 17 도 cmdline-tools 도 android-35 도 불필요하다. `gradle_build/use_gradle_build=false`.
+
+## 에디터 설정 파일은 버전별 파일이 진짜다
+
+`~/Library/Application Support/Godot/editor_settings-4.tres` 에 써도 읽히지 않는다.
+실제로 쓰이는 것은 **`editor_settings-4.7.tres`** 다. 버전 없는 파일에 쓰면
+"A valid Java SDK path is required in Editor Settings" 가 계속 난다.
+
+## builds/ 에 .gdignore 가 있어야 한다
+
+iOS export 산출물의 PNG 가 프로젝트 리소스로 임포트되어 `.godot/` 이 부풀고
+다음 export 에 섞여 들어갈 수 있다. Godot 은 `.gdignore` 가 있는 디렉터리를 스캔하지 않는다.
 
 ## 실측된 플랫폼 사실
 

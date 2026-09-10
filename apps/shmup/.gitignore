@@ -14,6 +14,8 @@ export_credentials.cfg
 # 산출물. 루트 .gitignore 의 bare build/·dist/·out/ 가 모든 깊이에 매칭되므로
 # 폴더 이름에 그 세 단어를 쓰지 않는다. (쓰면 소스가 조용히 커밋에서 빠진다)
 builds/
+# Godot 이 산출물을 프로젝트 리소스로 임포트하지 않게 막는 파일은 커밋한다.
+!builds/.gdignore
 
 # 실기에서 뽑아온 계측 로그
 runlog-*.csv
