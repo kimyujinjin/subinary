@@ -51,6 +51,10 @@ var regrip_count: int = 0
 var last_regrip_tick: int = -9999
 var focus_toggles: int = 0
 var relay_count: int = 0
+## 이번 틱에 폭탄 입력이 있었는가 — 두 번째 손가락 press. Main 이 소비하고 비운다.
+## 설계서 §3: 집중과 폭탄이 같은 엄지를 요구하면 위기 중 폭탄 입력이 감도 점프를 유발한다.
+## 그래서 집중은 드래그 손가락 이중탭, 폭탄은 두 번째 손가락으로 채널을 나눴다.
+var bomb_pressed: bool = false
 ## 재파지 원인 기록. 실기에서 3회/분(목표 0.1)이 나왔는데 로그로는 원인을 가를 수 없었다 —
 ## 도달 여유가 바닥났는지, 제외 영역에 걸렸는지, 그냥 습관인지. 떼는 순간의 손가락 위치·
 ## 누른 시간·축별 도달 여유를 남긴다. Main 이 틱마다 비워 RunLog 에 쓴다.
@@ -145,11 +149,22 @@ func _excluded(p: Vector2) -> bool:
 	return p.x < Tune.EXCL_SIDE or p.x > view_size.x - Tune.EXCL_SIDE \
 			or p.y > view_size.y - Tune.EXCL_BOTTOM
 
+## 폭탄 히트영역. 평시에는 우하단 원, 구제 창 동안에는 덱 하단 240유닛 전역 —
+## 그 순간 팜 오접촉은 "공짜 구제" 라 오탐 방향이 플레이어에게 유리하다.
+func _bomb_zone(p: Vector2) -> bool:
+	if SimClock.state == SimClock.State.RESCUE:
+		return p.y >= view_size.y - Tune.DECK_H
+	var c := Vector2(view_size.x - Tune.BOMB_CX_FROM_RIGHT, view_size.y - Tune.BOMB_CY_FROM_BOTTOM)
+	return p.distance_to(c) <= Tune.BOMB_R
+
 func _on_press(idx: int, p: Vector2) -> void:
 	if _touch.size() >= 3:
 		return                                   # 동시 터치 3개 이상이면 역할 배정 전면 중단
 	if drag_idx >= 0:
-		return                                   # 두 번째 손가락은 게이트 1 에서 역할 없음
+		# 두 번째 손가락 — 폭탄 채널. 드래그 역할은 넘어가지 않는다(릴레이는 릴리스 때만).
+		if _bomb_zone(p):
+			bomb_pressed = true
+		return
 	if _excluded(p):
 		return
 	# 사망 화면의 press 는 재시작 탭이다. 드래그 역할은 준다 — 그 손가락으로 곧바로
@@ -316,6 +331,7 @@ func reset_run() -> void:
 	edge_push = Vector2.ZERO
 	_edge_ramp = Vector2.ZERO
 	_tap_tick = -9999
+	bomb_pressed = false
 	regrip_events.clear()
 	relay_count = 0
 	regrip_count = 0

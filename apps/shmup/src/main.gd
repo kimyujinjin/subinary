@@ -12,6 +12,8 @@ extends Node2D
 
 const SCENE_STAGE := "res://scenes/main.tscn"
 const SCENE_BOSS := "res://scenes/boss_rush.tscn"
+## 격파 시 광립 수 — 적 종류별. 보스 P1 은 아래 _step_boss_clear 에서 따로 뿌린다.
+const MOTES_ON_KILL := [6, 3]
 const CLEAR_TICKS := 120            # 보스 P1 격파 후 재시작까지 2초
 const DEATH_HITSTOP := 8
 const LESSON_HOLD_TICKS := 12       # 정지 프레임
@@ -22,6 +24,13 @@ var player: Vector2 = Vector2(Tune.PF_W * 0.5, Tune.PF_H * 0.78)
 var player_prev: Vector2 = player
 var invincible_left: int = 0
 var deaths: int = 0
+var lives: int = Tune.LIVES
+var bombs: int = Tune.BOMBS
+var score: int = 0
+var bomb_pos: Vector2 = Vector2.ZERO     # 폭탄 연출 중심 (ScreenOverlay·FieldOverlay 가 읽는다)
+var motes: MoteField = null
+var _graze_seen: int = 0
+var _pending_death: bool = false          # 구제 창이 열려 있다 = 아직 확정되지 않은 사망
 
 # 자탄 — 조류 영향 없음, 관통. SoA.
 var shot_x := PackedFloat32Array()
@@ -72,6 +81,7 @@ func _ready() -> void:
 	shot_x.resize(Tune.MAX_PSHOTS)
 	shot_y.resize(Tune.MAX_PSHOTS)
 	enemies = EnemyField.new()
+	motes = MoteField.new()
 	fairness = Fairness.new()
 	replay = Replay.new()
 
@@ -171,7 +181,13 @@ func _reset(seed_value: int) -> void:
 	SimClock.reset(seed_value)
 	BulletField.clear()
 	enemies.clear()
+	motes.clear()
 	replay.clear()
+	lives = Tune.LIVES
+	bombs = Tune.BOMBS
+	score = 0
+	_graze_seen = 0
+	_pending_death = false
 	# 터치 맵은 지우지 않는다(reset_run 주석). clear_touches() 를 부르면 화면에 올려 둔
 	# 손가락이 역할을 잃고, 역할 재획득 경로가 press 뿐이라 떼었다 다시 눌러야 움직였다.
 	TouchRouter.reset_run()
@@ -264,19 +280,40 @@ func _physics_process(_delta: float) -> void:
 
 	if SimClock.state == SimClock.State.DEATH_REPLAY:
 		if _restart_armed:
-			_restart()
+			if lives > 0:
+				_revive()
+			else:
+				_restart()
 		else:
 			_step_lesson()
 		return
 	if SimClock.state == SimClock.State.DEATH_FROZEN:
 		if _restart_armed:
-			_restart()
+			if lives > 0:
+				_revive()
+			else:
+				_restart()
 		else:
 			_screen_ui.queue_redraw()   # 재시작 어포던스 깜빡임
 		return
-	if SimClock.state == SimClock.State.HITSTOP:
+	if SimClock.state == SimClock.State.RESCUE:
+		if _try_bomb():
+			pass                       # 구제 성공 — 아래 본체를 그대로 이어서 돈다
+		elif SimClock.rescue_left <= 0:
+			_on_death()
+			return
+		elif SimClock.hitstop_left > 0:
+			_screen_ui.queue_redraw()  # 정지 프레임 — 상황을 읽을 시간
+			_overlay.queue_redraw()
+			return
+	elif SimClock.state == SimClock.State.HITSTOP:
 		_screen_ui.queue_redraw()      # 플래시·링 파동은 시뮬이 멈춰도 계속 돈다
 		return
+	elif SimClock.state == SimClock.State.RUN:
+		if _try_bomb():
+			pass
+		else:
+			TouchRouter.bomb_pressed = false
 
 	var tick := SimClock.sim_tick
 
@@ -308,6 +345,11 @@ func _physics_process(_delta: float) -> void:
 	else:
 		_shots_vs_enemies()
 
+	# 4b. 광립 — 조류를 타고 부상하다 2초 뒤 기체로 온다. 회수 판정은 graze 링.
+	motes.step(tick, player)
+	if motes.collected > 0:
+		score += motes.collected * int(round(float(Tune.SCORE_MOTE) * _risk_mult()))
+
 	# 5. 탄 적분 + 컬링 + 판정 (단일 순회)
 	# boss.done 은 이 틱의 step 4(자탄) 또는 boss.step 에서 켜지는데 _clear_left 는 아직 -1 이다.
 	# 그 사이에 판정이 돌면 격파 틱에 죽어서 'clear' 와 'death' 가 같은 틱에 기록되고,
@@ -318,6 +360,11 @@ func _physics_process(_delta: float) -> void:
 		invincible_left -= 1
 	BulletField.step_and_collide(tick, player_prev, player, invincible_left > 0)
 
+	# 5b. 스침 — 탄당 1회. 게이지·배율·폭탄 충전 없이 점수만.
+	if BulletField.graze_events > _graze_seen:
+		score += (BulletField.graze_events - _graze_seen) * Tune.SCORE_GRAZE
+		_graze_seen = BulletField.graze_events
+
 	# 6. 1D 공정성 스캔 — HUD 와 사망 교재가 같은 숫자를 쓴다
 	fairness.scan(BulletField, player.x, player.y)
 
@@ -327,9 +374,9 @@ func _physics_process(_delta: float) -> void:
 	replay.record(BulletField, player, tick,
 			fairness.near_x0 if has_band else 0, fairness.near_w if has_band else 0)
 
-	# 8. 판정
-	if BulletField.hit_index >= 0:
-		_on_death()
+	# 8. 판정 — 피격은 곧바로 사망이 아니라 구제 창을 연다
+	if BulletField.hit_index >= 0 and not _pending_death:
+		_on_hit()
 	elif tick % 60 == 0:
 		RunLog.write("tick", [SimClock.run_index, tick, SimClock.run_seed,
 				player.x, player.y, "", 0, fairness.gap_x0, fairness.gap_w,
@@ -355,6 +402,8 @@ func _step_boss_clear(tick: int) -> bool:
 		_clear_left = CLEAR_TICKS
 		clear_anim = 0
 		BulletField.clear()
+		# 격파 시 광립이 흩어져 전부 상승한다 — 아래로만 흐르던 화면이 뒤집힌다
+		_drop_motes(Boss.CX, Boss.CY, 40)
 		RunLog.write("clear", [SimClock.run_index, tick, SimClock.run_seed,
 				player.x, player.y, "", 0, 0, 0,
 				TouchRouter.k, TouchRouter.focus, TouchRouter.regrip_count, 0,
@@ -395,11 +444,59 @@ func _log_regrips(tick: int) -> void:
 				BulletField.n, int(Engine.get_frames_per_second()), "", 0.0, 0.0, detail])
 	TouchRouter.regrip_events.clear()
 
-# ── 사망 ────────────────────────────────────────────────────────────────
-func _on_death() -> void:
-	deaths += 1
+## 위험 배율 — 기체 y 가 높을수록 광립 점수가 오른다(1.0 → 1.6).
+## "위험 감수 = 보상" 교환을 회수 동선이 아니라 고도로 산다.
+func _risk_mult() -> float:
+	var t := clampf((Tune.RISK_Y_LO - player.y) / (Tune.RISK_Y_LO - Tune.RISK_Y_HI), 0.0, 1.0)
+	return lerpf(1.0, Tune.RISK_MULT_HI, t)
+
+## 폭탄 입력을 소비한다. 반환값 = 이번 틱에 터졌는가.
+func _try_bomb() -> bool:
+	if not TouchRouter.bomb_pressed:
+		return false
+	TouchRouter.bomb_pressed = false
+	if bombs <= 0:
+		return false
+	bombs -= 1
+	bomb_pos = player
+	SimClock.bomb_anim = 0
+	# 소광침 — 위로 뻗는 기둥 + 주변. 기둥 밖은 그대로 남는다.
+	BulletField.clear_column(player.x, Tune.BOMB_COL_HALF, player.y)
+	BulletField.clear_radius(player.x, player.y, Tune.BOMB_LOCAL_R)
+	invincible_left = maxi(invincible_left, Tune.BOMB_INVINCIBLE)
+	var rescued := SimClock.state == SimClock.State.RESCUE
+	if rescued:
+		_pending_death = false
+		SimClock.state = SimClock.State.RUN
+		SimClock.rescue_left = 0
+		SimClock.hitstop_left = 0
+	RunLog.write("bomb", [SimClock.run_index, SimClock.sim_tick, SimClock.run_seed,
+			player.x, player.y, "", 0, 0, 0,
+			TouchRouter.k, TouchRouter.focus, TouchRouter.regrip_count, 0,
+			BulletField.flow_c(SimClock.sim_tick), 0.0, BulletField.n,
+			int(Engine.get_frames_per_second()), "", 0.0, 0.0,
+			"rescue=%d;left=%d;bombs=%d" % [1 if rescued else 0, bombs, bombs]])
+	return true
+
+# ── 피격 · 사망 ─────────────────────────────────────────────────────────
+## 피격 = 구제 창을 여는 것이지 사망이 아니다. 창 안에 폭탄을 누르면 취소된다.
+func _on_hit() -> void:
+	_pending_death = true
 	lesson_bid = BulletField.hit_bid
 	lesson_death_pos = player
+	SimClock.rescue(Tune.RESCUE_TICKS)
+	RunLog.write("hit", [SimClock.run_index, SimClock.sim_tick, SimClock.run_seed,
+			player.x, player.y, ["spore_tide", "spore_grid", "needle"][BulletField.hit_kind],
+			lesson_bid, fairness.gap_x0, fairness.gap_w,
+			TouchRouter.k, TouchRouter.focus, TouchRouter.regrip_count, 0,
+			BulletField.flow_c(SimClock.sim_tick), 0.0, BulletField.n,
+			int(Engine.get_frames_per_second()), "", 0.0, 0.0,
+			"bombs=%d;lives=%d" % [bombs, lives]])
+
+func _on_death() -> void:
+	deaths += 1
+	_pending_death = false
+	lives -= 1
 	lesson_step = -1        # 첫 되감기 틱에 0 이 된다 — 가장 오래된 프레임부터 보여준다
 	lesson_hold = 0
 	_restart_armed = false
@@ -411,10 +508,25 @@ func _on_death() -> void:
 			BulletField.flow_c(SimClock.sim_tick),
 			BulletField.flow_u(player.y, SimClock.sim_tick),
 			BulletField.n, int(Engine.get_frames_per_second()), "", 0.0, 0.0,
-			"relay=%d" % TouchRouter.relay_count])
+			"relay=%d;lives=%d;bombs=%d;score=%d" % [
+				TouchRouter.relay_count, lives, bombs, score]])
 	_death_wall_tick = SimClock.wall_tick
 	# 히트스톱 — 정지 프레임으로 상황을 읽을 시간. 연출은 _process 에서 계속 돈다.
 	SimClock.hitstop(DEATH_HITSTOP)
+
+## 사망 지점 부활 — 강제 하단 복귀는 손가락 앵커와 기체의 오프셋 관계를 리셋해
+## 패닉 중 방향 감각을 파괴한다(설계서 §3). 런은 이어진다: sim_tick 도 시드도 그대로.
+func _revive() -> void:
+	SimClock.state = SimClock.State.RUN
+	SimClock.death_anim = -1
+	_restart_armed = false
+	player = lesson_death_pos
+	player_prev = player
+	BulletField.clear_radius(player.x, player.y, Tune.REVIVE_CLEAR_R)
+	invincible_left = Tune.REVIVE_INVINCIBLE
+	replay.clear()
+	TouchRouter.reset_run()
+	_redraw_all(SimClock.sim_tick)
 
 func _restart() -> void:
 	_reset(FIXED_SEED)
@@ -440,7 +552,9 @@ func _step_lesson() -> void:
 
 # ── 자탄 ────────────────────────────────────────────────────────────────
 func _fire() -> void:
-	for s in [-Tune.SHOT_COL_HALF, Tune.SHOT_COL_HALF]:
+	# 집중이면 2열이 1줄로 수렴한다(설계서 §3). 대미지는 _shot_dmg() 가 1.4배로 올린다.
+	var half: float = 2.0 if TouchRouter.focus else Tune.SHOT_COL_HALF
+	for s in [-half, half]:
 		if shot_n >= Tune.MAX_PSHOTS:
 			return
 		shot_x[shot_n] = player.x + s
@@ -458,6 +572,15 @@ func _step_shots() -> void:
 			continue
 		i += 1
 
+## 집중 사격은 DPS +40%.
+func _shot_dmg() -> float:
+	return Tune.SHOT_DMG * (Tune.FOCUS_DMG_MULT if TouchRouter.focus else 1.0)
+
+func _drop_motes(x: float, y: float, count: int) -> void:
+	for i in count:
+		var a := TAU * float(i) / float(maxi(count, 1))
+		motes.spawn(SimClock.sim_tick, x + cos(a) * 18.0, y + sin(a) * 18.0)
+
 func _shots_vs_enemies() -> void:
 	# N:M 이지만 N ≤ 128, M ≤ 32 이고 관통이라 조기 종료도 없다.
 	# 공간 분할을 넣지 않는다 — grid 가 줄일 검사가 없고 Dictionary 삽입이 더 비싸다.
@@ -465,15 +588,17 @@ func _shots_vs_enemies() -> void:
 	while j < enemies.n:
 		var ex := enemies.px[j]
 		var ey := enemies.py[j]
-		var r: float = EnemyField.R_HIT[enemies.etype[j]] + Tune.SHOT_R
+		var etype: int = enemies.etype[j]
+		var r: float = EnemyField.R_HIT[etype] + Tune.SHOT_R
 		var r2 := r * r
 		var dmg := 0.0
 		for i in shot_n:
 			var dx := shot_x[i] - ex
 			var dy := shot_y[i] - ey
 			if dx * dx + dy * dy <= r2:
-				dmg += Tune.SHOT_DMG
+				dmg += _shot_dmg()
 		if dmg > 0.0 and enemies.damage(j, dmg):
+			_drop_motes(ex, ey, MOTES_ON_KILL[etype])
 			continue
 		j += 1
 
@@ -489,7 +614,7 @@ func _shots_vs_boss(tick: int) -> void:
 		var dx := shot_x[i] - Boss.CX
 		var dy := shot_y[i] - Boss.CY
 		if dx * dx + dy * dy <= r2:
-			boss.damage(Tune.SHOT_DMG, tick)
+			boss.damage(_shot_dmg(), tick)
 			shot_n -= 1
 			shot_x[i] = shot_x[shot_n]
 			shot_y[i] = shot_y[shot_n]

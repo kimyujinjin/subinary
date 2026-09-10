@@ -13,10 +13,13 @@ func _draw() -> void:
 	if main == null:
 		return
 	_draw_gutter_mask()
+	_draw_rescue_window()
 	_draw_death_feedback()
 	_draw_clear_feedback()
 	_draw_restart_prompt()
 	_draw_deck()
+	_draw_bomb_button()
+	_draw_gauges()
 	_draw_touch_debug()
 	_draw_hud()
 
@@ -65,6 +68,58 @@ func _draw_deck() -> void:
 		# 손가락 위치와 엣지 푸시 상태
 		draw_arc(TouchRouter.drag_pos, 26.0, 0.0, TAU, 20,
 				Color(1.0, 1.0, 1.0, 0.18 if TouchRouter.edge_push == Vector2.ZERO else 0.55), 2.0, true)
+
+## 구제 창 — 피격 후 폭탄으로 취소할 수 있는 20틱(333ms).
+## 테두리 플래시 + 폭탄 히트영역(덱 전역) 강조로 "창이 열렸다" 를 명시한다.
+## 창이 열린 줄 모르면 그 기능은 없는 것과 같다.
+func _draw_rescue_window() -> void:
+	if SimClock.state != SimClock.State.RESCUE:
+		return
+	var f := float(SimClock.rescue_left) / float(Tune.RESCUE_TICKS)
+	var pulse := 0.55 + 0.45 * f
+	var edge := 16.0
+	var col := Color(1.0, 0.85, 0.45, 0.75 * pulse)
+	draw_rect(Rect2(0.0, 0.0, view_w, edge), col, true)
+	draw_rect(Rect2(0.0, vh - edge, view_w, edge), col, true)
+	draw_rect(Rect2(0.0, 0.0, edge, vh), col, true)
+	draw_rect(Rect2(view_w - edge, 0.0, edge, vh), col, true)
+	# 덱 전역이 히트영역 — 남은 시간을 폭으로 보인다
+	var top := vh - Tune.DECK_H
+	draw_rect(Rect2(0.0, top, view_w, Tune.DECK_H), Color(1.0, 0.85, 0.45, 0.16 * pulse), true)
+	draw_rect(Rect2(0.0, top, view_w * f, 6.0), Color(1.0, 0.85, 0.45, 0.9), true)
+
+## 폭탄 버튼 — 두 번째 손가락 press. 남은 수만큼 채운 원.
+func _draw_bomb_button() -> void:
+	var c := Vector2(view_w - Tune.BOMB_CX_FROM_RIGHT, vh - Tune.BOMB_CY_FROM_BOTTOM)
+	var n: int = main.bombs
+	var live := SimClock.state == SimClock.State.RESCUE
+	var a := 0.30 if n > 0 else 0.10
+	if live:
+		a = 0.85
+	draw_arc(c, Tune.BOMB_R, 0.0, TAU, 40, Color(0.86, 0.97, 1.0, a), 2.5, true)
+	for i in Tune.BOMBS:
+		var ang := -PI * 0.5 + TAU * float(i) / float(Tune.BOMBS)
+		var p := c + Vector2(cos(ang), sin(ang)) * (Tune.BOMB_R * 0.52)
+		if i < n:
+			draw_circle(p, 9.0, Color(0.86, 0.97, 1.0, 0.75 if not live else 0.95))
+		else:
+			draw_arc(p, 9.0, 0.0, TAU, 20, Color(0.86, 0.97, 1.0, 0.18), 1.5, true)
+
+## 라이프 · 점수. 텍스트 0줄 방침이라 라이프는 도형, 점수만 숫자다.
+func _draw_gauges() -> void:
+	var y := vh - Tune.DECK_H + 22.0
+	for i in Tune.LIVES:
+		var p := Vector2(28.0 + float(i) * 26.0, y)
+		if i < main.lives:
+			draw_colored_polygon(PackedVector2Array([
+				p + Vector2(0.0, -9.0), p + Vector2(7.0, 6.0),
+				p + Vector2(0.0, 2.0), p + Vector2(-7.0, 6.0)]),
+				Color(Tune.COL_SHIP, 0.9))
+		else:
+			draw_arc(p, 6.0, 0.0, TAU, 16, Color(Tune.COL_SHIP, 0.2), 1.5, true)
+	var f := ThemeDB.fallback_font
+	draw_string(f, Vector2(view_w - 190.0, y + 5.0), "%08d" % main.score,
+			HORIZONTAL_ALIGNMENT_RIGHT, 170.0, 20, Color(0.86, 0.95, 0.95, 0.85))
 
 ## 사망 피드백 — 화면 전체 플래시 + 사망 지점에서 확장하는 링 파동.
 ##
@@ -187,6 +242,7 @@ func _draw_hud() -> void:
 		"" if TouchRouter.screen_mm_measured() else "?",
 		int(m.view_w), int(vh),
 		SimClock.run_index, m.deaths]
+	l2 += "  L%d B%d mt%d" % [m.lives, m.bombs, m.motes.n]
 	var y := Backdrop.BAND_H + float(fs) + 8.0
 	draw_string(f, Vector2(10.0, y), l1, HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
 			Color(0.75, 0.90, 0.90, 0.85))

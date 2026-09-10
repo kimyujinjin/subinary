@@ -244,6 +244,18 @@ func _seg_dist2(ax: float, ay: float, bx: float, by: float) -> float:
 	var qy := ay + dy * t
 	return qx * qx + qy * qy
 
+## 소광침 — 기체 위로 뻗는 폭 2·half 의 수직 기둥. 기둥 밖은 그대로 남는다.
+func clear_column(cx: float, half_w: float, y_max: float) -> void:
+	var i := 0
+	while i < n:
+		if absf(pos_x[i] - cx) <= half_w and pos_y[i] <= y_max:
+			n -= 1
+			pos_x[i] = pos_x[n]; pos_y[i] = pos_y[n]
+			vel_x[i] = vel_x[n]; vel_y[i] = vel_y[n]
+			kind[i] = kind[n]; bid[i] = bid[n]; flags[i] = flags[n]
+		else:
+			i += 1
+
 ## 국소 소거 — 폭탄·부활용. 전탄 소거는 clear() 한 줄.
 func clear_radius(cx: float, cy: float, r: float) -> void:
 	var r2 := r * r

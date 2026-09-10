@@ -30,6 +30,7 @@ func _ready() -> void:
 	_main = null
 	await get_tree().process_frame
 	await _boss_clear_case()
+	await _system_cases()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
 
@@ -111,4 +112,96 @@ func _boss_clear_case() -> void:
 		"격파 → 2초 뒤 재시작 (재시작 %s · clear_anim %d · HP %.0f%%)" % [
 			restarted, bm.clear_anim, bm.boss.hp_frac() * 100.0])
 	bm.queue_free()
+	await get_tree().process_frame
+
+# ── 3단계 시스템 ────────────────────────────────────────────────────────
+## 라이프·구제 창·폭탄·부활은 사망 흐름 전체를 바꾼다. 헤드리스 스모크는 이 경로를
+## 한 번도 밟지 않으므로(무조작 런은 그냥 죽는다) 여기서 강제로 통과시킨다.
+func _mk_stage() -> Node:
+	TouchRouter.clear_touches()
+	TouchRouter.reset_run()
+	var m: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(m)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	return m
+
+## 기체 위에 탄을 직접 놓아 피격을 만든다 — 웨이브를 기다리지 않는다.
+func _force_hit(m: Node) -> void:
+	m.invincible_left = 0
+	var p: Vector2 = m.player
+	BulletField.spawn(p.x, p.y, 0.0, 0.0, Tune.Kind.SPORE_TIDE)
+	await get_tree().physics_frame
+
+func _system_cases() -> void:
+	# ① 피격은 사망이 아니라 구제 창을 연다
+	var m := await _mk_stage()
+	var lives0: int = m.lives
+	await _force_hit(m)
+	_check(SimClock.state == SimClock.State.RESCUE and m.lives == lives0 and m.deaths == 0,
+		"피격 → 구제 창 (state %d · 라이프 %d · 사망 %d)" % [SimClock.state, m.lives, m.deaths])
+
+	# ② 창 안에 폭탄 → 사망 취소. 기둥 밖 탄은 남는다(전탄 소거가 아니다).
+	var far_x: float = m.player.x + Tune.BOMB_COL_HALF + 60.0
+	BulletField.spawn(far_x, m.player.y - 200.0, 0.0, 0.0, Tune.Kind.SPORE_TIDE)
+	var bombs0: int = m.bombs
+	TouchRouter.bomb_pressed = true
+	await get_tree().physics_frame
+	_check(SimClock.state == SimClock.State.RUN and m.lives == lives0 and m.bombs == bombs0 - 1,
+		"구제 성공 (state %d · 라이프 %d · 폭탄 %d→%d)" % [
+			SimClock.state, m.lives, bombs0, m.bombs])
+	var outside := false
+	for i in BulletField.n:
+		if absf(BulletField.pos_x[i] - m.bomb_pos.x) > Tune.BOMB_COL_HALF:
+			outside = true
+	_check(outside, "폭탄이 기둥 밖을 남긴다 (탄 %d)" % BulletField.n)
+	m.queue_free(); await get_tree().process_frame
+
+	# ③ 창 만료 → 사망. 라이프가 남으면 탭에 사망 지점 부활, 런은 이어진다.
+	m = await _mk_stage()
+	m.bombs = 0
+	lives0 = m.lives
+	await _force_hit(m)
+	for i in Tune.RESCUE_TICKS + Tune.RESCUE_HITSTOP + 8:
+		await get_tree().physics_frame
+	_check(m.lives == lives0 - 1 and m.deaths == 1
+			and (SimClock.state == SimClock.State.DEATH_REPLAY
+				or SimClock.state == SimClock.State.DEATH_FROZEN),
+		"창 만료 → 사망 (라이프 %d→%d · state %d)" % [lives0, m.lives, SimClock.state])
+	var run0: int = SimClock.run_index
+	var tick0: int = SimClock.sim_tick
+	var dpos: Vector2 = m.lesson_death_pos
+	m._restart_armed = true
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_check(SimClock.state == SimClock.State.RUN and SimClock.run_index == run0
+			and SimClock.sim_tick >= tick0 and m.player.distance_to(dpos) < 40.0
+			and m.invincible_left > 0,
+		"라이프 남음 → 사망 지점 부활·런 유지 (run %d · tick %d→%d · 무적 %d)" % [
+			SimClock.run_index, tick0, SimClock.sim_tick, m.invincible_left])
+
+	# ④ 라이프 0 → 완전 재시작
+	m.lives = 1
+	m.bombs = 0
+	await _force_hit(m)
+	for i in Tune.RESCUE_TICKS + Tune.RESCUE_HITSTOP + 8:
+		await get_tree().physics_frame
+	_check(m.lives == 0, "마지막 라이프 소모 (라이프 %d)" % m.lives)
+	run0 = SimClock.run_index
+	m._restart_armed = true
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_check(SimClock.run_index > run0 and m.lives == Tune.LIVES and m.bombs == Tune.BOMBS
+			and m.score == 0,
+		"라이프 0 → 완전 재시작 (run %d → %d · 라이프 %d · 폭탄 %d)" % [
+			run0, SimClock.run_index, m.lives, m.bombs])
+
+	# ⑤ 광립 회수 → 점수. graze 링 반경으로 먹는다.
+	var sc0: int = m.score
+	m.motes.spawn(SimClock.sim_tick - Tune.MOTE_HOME_DELAY,
+			m.player.x + Tune.GRAZE_R * 0.5, m.player.y)
+	await get_tree().physics_frame
+	_check(m.score > sc0 and m.motes.n == 0,
+		"광립 회수 → 점수 (%d → %d · 남은 광립 %d)" % [sc0, m.score, m.motes.n])
+	m.queue_free()
 	await get_tree().process_frame

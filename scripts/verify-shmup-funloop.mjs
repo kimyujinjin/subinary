@@ -146,6 +146,24 @@ for (const r of out) {
 const measured = out.filter(r => r.ok !== null)
 const failed = measured.filter(r => !r.ok)
 const missing = out.filter(r => r.ok === null)
+// 3단계 시스템 — 구제 창이 실제로 쓰이는가. 창이 열린 줄 모르면 그 기능은 없는 것과 같다.
+const hits = rows.filter(r => r[0] === 'hit')
+const bombs = rows.filter(r => r[0] === 'bomb').map(r => Object.fromEntries(
+  String(of(r, 'detail') || '').split(';').filter(Boolean).map(kv => kv.split('='))))
+if (hits.length || bombs.length) {
+  const rescued = bombs.filter(b => b.rescue === '1').length
+  const offensive = bombs.length - rescued
+  console.log(`\n피격 ${hits.length} · 폭탄 ${bombs.length}(구제 ${rescued} · 선제 ${offensive})`
+    + ` · 사망 ${deaths.length}`)
+  if (hits.length) {
+    const pct = (rescued / hits.length) * 100
+    console.log(`  구제 성공률 ${pct.toFixed(0)}% — 0%% 면 창이 열린 것을 모르거나 반응 시간이 모자란다`)
+  }
+  const last = deaths.length ? Object.fromEntries(
+    String(of(deaths[deaths.length - 1], 'detail') || '').split(';').filter(Boolean).map(kv => kv.split('='))) : null
+  if (last && last.score !== undefined) console.log(`  마지막 사망 시 점수 ${last.score} · 라이프 ${last.lives}`)
+}
+
 // 재파지 원인 — ev=regrip 행의 detail (key=value;...). 판정이 아니라 다음 수정의 근거다.
 const regrips = rows.filter(r => r[0] === 'regrip').map(r => Object.fromEntries(
   String(of(r, 'detail') || '').split(';').filter(Boolean).map(kv => kv.split('='))

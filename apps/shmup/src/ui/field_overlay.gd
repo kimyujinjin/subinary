@@ -26,6 +26,8 @@ func _draw() -> void:
 func _draw_live() -> void:
 	_draw_enemies()
 	_draw_pshots()
+	_draw_motes()
+	_draw_bomb()
 	# 이번 틱에 실제로 판정된 탄의 스윕 캡슐 (판정 오버레이)
 	var sc: int = BulletField.swept_count()
 	if sc >= 2:
@@ -35,6 +37,32 @@ func _draw_live() -> void:
 			seg[i] = BulletField.swept[i]
 		draw_multiline(seg, Color(1.0, 0.85, 0.35, 0.20), 1.0)
 	_draw_ship(main.player, 1.0)
+
+## 광립 — 청백 코어. 유도 전에는 조류를 타고 부상하므로 동선 자체가 조류 독해 연습이다.
+func _draw_motes() -> void:
+	var mf: MoteField = main.motes
+	if mf.n <= 0:
+		return
+	var t := SimClock.sim_tick
+	for i in mf.n:
+		var p := Vector2(mf.xs[i], mf.ys[i])
+		var homing := t - mf.born[i] >= Tune.MOTE_HOME_DELAY
+		draw_circle(p, Tune.MOTE_R + 3.0, Color(Tune.COL_PSHOT, 0.18))
+		draw_circle(p, Tune.MOTE_R, Color(0.86, 0.97, 1.0, 0.95 if homing else 0.7))
+
+## 소광침 — 위로 뻗는 기둥 + 주변. 기둥 밖이 남는다는 것이 폭탄의 대가이므로
+## 연출도 정확히 그 모양이어야 한다(넓게 번쩍이면 전탄 소거로 오해된다).
+func _draw_bomb() -> void:
+	var a: int = SimClock.bomb_anim
+	if a < 0 or a >= Tune.BOMB_ANIM:
+		return
+	var f := 1.0 - float(a) / float(Tune.BOMB_ANIM)
+	var c: Vector2 = main.bomb_pos
+	var w: float = Tune.BOMB_COL_HALF * (0.35 + 0.65 * (1.0 - f))
+	draw_rect(Rect2(c.x - w, 0.0, w * 2.0, c.y), Color(0.86, 0.97, 1.0, 0.22 * f))
+	draw_line(Vector2(c.x - w, c.y), Vector2(c.x + w, c.y), Color(0.9, 0.98, 1.0, 0.7 * f), 3.0)
+	draw_arc(c, Tune.BOMB_LOCAL_R * (1.0 - f * f), 0.0, TAU, 40,
+			Color(0.86, 0.97, 1.0, 0.8 * f), 3.0, true)
 
 func _draw_ship(p: Vector2, a: float) -> void:
 	# 관측침 — 절차적 도형. 세로로 긴 삼각 실루엣.
@@ -48,6 +76,11 @@ func _draw_ship(p: Vector2, a: float) -> void:
 	# 판정 원 4유닛: 흰 채움 + 2유닛 검은 외곽 — 상시
 	draw_circle(p, Tune.PLAYER_R + 2.0, Color(0.0, 0.0, 0.0, 0.85 * a))
 	draw_circle(p, Tune.PLAYER_R, Color(1.0, 1.0, 1.0, a))
+	# 무적 표시 — 부활·폭탄 직후. 있는지 없는지 모르면 언제 다시 위험해지는지 알 수 없다.
+	if main.invincible_left > 0 and SimClock.state != SimClock.State.DEATH_REPLAY:
+		var w := 1.0 - float(main.invincible_left) / float(Tune.REVIVE_INVINCIBLE)
+		draw_arc(p, Tune.GRAZE_R + 6.0, -PI * 0.5, -PI * 0.5 + TAU * clampf(w, 0.0, 1.0), 32,
+				Color(0.9, 0.98, 1.0, 0.55 * a), 2.0, true)
 
 func _draw_enemies() -> void:
 	var ef: EnemyField = main.enemies
