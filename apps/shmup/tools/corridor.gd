@@ -141,6 +141,32 @@ func still_violations(still_gap: int, win: int, move: float,
 				viol_ticks.append(i)
 	return v
 
+## 통로가 연속으로 열려 있던 시간의 분포. 1D 스캔이 못 잡던 축이다.
+##
+## 실기에서 모든 런이 8초에 끝났고 사망 순간 최장 자유 구간은 144~352유닛이었다 —
+## 공간은 있었는데 통과하지 못했다. 즉 "지금 틈이 얼마나 넓은가" 만으로는 부족하고
+## "그 틈이 얼마나 오래 열려 있는가" 를 함께 봐야 한다.
+##
+## 반환 [최단 유지 틱, 중앙값 유지 틱, 표본 수]. 유지 = 추적 통로가 pass 폭 이상인 구간.
+func hold_times(pass_w: int) -> Array:
+	var spans: Array = []          # [길이, 시작틱]
+	var run := 0
+	for i in width_hist.size():
+		var w := width_hist[i]
+		if w >= pass_w:
+			run += 1
+		elif run > 0:
+			spans.append([run, i - run])
+			run = 0
+	if run > 0:
+		spans.append([run, width_hist.size() - run])
+	if spans.is_empty():
+		return [0, 0, 0, -1]
+	spans.sort_custom(func(a, b): return int(a[0]) < int(b[0]))
+	var mid: Array = spans[spans.size() / 2]
+	var shortest: Array = spans[0]
+	return [int(shortest[0]), int(mid[0]), spans.size(), int(shortest[1])]
+
 func min_width() -> int:
 	var m := Tune.SCAN_CELLS
 	for w in width_hist:

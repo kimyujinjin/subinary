@@ -12,6 +12,8 @@ var view_w: float = Tune.PF_W
 func _draw() -> void:
 	if main == null:
 		return
+	_draw_death_feedback()
+	_draw_restart_prompt()
 	_draw_deck()
 	_draw_touch_debug()
 	_draw_hud()
@@ -47,6 +49,55 @@ func _draw_deck() -> void:
 		# 손가락 위치와 엣지 푸시 상태
 		draw_arc(TouchRouter.drag_pos, 26.0, 0.0, TAU, 20,
 				Color(1.0, 1.0, 1.0, 0.18 if TouchRouter.edge_push == Vector2.ZERO else 0.55), 2.0, true)
+
+## 사망 피드백 — 화면 전체 플래시 + 사망 지점에서 확장하는 링 파동.
+##
+## 설계서: "피격·폭탄 피드백의 1순위는 소리가 아니라 화면(히트스톱 + 플래시 + 링 파동)".
+## Android 오디오 지연이 80~150ms 이고 AudioServer.get_output_latency() 가 0 을 돌려주므로
+## 보정도 무효다 — 그래서 사망 신호는 전부 시각이어야 한다.
+##
+## 히트스톱만 구현했더니 실기에서 죽는 순간이 "화면이 갑자기 되감기며 멈춘다" 로만
+## 보였고, 사용자가 크래시로 인식했다.
+const FLASH_TICKS := 7
+const RING_TICKS := 26
+const RING_MAX := 260.0
+
+func _draw_death_feedback() -> void:
+	var a: int = SimClock.death_anim
+	if a < 0:
+		return
+	if a < FLASH_TICKS:
+		var f := 1.0 - float(a) / float(FLASH_TICKS)
+		draw_rect(Rect2(0.0, 0.0, view_w, vh), Color(1.0, 0.45, 0.48, 0.34 * f * f), true)
+	if a < RING_TICKS:
+		var t := float(a) / float(RING_TICKS)
+		var r := RING_MAX * (1.0 - (1.0 - t) * (1.0 - t))   # ease-out
+		var alpha := (1.0 - t) * 0.85
+		var c := Vector2(main.lesson_death_pos.x + main.field_dx, main.lesson_death_pos.y)
+		draw_arc(c, r, 0.0, TAU, 48, Color(1.0, 0.42, 0.45, alpha), 4.0, true)
+		draw_arc(c, r * 0.72, 0.0, TAU, 48, Color(1.0, 0.75, 0.72, alpha * 0.5), 2.0, true)
+
+## 재시작 어포던스. 텍스트 0줄 방침이므로 도형으로만 알린다.
+##
+## 정지 프레임에서 무엇을 해야 하는지 알려주는 것이 없으면 사용자는 "멈췄다/고장났다"로
+## 읽는다 — 실기에서 실제로 그렇게 보고됐다. 사망 지점에 맥동하는 원을 둔다.
+func _draw_restart_prompt() -> void:
+	if SimClock.state != SimClock.State.DEATH_FROZEN:
+		return
+	var t := float(SimClock.death_anim) / 60.0
+	var pulse := 0.5 + 0.5 * sin(t * TAU * 0.9)
+	var c := Vector2(main.lesson_death_pos.x + main.field_dx, main.lesson_death_pos.y)
+	var r := 30.0 + 10.0 * pulse
+	draw_arc(c, r, 0.0, TAU, 40, Color(0.95, 0.98, 0.98, 0.25 + 0.5 * pulse), 2.5, true)
+	# 손가락 모양 대신 안쪽으로 향하는 삼각 4개 — "여기를 눌러라"
+	for i in 4:
+		var a := float(i) * TAU * 0.25 + PI * 0.25
+		var d := Vector2(cos(a), sin(a))
+		var n := Vector2(-d.y, d.x)
+		var tip := c + d * (r - 9.0)
+		var base := c + d * (r + 7.0)
+		draw_colored_polygon(PackedVector2Array([tip, base + n * 6.0, base - n * 6.0]),
+				Color(0.95, 0.98, 0.98, 0.2 + 0.45 * pulse))
 
 ## 터치 디버그 — P1 의 게이트 항목이다. "실기에서 두 손가락 index 가 각각 보이는가."
 ##

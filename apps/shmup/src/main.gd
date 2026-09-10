@@ -156,10 +156,15 @@ func _reset(seed_value: int) -> void:
 
 # ── 입력: 사망 후 탭 재시작 ─────────────────────────────────────────────
 func _unhandled_input(event: InputEvent) -> void:
-	if SimClock.state != SimClock.State.DEATH_REPLAY \
-			and SimClock.state != SimClock.State.DEATH_FROZEN:
+	# 되감기가 끝난 뒤부터 받는다.
+	#
+	# "되감기 중에도 즉시 받는다" 로 만들었더니 실기에서 사망 → 입력이 12건 전부
+	# 0.00초였다. 드래그 손가락이 화면에 올려진 상태로 죽으므로 그 손가락의 다음
+	# press 가 곧바로 재시작을 유발하고, 교재를 볼 시간이 0 이 된다.
+	# 설계서 원문은 "0.5초 되감기 → 정지 프레임 → 탭 재시작, 1.0초 미만" 이다.
+	# 되감기 30틱 + 정지 12틱 = 0.7초이므로 반응 시간을 더해도 1.0초 안에 들어간다.
+	if SimClock.state != SimClock.State.DEATH_FROZEN:
 		return
-	# 되감기 중에도 탭을 즉시 받는다 — UI 를 기다리게 하면 지표 ③ 이 깨진다.
 	if (event is InputEventScreenTouch and (event as InputEventScreenTouch).pressed) \
 			or (event is InputEventMouseButton and (event as InputEventMouseButton).pressed) \
 			or (event is InputEventKey and (event as InputEventKey).pressed):
@@ -186,8 +191,11 @@ func _physics_process(_delta: float) -> void:
 	if SimClock.state == SimClock.State.DEATH_FROZEN:
 		if _restart_armed:
 			_reset(FIXED_SEED)
+		else:
+			_screen_ui.queue_redraw()   # 재시작 어포던스 깜빡임
 		return
 	if SimClock.state == SimClock.State.HITSTOP:
+		_screen_ui.queue_redraw()      # 플래시·링 파동은 시뮬이 멈춰도 계속 돈다
 		return
 
 	var tick := SimClock.sim_tick
@@ -240,6 +248,9 @@ func _physics_process(_delta: float) -> void:
 		_cap_tick = 0
 		_capture.call_deferred()
 
+	_redraw_all(tick)
+
+func _redraw_all(tick: int) -> void:
 	_backdrop.tick = tick
 	_backdrop.queue_redraw()
 	_bullets.queue_redraw()
@@ -267,9 +278,6 @@ func _on_death() -> void:
 	SimClock.hitstop(DEATH_HITSTOP)
 
 func _step_lesson() -> void:
-	if _restart_armed:
-		_reset(FIXED_SEED)
-		return
 	if lesson_step < replay.length() - 1:
 		lesson_step += 1
 	else:
@@ -277,6 +285,7 @@ func _step_lesson() -> void:
 		if lesson_hold >= LESSON_HOLD_TICKS:
 			SimClock.state = SimClock.State.DEATH_FROZEN
 	_overlay.queue_redraw()
+	_screen_ui.queue_redraw()
 	_screen_ui.queue_redraw()
 
 # ── 자탄 ────────────────────────────────────────────────────────────────

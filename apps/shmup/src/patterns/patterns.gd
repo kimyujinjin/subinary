@@ -22,7 +22,7 @@ const NAMES := ["P01 적조 낙하", "P03 직침", "P07 조류 격자"]
 const P01_ARC := 160.0
 const P01_COUNT := 11
 const P01_SPEED := 230.0
-const P01_VOLLEY_TICKS := 42
+const P01_VOLLEY_TICKS := 66
 const P01_VOLLEYS := 6
 const P01_VY_FLOOR := 0.55   # 최소 낙하 속도 = speed × 0.55 → 화면 통과 ≤ 8.8초
 

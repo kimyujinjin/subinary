@@ -13,6 +13,10 @@ var hitstop_left: int = 0
 var run_index: int = 0
 var run_seed: int = 0
 
+## 사망 연출 전용 시계. 시뮬이 멈춘 뒤에도 흐르므로 플래시·링 파동이 살아 있다 —
+## 이게 "멈췄는데 살아 있는" 타격감의 정체다.
+var death_anim: int = -1
+
 ## 시뮬이 이번 틱에 전진하는가. 연출은 이것과 무관하게 _process 에서 계속 돈다 —
 ## 이게 "멈췄는데 살아 있는" 타격감의 정체다.
 func sim_advances() -> bool:
@@ -20,6 +24,8 @@ func sim_advances() -> bool:
 
 func begin_tick() -> void:
 	wall_tick += 1
+	if death_anim >= 0:
+		death_anim += 1
 	if state == State.HITSTOP:
 		hitstop_left -= 1
 		if hitstop_left <= 0:
@@ -30,10 +36,12 @@ func begin_tick() -> void:
 func hitstop(ticks: int) -> void:
 	hitstop_left = ticks
 	state = State.HITSTOP
+	death_anim = 0
 
 func reset(seed_value: int) -> void:
 	sim_tick = 0
 	state = State.RUN
 	hitstop_left = 0
+	death_anim = -1
 	run_index += 1
 	run_seed = seed_value

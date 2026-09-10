@@ -12,6 +12,7 @@ extends Node
 ##   FAIL  틈 < 88유닛인데 정지 창이 없음               — 직전 0.35초간 틈 중심 이동 ≤16유닛 규칙
 ##   WARN  틈 < GAP_NORMAL(96)                          — 정지 창은 있으나 Normal 하한 미달
 ##   FAIL  강제 전환 — 통로가 겹침 없이 사라져 점프를 강요                — 재앵커 불가
+##   FAIL  통로 유지 시간 < 24틱(400ms) — 반응 시간 밑이라 인간이 통과할 수 없다
 ##   WARN  절대 벽 (자유 구간 0)
 ##
 ## 요구 이동량은 상한값으로만 출력하고 판정에 쓰지 않는다 — tools/corridor.gd 주석 참조.
@@ -26,6 +27,8 @@ const STILL_WIN := 21       # 0.35초
 const STILL_MOVE := 16.0
 const MOVE_WIN := 36        # 0.6초
 const MOVE_CAP := 250.0
+## 통로 최소 유지 시간. 반응 250~300ms + 엄지 전이 60~100ms → 24틱(400ms) 을 하한으로 둔다.
+const HOLD_MIN := 24
 
 var _fair: Fairness = null
 var _fail := 0
@@ -102,6 +105,8 @@ func _scan(label: String, emit: Callable, ticks: int, ef: EnemyField = null) -> 
 		var min_track := cor.min_width()
 		var still_viol := cor.still_violations(STILL_GAP, STILL_WIN, STILL_MOVE, flow_x)
 		var max_move := cor.max_demand(MOVE_WIN, TIGHT)
+		# 통로 유지 시간 — 통과 폭 이상으로 열려 있던 연속 구간
+		var hold: Array = cor.hold_times(int(Tune.GAP_NORMAL))
 		for t in ticks:
 			var g := gaps[t]
 			if g < 0:
@@ -126,6 +131,12 @@ func _scan(label: String, emit: Callable, ticks: int, ef: EnemyField = null) -> 
 			flags.append("FAIL:정지창%d@%s" % [still_viol,
 				",".join(Array(cor.viol_ticks).slice(0, 6).map(func(x): return str(x)))])
 			_fail += 1
+		# 반응 시간 하한: 단순 시각 자극 반응 중앙값 250~300ms + 엄지 전이 60~100ms.
+		# 통로가 그보다 짧게 열리면 폭이 충분해도 인간이 통과할 수 없다 —
+		# 실기에서 모든 런이 8초에 끝났는데 사망 순간 최장 구간은 144~352유닛이었다.
+		# 폭만 보는 지표는 그 상황을 통과시킨다.
+		if int(hold[2]) > 0 and int(hold[0]) < HOLD_MIN:
+			flags.append("FAIL:유지%d틱@t%d" % [int(hold[0]), int(hold[3])]); _fail += 1
 		# 통로 간 이동 자체는 탄막의 정상 동작이다. 불공정한 것은 엄지 스윕이 낼 수 없는
 		# 거리를 강요하는 것 — 그래서 점프 거리가 요구 이동 상한(250유닛)을 넘을 때만 실패다.
 		if cor.forced > 0:
@@ -139,6 +150,6 @@ func _scan(label: String, emit: Callable, ticks: int, ef: EnemyField = null) -> 
 			flags.append("WARN:<96"); _warn += 1
 		if flags.is_empty():
 			flags.append("OK")
-		print("  %-14s y%4d : 최장min=%3d(t%4d) avg=%3d <96:%3d/%-4d 통로min=%3d peak=%3d 이동상한=%3.0fu  %s" % [
-			label, int(band), min_gap, min_tick, sum / samples, below_normal, samples,
-			min_track, peak, max_move, " ".join(flags)])
+		print("  %-14s y%4d : 최장min=%3d avg=%3d <96:%3d/%-4d 통로min=%3d 유지min=%2d@t%-4d p50=%3d(n%d) peak=%3d  %s" % [
+			label, int(band), min_gap, sum / samples, below_normal, samples,
+			min_track, int(hold[0]), int(hold[3]), int(hold[1]), int(hold[2]), peak, " ".join(flags)])
