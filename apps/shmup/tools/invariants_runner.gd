@@ -5,6 +5,7 @@ extends Node
 ##   ① 조류 띠 위상의 부호 = 유속의 부호 (tick × c 로 계산하면 램프마다 역주행했다)
 ##   ② 직침어의 첫 바늘이 생성된 틱을 넘겨 살아남는다 (컬링 경계 밖에서 쏘면 즉사했다)
 ##   ③ 조류 위상 한 주기 적분 = 0 (flow_phase 의 닫힌형 전제)
+##   ⑦ 보스 발광 기관 예고 — 모든 발사에 8틱 예고가 붙고, 오지 않는 발사를 예고하지 않는다
 ##   ⑥ Reach1D — 정적 벽과 틈에서 "속도 v 로 틈에 닿는가" 가 손 계산과 일치한다
 ##   ⑤ 보스 P1 — 호흡 창에 새 발사 0 · 링 회전 방향 = 조류 방향 (설계서 §6 의 약속)
 ##   ④ 터치 로직 — 합성 이벤트를 TouchRouter 에 직접 넣는다. 맥의 합성 터치는 index 0
@@ -20,6 +21,7 @@ func _ready() -> void:
 	_touch_cases()
 	_boss_rhythm()
 	_reach_cases()
+	_glow_cases()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
 
@@ -202,3 +204,36 @@ func _reach_cases() -> void:
 		var expect: bool = 59 + v * T >= 600
 		_check(r.alive == expect and expect == c[2],
 			"Reach1D v=%d T=%d → 생존 %s (손 계산 %s)" % [v, T, r.alive, expect])
+
+# ── 보스 예고 ───────────────────────────────────────────────────────────
+## 예고와 실제 발사가 같은 출처인지. 창 경계에서 유령 예고/무예고가 났던 결함의 회귀 검사.
+func _glow_cases() -> void:
+	for slow in [false, true]:
+		BulletField.flow_slow = slow
+		var b := Boss.new()
+		b.reset(0)
+		var fires := PackedInt32Array()
+		for t in Boss.P1_MAX_TICKS:
+			if b.p05_fires(t):
+				fires.append(t)
+		var unwarned := 0
+		for t in fires:
+			# 발사 직전 8틱(t-8..t-1)에 예고가 단조 증가해야 한다
+			if t >= 8 and b.organ_glow(t - 8) <= 0.0 and b.organ_glow(t - 1) < 0.8:
+				unwarned += 1
+		var phantom := 0
+		for t in Boss.P1_MAX_TICKS:
+			if b.organ_glow(t) <= 0.0:
+				continue
+			var has := false
+			for d in 9:
+				if b.p05_fires(t + d):
+					has = true
+					break
+			if not has:
+				phantom += 1
+		BulletField.flow_slow = false
+		var tag := "감속" if slow else "기본"
+		_check(fires.size() > 0 and unwarned == 0 and phantom == 0,
+			"보스 예고 = 발사 (%s · 발사 %d · 무예고 %d · 유령 %d)" % [
+				tag, fires.size(), unwarned, phantom])

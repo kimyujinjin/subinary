@@ -34,6 +34,7 @@ scripts/doctor.sh        # 엔진 버전 + 프로젝트 설정 키 대조 (키 �
 scripts/fairness.sh      # 1D 공정성 스캔. exit 1 = 패턴 저작 규칙 위반
 godot --headless --path . scenes/invariants.tscn   # 회귀 불변식 (조류 위상 · 첫 바늘 · 다손가락 터치 6종)
 godot --headless --path . scenes/onramp.tscn       # 첫 10초 압력 (볼리 수 × 첫 직침어 진입)
+godot --headless --path . scenes/input_path.tscn    # 실제 입력 경로 + 보스 격파 → 재시작
 godot --headless --path . scenes/boss_scan.tscn    # 보스 P1 성분 진단 + 도달 판정 (≈4분)
 godot --path . scenes/boss_rush.tscn               # 보스 러시 직접 실행
 GODOT=... godot --headless --path . scenes/soak.tscn   # 30초 루프 5회 — 탄 누적 확인
@@ -217,12 +218,34 @@ y 방향 회피를 쓰지 않으므로 보수적이다.
 - 장면 전환: 최상단 64유닛을 0.5초 안에 세 번 탭(데스크톱 B 키)
 - 값: ω 0.30 · P05 탄속 200 (`scenes/boss_scan.tscn` — 성분별 진단 + 9조합 도달 판정)
 
+## 이벤트를 소비하면 그 손가락의 **전부**를 소비해야 한다
+
+최상단 띠 제스처가 press 만 소비하고 drag 를 흘렸더니, TouchRouter 의 `_touch` 에
+화면에 없는 손가락이 유령으로 남고 다음 재파지에서 릴레이가 그리로 넘어가 **기체가
+영구히 멈췄다**(드래그 100px 에 x 408 → 408). 소비는 index 단위로 한다 — press 를 가져간
+index 를 기록하고 그 index 의 drag·release 만 함께 소비한다. release 는 좌표로 판단하지
+않는다(iOS 는 (-1,-1) 로 보낸다). TouchRouter 쪽에도 2차 방어선을 뒀다: press 를 못 본
+index 의 drag 는 무시한다.
+
+## 예고와 실제 발사는 같은 술어에서 나와야 한다
+
+보스 발광 기관 예고를 창 국소 틱(`P05_EVERY - l % P05_EVERY`)으로 계산했더니 두 방향으로
+틀렸다 — 압력 창 끝에서는 오지 않는 발사를 예고하고, 창 첫 발사는 예고 없이 터졌다
+(틱 1~999 의 19발 중 5발 무예고 · 4구간 유령 예고). `Boss.p05_fires(tick)` 하나를 두고
+`step()` 과 `organ_glow()` 가 함께 쓴다. 불변식이 무예고 0 · 유령 0 을 지킨다.
+
 ## 다손가락 로직은 헤드리스에서 검증한다
 
 맥의 합성 터치는 index 0 하나뿐이라 릴레이 인계·재시작 탭·사망 화면 해제 같은
 다손가락 경로를 에디터로 재현할 수 없다. `InputEventScreenTouch`/`ScreenDrag` 를 만들어
 `TouchRouter._unhandled_input()` 에 직접 넣으면 된다 — `tools/invariants_runner.gd` 의
 `_touch_cases()`. 실기는 "손에 어떻게 느껴지는가" 만 판정하게 남긴다.
+
+단, 그 방식은 `TouchRouter._unhandled_input()` 을 직접 부르므로 **상위 노드가 이벤트를 먼저
+소비하는 경로를 못 본다** — 위의 유령 터치 결함이 정확히 그 사각지대였다.
+`scenes/input_path.tscn` 은 실제 씬을 띄우고 `Viewport.push_input` 으로 넣는다.
+보스 격파 → 재시작 경로도 여기서 검증한다(무조작 헤드리스 런은 50초 전에 죽어
+스모크 테스트로는 그 경로가 실행되지 않는다).
 
 ## RunLog 의 detail 칼럼
 

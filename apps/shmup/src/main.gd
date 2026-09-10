@@ -35,6 +35,10 @@ var _clear_left: int = -1
 var _boss_view: BossView = null
 var _toggle_taps: int = 0
 var _toggle_tick: int = -9999
+## 최상단 띠가 press 를 가져간 터치 index. 그 index 의 drag·release 만 함께 소비한다 —
+## press 만 소비하면 그 손가락의 drag 가 TouchRouter 로 새어 _touch 에 유령 항목이 남고,
+## 다음 재파지에서 릴레이가 화면에 없는 손가락으로 넘어가 기체가 영구히 멈춘다(실측).
+var _band_idx: Dictionary = {}
 var fairness: Fairness = null
 var replay: Replay = null
 
@@ -197,18 +201,25 @@ func _debug_toggle(event: InputEvent) -> bool:
 			_switch_scene()
 			return true
 		return false
+	if event is InputEventScreenDrag:
+		# 띠에서 시작한 손가락의 drag 만 소비한다.
+		return _band_idx.has((event as InputEventScreenDrag).index)
 	if event is InputEventScreenTouch:
 		var t := event as InputEventScreenTouch
+		if not t.pressed:
+			# release 는 좌표로 판단하지 않는다 — iOS 는 (-1,-1) 로 보내고, 띠에서 시작한
+			# 손가락이 아래로 끌려가 떼어질 수도 있다. press 를 가져간 index 만 소비한다.
+			return _band_idx.erase(t.index)
 		if t.position.y >= 64.0:
 			return false
-		if t.pressed:
-			if SimClock.wall_tick - _toggle_tick > 30:
-				_toggle_taps = 0
-			_toggle_taps += 1
-			_toggle_tick = SimClock.wall_tick
-			if _toggle_taps >= 3:
-				_toggle_taps = 0
-				_switch_scene()
+		_band_idx[t.index] = true
+		if SimClock.wall_tick - _toggle_tick > 30:
+			_toggle_taps = 0
+		_toggle_taps += 1
+		_toggle_tick = SimClock.wall_tick
+		if _toggle_taps >= 3:
+			_toggle_taps = 0
+			_switch_scene()
 		return true
 	return false
 
@@ -298,7 +309,10 @@ func _physics_process(_delta: float) -> void:
 		_shots_vs_enemies()
 
 	# 5. 탄 적분 + 컬링 + 판정 (단일 순회)
-	if _cap_invincible or _clear_left >= 0:
+	# boss.done 은 이 틱의 step 4(자탄) 또는 boss.step 에서 켜지는데 _clear_left 는 아직 -1 이다.
+	# 그 사이에 판정이 돌면 격파 틱에 죽어서 'clear' 와 'death' 가 같은 틱에 기록되고,
+	# clear_anim 이 0 에 얼어붙어 청록 플래시가 사망 화면 전체를 덮는다(리뷰 실측).
+	if _cap_invincible or _clear_left >= 0 or (boss != null and boss.done):
 		invincible_left = 2
 	elif invincible_left > 0:
 		invincible_left -= 1
@@ -335,6 +349,8 @@ func _physics_process(_delta: float) -> void:
 ## 보스 P1 격파(70% 또는 50초). L0 에서는 P2 가 아직 없으므로 탄을 걷고 2초 뒤 재시작한다.
 ## 반환값 true = 이번 틱에 재시작했다(재드로우는 _restart 가 이미 했다).
 func _step_boss_clear(tick: int) -> bool:
+	if SimClock.state != SimClock.State.RUN:
+		return false            # 사망이 먼저 확정된 틱에는 격파 연출을 시작하지 않는다
 	if boss.done and _clear_left < 0:
 		_clear_left = CLEAR_TICKS
 		clear_anim = 0
@@ -413,6 +429,12 @@ func _step_lesson() -> void:
 		if lesson_hold >= LESSON_HOLD_TICKS:
 			SimClock.state = SimClock.State.DEATH_FROZEN
 	_bullets.queue_redraw()     # 교재 탄은 BulletRenderer 가 리플레이 프레임으로 그린다
+	if _boss_view != null:
+		# 링·발광 기관도 같은 프레임 틱으로 되돌린다. 사망 틱에 고정해 두면 교재에서
+		# 탄은 0.5초 과거인데 기관은 사망 시점 각도라 "기관 24개 = 탄 24발" 이 어긋나 보인다
+		# (실측: T=500 에서 7.0° = 외륜 위 28유닛, 기관 간격 60유닛의 절반).
+		_boss_view.tick = replay.frame_tick(clampi(lesson_step, 0, maxi(replay.length() - 1, 0)))
+		_boss_view.queue_redraw()
 	_overlay.queue_redraw()
 	_screen_ui.queue_redraw()
 

@@ -81,7 +81,7 @@ func step(tick: int, player: Vector2) -> void:
 	if w.x == 0:
 		return                        # 호흡 창 — 새 발사 없음
 	var l := w.y
-	if emit_p05 and l % P05_EVERY == 0:
+	if p05_fires(tick):
 		Patterns.p05_ex(CX, CY, R_OUTER, ring_angle(tick), p05_speed,
 				Patterns.P05_COUNT, Tune.Kind.SPORE_GRID)
 	if emit_p09 and l % P09_EVERY == 0 and l <= P09_LAST:
@@ -104,14 +104,28 @@ func _finish(tick: int, reason: String) -> void:
 	done_reason = reason
 	done_tick = tick
 
-## 다음 P05 발사까지의 근접도 0..1 — 발광 기관이 발사 직전 8틱 동안 밝아진다(예고).
-func organ_glow(tick: int) -> float:
-	if done or tick - _t0 < WAKE_TICKS:
-		return 0.0
+## 이 틱에 P05 가 발사되는가. step() 과 organ_glow 의 **단일 출처**다 —
+## 둘을 따로 계산하면 예고와 실제 발사가 어긋난다(아래 주석).
+func p05_fires(tick: int) -> bool:
+	if done or not emit_p05:
+		return false
+	var el := tick - _t0
+	if el < WAKE_TICKS or el >= P1_MAX_TICKS:
+		return false
 	var w := window(tick)
-	if w.x == 0:
+	return w.x == 1 and w.y % P05_EVERY == 0
+
+## 다음 P05 발사까지의 근접도 0..1 — 발광 기관이 발사 직전 8틱 동안 밝아진다(예고).
+##
+## 창 안의 국소 틱으로 `P05_EVERY - l % P05_EVERY` 를 쓰면 두 방향으로 틀린다:
+## 압력 창 끝(l 143~149)에서는 다음 틱이 호흡 창이라 오지 않는 발사를 예고하고,
+## 창의 첫 발사(l 0)는 직전 8틱이 호흡 창이라 예고가 0 에서 1 로 튄다.
+## 헤드리스 측정: 틱 1~999 의 19발 중 5발이 무예고, 4구간이 유령 예고(최대 0.875).
+## 그래서 실제 발사 술어를 8틱 앞까지 조회한다 — 창 경계·기상 지연·감속 모드에서 전부 맞는다.
+func organ_glow(tick: int) -> float:
+	if done:
 		return 0.0
-	var to_next := P05_EVERY - (w.y % P05_EVERY)
-	if to_next == P05_EVERY:
-		return 1.0
-	return clampf(1.0 - float(to_next) / 8.0, 0.0, 1.0)
+	for d in 9:
+		if p05_fires(tick + d):
+			return 1.0 - float(d) / 8.0
+	return 0.0

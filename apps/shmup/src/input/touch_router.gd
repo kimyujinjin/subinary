@@ -129,6 +129,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 	elif event is InputEventScreenDrag:
 		var d := event as InputEventScreenDrag
+		# press 를 못 본 index 는 우리 것이 아니다 — 상위 노드가 그 press 를 소비했다.
+		# 이 가드가 없으면 _touch 에 유령 항목이 남고 릴레이가 그리로 넘어간다(2차 방어선).
+		if not _touch.has(d.index):
+			return
 		_touch[d.index] = d.position
 		_touch_delta[d.index] = _touch_delta.get(d.index, Vector2.ZERO) + d.screen_relative
 		if d.index == drag_idx:
