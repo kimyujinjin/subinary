@@ -16,6 +16,9 @@ extends Node
 ## 그래서 720/창폭 으로 계산하면 태블릿에서 23% 어긋난다(0.878 대 실제 1.084).
 var field_per_px: float = 1.0
 var view_size: Vector2 = Vector2(Tune.PF_W, Tune.PF_H)
+## 0 이 아니면 뷰포트 높이를 이 값으로 간주한다(--force-16x9). _refresh_metrics 가
+## 크기 변경마다 view_size 를 다시 쓰므로 외부에서 view_size 를 대입하면 덮여 버린다.
+var view_h_override: float = 0.0
 
 # ── 드래그 손가락
 var drag_idx: int = -1
@@ -30,6 +33,7 @@ var _press_tick: int = -9999
 var _press_pos: Vector2 = Vector2.ZERO
 var _tap_tick: int = -9999
 var _tap_pos: Vector2 = Vector2.ZERO
+var _press_live: bool = true
 
 # ── k 램프
 var k: float = Tune.K_NORMAL
@@ -59,6 +63,8 @@ func _refresh_metrics() -> void:
 	view_size = get_viewport().get_visible_rect().size
 	if win.x > 0:
 		field_per_px = view_size.x / float(win.x)
+	if view_h_override > 0.0:
+		view_size.y = view_h_override
 
 ## 물리 화면 폭(mm) — **추정치다. 판정에 그대로 쓰지 말 것.**
 ##
@@ -136,8 +142,12 @@ func _on_press(idx: int, p: Vector2) -> void:
 		return                                   # 두 번째 손가락은 게이트 1 에서 역할 없음
 	if _excluded(p):
 		return
-	# 이중탭 래치 — 직전 탭과 창·거리 안이면 집중 토글
-	if SimClock.wall_tick - _tap_tick <= Tune.TAP_WINDOW_TICKS \
+	# 사망 화면의 press 는 재시작 탭이다. 드래그 역할은 준다 — 그 손가락으로 곧바로
+	# 조작을 이어가야 하기 때문이다(재시작 뒤 화면에 올린 손가락이 역할을 못 받아
+	# 기체가 안 움직이던 결함). 하지만 이중탭 래치 판정에는 넣지 않는다:
+	# "탭해서 재시작 → 곧바로 눌러 드래그" 가 240ms 안이면 집중이 무성으로 켜진다.
+	_press_live = SimClock.state == SimClock.State.RUN
+	if _press_live and SimClock.wall_tick - _tap_tick <= Tune.TAP_WINDOW_TICKS \
 			and p.distance_to(_tap_pos) <= Tune.TAP_MOVE_MAX:
 		focus = not focus
 		focus_toggles += 1
@@ -155,6 +165,11 @@ func _on_drag_release(last: Vector2) -> void:
 	drag_idx = -1
 	edge_push = Vector2.ZERO
 	_edge_ramp = Vector2.ZERO
+	# 플레이 중에 눌러서 플레이 중에 뗀 것만 탭/재파지로 센다.
+	# 사망 화면에서 손을 떼는 것을 재파지로 세면 사망마다 +1 이 되어
+	# 지표 ⑤a(≤ 0.1회/분)가 원리적으로 통과 불가능해진다.
+	if not _press_live or SimClock.state != SimClock.State.RUN:
+		return
 	if held <= Tune.TAP_HOLD_MAX_TICKS and moved <= Tune.TAP_MOVE_MAX:
 		# 탭이다 — 이중탭 후보로 남긴다. 재파지로 세지 않는다.
 		_tap_tick = SimClock.wall_tick
@@ -199,7 +214,17 @@ func consume(tick: int) -> Vector2:
 		_edge_ramp = Vector2.ZERO
 
 	var step := d_units * k + edge_push * Tune.DT
-	return step.limit_length(Tune.MAX_STEP_PER_TICK)
+	var mag := step.length()
+	if mag > Tune.MAX_STEP_PER_TICK:
+		# 초과분을 버리지 않고 다음 틱으로 넘긴다. limit_length 로 버리면 손가락–기체
+		# 오프셋이 영구히 어긋난다 — 오프셋 상대 드래그에서 그건 "손가락은 제자리로
+		# 돌아왔는데 기체는 아니다" 로 보인다. 특히 max_physics_steps_per_frame=2 로
+		# 한 프레임에 2틱이 돌면 그 프레임의 입력 전부가 첫 틱에 몰린다.
+		var keep := Tune.MAX_STEP_PER_TICK / mag
+		step *= keep
+		if field_per_px > 0.0:
+			_pending_px += d_units * (1.0 - keep) / field_per_px
+	return step
 
 func _edge_axis(axis: int, pos: float, delta: float, extent: float) -> void:
 	var dir := 0.0
@@ -242,7 +267,14 @@ func reach_margin() -> Vector4:
 		drag_pos.y * g,
 		(view_size.y - drag_pos.y) * g)
 
+## 런 재시작. 터치 맵과 드래그 역할은 **지우지 않는다** — 화면에 올려 둔 손가락으로
+## 곧바로 조작을 이어가야 한다. 대신 사망 화면 동안 쌓인 델타·엣지 푸시·탭 이력만 비운다
+## (그대로 두면 재시작 첫 틱에 기체가 사망 화면 동안의 손가락 이동만큼 튄다).
 func reset_run() -> void:
+	_pending_px = Vector2.ZERO
+	edge_push = Vector2.ZERO
+	_edge_ramp = Vector2.ZERO
+	_tap_tick = -9999
 	regrip_count = 0
 	last_regrip_tick = -9999
 	focus_toggles = 0

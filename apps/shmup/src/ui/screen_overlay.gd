@@ -12,11 +12,23 @@ var view_w: float = Tune.PF_W
 func _draw() -> void:
 	if main == null:
 		return
+	_draw_gutter_mask()
 	_draw_death_feedback()
 	_draw_restart_prompt()
 	_draw_deck()
 	_draw_touch_debug()
 	_draw_hud()
+
+## 태블릿 거터 가림막. _field 에는 클립이 없어서 플레이필드 밖으로 나간 탄·잔광이
+## 거터에 그대로 보이고 눈앞에서 사라진다. 필드 레이어 위(이 레이어)에서 가린다.
+func _draw_gutter_mask() -> void:
+	var dx: float = main.field_dx
+	if dx <= 0.5:
+		return
+	var c := Tune.COL_ABYSS_BOT
+	draw_rect(Rect2(0.0, 0.0, dx, vh), c, true)
+	var rx: float = dx + Tune.PF_W
+	draw_rect(Rect2(rx, 0.0, view_w - rx, vh), c, true)
 
 # ── 컨트롤 덱 ───────────────────────────────────────────────────────────
 # 뷰포트 절대 하단 240유닛. 16:9 기기에서는 여백이 0이라 덱이 플레이필드를 덮는다 —
@@ -41,10 +53,13 @@ func _draw_deck() -> void:
 		var col := Color(Tune.COL_GRID, 0.55)
 		var warn := Color(1.0, 0.45, 0.35, 0.85)
 		var lim := 120.0
-		draw_line(Vector2(cx, cy), Vector2(cx - rm.x * s, cy), warn if rm.x < lim else col, 3.0)
-		draw_line(Vector2(cx, cy), Vector2(cx + rm.y * s, cy), warn if rm.y < lim else col, 3.0)
-		draw_line(Vector2(cx, cy), Vector2(cx, cy - rm.z * s), warn if rm.z < lim else col, 3.0)
-		draw_line(Vector2(cx, cy), Vector2(cx, cy + rm.w * s), warn if rm.w < lim else col, 3.0)
+		# 막대 길이를 덱 반높이 안으로 자른다. 상방 여유는 손가락 y(≈1400) 전체라
+		# 그대로 그리면 269유닛짜리 막대가 덱을 넘어 플레이필드 안으로 뻗었다.
+		var cap := Tune.DECK_H * 0.5 - 12.0
+		draw_line(Vector2(cx, cy), Vector2(cx - minf(rm.x * s, cap), cy), warn if rm.x < lim else col, 3.0)
+		draw_line(Vector2(cx, cy), Vector2(cx + minf(rm.y * s, cap), cy), warn if rm.y < lim else col, 3.0)
+		draw_line(Vector2(cx, cy), Vector2(cx, cy - minf(rm.z * s, cap)), warn if rm.z < lim else col, 3.0)
+		draw_line(Vector2(cx, cy), Vector2(cx, cy + minf(rm.w * s, cap)), warn if rm.w < lim else col, 3.0)
 		draw_circle(Vector2(cx, cy), 4.0, col)
 		# 손가락 위치와 엣지 푸시 상태
 		draw_arc(TouchRouter.drag_pos, 26.0, 0.0, TAU, 20,

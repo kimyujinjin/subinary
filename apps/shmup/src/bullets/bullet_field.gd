@@ -100,6 +100,35 @@ func flow_c(tick: int) -> float:
 	var b: float = Tune.FLOW_LEVELS[(i + 1) % 4]
 	return lerpf(a, b, float(local - hold) / float(ramp))
 
+## ∫₀^tick C(t) dt (틱 단위) — 조류 띠 눈금의 스크롤 위상.
+##
+## 위상을 tick × C(tick) 으로 계산했더니 램프 구간마다 눈금이 역주행했다:
+## d/dt[t·C] = C + t·C' 이고 램프에서 t·C' 가 C 를 압도한다(t=3007 에서 유속은 오른쪽인데
+## 눈금이 480 u/s 로 왼쪽으로 흘렀다). 게임의 유일한 조류 교재가 부호를 거꾸로 가르쳤다.
+##
+## 적분이어야 한다. FLOW_LEVELS = [1,0,-1,0] + 대칭 램프의 한 주기 적분이 정확히 0 이므로
+## 주기 수를 셀 필요 없이 주기 내 위치만으로 닫힌다 — 누산기가 없어 드리프트도,
+## 프레임당 물리 틱 수에 따른 어긋남도 없다.
+func flow_phase(tick: int) -> float:
+	var period: int = Tune.FLOW_SLOW_PERIOD if flow_slow else Tune.FLOW_PERIOD
+	var ramp: int = Tune.FLOW_SLOW_RAMP if flow_slow else Tune.FLOW_RAMP
+	var scale: int = period / Tune.FLOW_PERIOD
+	var p: int = tick % period
+	var ph := 0.0
+	var acc := 0
+	for i in 4:
+		var seg: int = int(Tune.FLOW_SEGS[i]) * scale
+		var a: float = Tune.FLOW_LEVELS[i]
+		var b: float = Tune.FLOW_LEVELS[(i + 1) % 4]
+		var hold: int = seg - ramp
+		var local: int = clampi(p - acc, 0, seg)
+		ph += a * float(mini(local, hold))
+		if local > hold:
+			var d := float(local - hold)
+			ph += (a + (b - a) * (d / float(ramp)) * 0.5) * d     # 램프는 사다리꼴
+		acc += seg
+	return ph
+
 ## 깊이 프로파일 — 화면 중앙이 가장 빠르다
 func flow_s(y: float) -> float:
 	return Tune.FLOW_S_BASE + Tune.FLOW_S_AMP * sin(PI * clampf(y, 0.0, Tune.PF_H) / Tune.PF_H)

@@ -84,7 +84,9 @@ func step(tick: int, player: Vector2) -> void:
 		else:
 			px[i] += dirx[i] * NF_SPEED * Tune.DT
 			var lt := tick - t0[i]
-			if lt >= 0:
+			# 플레이필드 안에서만 쏜다. 진입 x(-60/780)가 탄 컬링 경계(-48/768) 밖이라
+			# 첫 버스트의 바늘이 생성된 그 틱에 컬링되어 존재하지 않았다.
+			if lt >= 0 and px[i] >= 0.0 and px[i] <= Tune.PF_W:
 				Patterns.p03(lt % NF_BURST_GAP, px[i], py[i], player.x, player.y)
 
 		# 이탈 제거 (swap-with-last)

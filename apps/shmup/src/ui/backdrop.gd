@@ -12,7 +12,10 @@ const SIDE_W := 8.0
 const MIN_ALPHA := 0.35     # 야외 직사광 판정용 하한
 
 var vh: float = Tune.PF_H
-var gutter: float = 0.0     ## 좌우 거터 폭(유닛). 태블릿에서만 0 이 아니다.
+var gutter: float = 0.0     ## 좌 거터 폭(유닛). 태블릿에서만 0 이 아니다.
+## 우 거터 폭. field_dx 를 floorf 로 깎으므로 좌우가 1유닛 다를 수 있다 —
+## 좌 값으로 우를 칠하면 889유닛 뷰포트의 우측 1유닛이 클리어 컬러로 남는다.
+var gutter_r: float = 0.0
 var tick: int = 0
 
 func _draw() -> void:
@@ -24,11 +27,11 @@ func _draw() -> void:
 		var c := Tune.COL_ABYSS_TOP.lerp(Tune.COL_ABYSS_BOT, f)
 		var y0 := vh * float(i) / float(steps)
 		var y1 := vh * float(i + 1) / float(steps)
-		draw_rect(Rect2(-gutter, y0, Tune.PF_W + gutter * 2.0, y1 - y0 + 1.0), c, true)
+		draw_rect(Rect2(-gutter, y0, Tune.PF_W + gutter + gutter_r, y1 - y0 + 1.0), c, true)
 
 	# 플레이필드 하단 경계 — 남는 하단이 손가락 영역임을 시각적으로 못 박는다
 	if vh > Tune.PF_H + 1.0:
-		draw_rect(Rect2(-gutter, Tune.PF_H, Tune.PF_W + gutter * 2.0, vh - Tune.PF_H),
+		draw_rect(Rect2(-gutter, Tune.PF_H, Tune.PF_W + gutter + gutter_r, vh - Tune.PF_H),
 				Color(0.0, 0.0, 0.0, 0.35), true)
 		draw_line(Vector2(0.0, Tune.PF_H), Vector2(Tune.PF_W, Tune.PF_H),
 				Color(Tune.COL_FLOW, 0.18), 1.0)
@@ -46,8 +49,9 @@ func _draw_top_band(c_t: float) -> void:
 	var mag := absf(c_t)
 	var a := MIN_ALPHA + 0.5 * mag
 	var pitch := 40.0
-	# 스크롤 위상: 유속에 비례. 정지 창(c=0)에서는 눈금이 멈춘다 = "물이 멎었다"
-	var off := fposmod(float(tick) * c_t * 1.35, pitch)
+	# 스크롤 위상 = 유속의 적분. 정지 창(c=0)에서는 눈금이 멈춘다 = "물이 멎었다".
+	# tick × c 로 계산하면 램프마다 역주행한다 — BulletField.flow_phase 주석 참조.
+	var off := fposmod(BulletField.flow_phase(tick) * 1.35, pitch)
 	var x := -pitch + off
 	var w := 10.0 + 22.0 * mag
 	while x < Tune.PF_W + pitch:

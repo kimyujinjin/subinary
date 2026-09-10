@@ -63,6 +63,7 @@ func _ready() -> void:
 	add_child(_screen)
 	_backdrop = Backdrop.new()
 	_bullets = BulletRenderer.new()
+	_bullets.main = self
 	_overlay = FieldOverlay.new()
 	_overlay.main = self
 	_field.add_child(_backdrop)
@@ -125,16 +126,21 @@ func _on_resize() -> void:
 	# stretch = canvas_items + expand 이므로 폭은 항상 720 유닛이고 높이만 변한다.
 	# --force-16x9 는 16:9 실기가 없을 때 최악 케이스(덱 여백 0) 레이아웃만 대체 검증한다.
 	var vh := get_viewport().get_visible_rect().size.y
-	if "--force-16x9" in OS.get_cmdline_user_args():
+	# 두 인자 배열을 모두 본다(Android extra_args 는 get_cmdline_args() 로 온다).
+	var forced := "--force-16x9" in OS.get_cmdline_user_args() \
+			or "--force-16x9" in OS.get_cmdline_args()
+	if forced:
 		vh = Tune.PF_H
 	view_w = get_viewport().get_visible_rect().size.x
 	field_dx = floorf((view_w - Tune.PF_W) * 0.5)
 	_field.position = Vector2(field_dx, 0.0)
 	_backdrop.vh = vh
 	_backdrop.gutter = field_dx
+	_backdrop.gutter_r = view_w - Tune.PF_W - field_dx
 	_screen_ui.vh = vh
 	_screen_ui.view_w = view_w
-	TouchRouter.view_size = Vector2(view_w, vh)
+	# view_size 를 직접 대입하면 _refresh_metrics 가 덮는다 — 높이 오버라이드로 전달한다.
+	TouchRouter.view_h_override = vh if forced else 0.0
 	TouchRouter._refresh_metrics()
 
 func _reset(seed_value: int) -> void:
@@ -142,8 +148,9 @@ func _reset(seed_value: int) -> void:
 	BulletField.clear()
 	enemies.clear()
 	replay.clear()
+	# 터치 맵은 지우지 않는다(reset_run 주석). clear_touches() 를 부르면 화면에 올려 둔
+	# 손가락이 역할을 잃고, 역할 재획득 경로가 press 뿐이라 떼었다 다시 눌러야 움직였다.
 	TouchRouter.reset_run()
-	TouchRouter.clear_touches()
 	_rng_enemy.seed = seed_value
 	shot_n = 0
 	_wave_cursor = 0
@@ -156,14 +163,15 @@ func _reset(seed_value: int) -> void:
 
 # ── 입력: 사망 후 탭 재시작 ─────────────────────────────────────────────
 func _unhandled_input(event: InputEvent) -> void:
-	# 되감기가 끝난 뒤부터 받는다.
+	# 히트스톱(8틱)이 끝난 뒤, 되감기 중에도 받는다.
 	#
-	# "되감기 중에도 즉시 받는다" 로 만들었더니 실기에서 사망 → 입력이 12건 전부
-	# 0.00초였다. 드래그 손가락이 화면에 올려진 상태로 죽으므로 그 손가락의 다음
-	# press 가 곧바로 재시작을 유발하고, 교재를 볼 시간이 0 이 된다.
-	# 설계서 원문은 "0.5초 되감기 → 정지 프레임 → 탭 재시작, 1.0초 미만" 이다.
-	# 되감기 30틱 + 정지 12틱 = 0.7초이므로 반응 시간을 더해도 1.0초 안에 들어간다.
-	if SimClock.state != SimClock.State.DEATH_FROZEN:
+	# 한때 "정지 프레임부터만 받는다" 로 바꿨는데 근거가 틀렸다 — 사망→입력 0.00초는
+	# 로그를 awk 로 읽다 칼럼 하나(gap_x0)를 잘못 본 것이었고 실제 p50 은 2.75초였다.
+	# 그리고 그 게이트는 사망 → 입력 가능 시점을 49틱(0.82초)으로 강제해 지표 ③
+	# (p90 < 1.0초)에 반응 시간 여유를 0.18초만 남겼다. 드래그 손가락은 이미 눌려 있어
+	# press 를 새로 만들지 않으므로, 되감기 중에 받아도 교재가 우발적으로 스킵되지 않는다.
+	if SimClock.state != SimClock.State.DEATH_REPLAY \
+			and SimClock.state != SimClock.State.DEATH_FROZEN:
 		return
 	if (event is InputEventScreenTouch and (event as InputEventScreenTouch).pressed) \
 			or (event is InputEventMouseButton and (event as InputEventMouseButton).pressed) \
@@ -176,7 +184,8 @@ func _unhandled_input(event: InputEvent) -> void:
 					TouchRouter.k, TouchRouter.focus, TouchRouter.regrip_count, -1,
 					0.0, 0.0, 0, int(Engine.get_frames_per_second()), "", 0.0, 0.0])
 			_death_wall_tick = -1
-		get_viewport().set_input_as_handled()
+		# set_input_as_handled() 를 하지 않는다. TouchRouter 가 이 press 를 받아 드래그 역할을
+		# 배정해야 재시작 직후 그 손가락으로 곧바로 조작이 이어진다.
 
 func _physics_process(_delta: float) -> void:
 	SimClock.begin_tick()
@@ -186,11 +195,14 @@ func _physics_process(_delta: float) -> void:
 		return
 
 	if SimClock.state == SimClock.State.DEATH_REPLAY:
-		_step_lesson()
+		if _restart_armed:
+			_restart()
+		else:
+			_step_lesson()
 		return
 	if SimClock.state == SimClock.State.DEATH_FROZEN:
 		if _restart_armed:
-			_reset(FIXED_SEED)
+			_restart()
 		else:
 			_screen_ui.queue_redraw()   # 재시작 어포던스 깜빡임
 		return
@@ -230,8 +242,11 @@ func _physics_process(_delta: float) -> void:
 	# 6. 1D 공정성 스캔 — HUD 와 사망 교재가 같은 숫자를 쓴다
 	fairness.scan(BulletField, player.x, player.y)
 
-	# 7. 리플레이 기록
-	replay.record(BulletField, player, fairness.gap_x0, fairness.gap_w)
+	# 7. 리플레이 기록 — 교재의 "있어야 했던 틈" 은 플레이어의 통로(near)다.
+	#    밴드에 탄이 없으면 통로가 정의되지 않으므로 폭 0 으로 기록한다.
+	var has_band := fairness.in_band > 0
+	replay.record(BulletField, player, tick,
+			fairness.near_x0 if has_band else 0, fairness.near_w if has_band else 0)
 
 	# 8. 판정
 	if BulletField.hit_index >= 0:
@@ -262,7 +277,7 @@ func _on_death() -> void:
 	deaths += 1
 	lesson_bid = BulletField.hit_bid
 	lesson_death_pos = player
-	lesson_step = 0
+	lesson_step = -1        # 첫 되감기 틱에 0 이 된다 — 가장 오래된 프레임부터 보여준다
 	lesson_hold = 0
 	_restart_armed = false
 	var since := -1 if TouchRouter.last_regrip_tick < 0 else SimClock.wall_tick - TouchRouter.last_regrip_tick
@@ -277,6 +292,11 @@ func _on_death() -> void:
 	# 히트스톱 — 정지 프레임으로 상황을 읽을 시간. 연출은 _process 에서 계속 돈다.
 	SimClock.hitstop(DEATH_HITSTOP)
 
+func _restart() -> void:
+	_reset(FIXED_SEED)
+	# 재드로우하지 않으면 재시작 직후 1프레임 동안 이전 런의 화면이 남는다.
+	_redraw_all(SimClock.sim_tick)
+
 func _step_lesson() -> void:
 	if lesson_step < replay.length() - 1:
 		lesson_step += 1
@@ -284,8 +304,8 @@ func _step_lesson() -> void:
 		lesson_hold += 1
 		if lesson_hold >= LESSON_HOLD_TICKS:
 			SimClock.state = SimClock.State.DEATH_FROZEN
+	_bullets.queue_redraw()     # 교재 탄은 BulletRenderer 가 리플레이 프레임으로 그린다
 	_overlay.queue_redraw()
-	_screen_ui.queue_redraw()
 	_screen_ui.queue_redraw()
 
 # ── 자탄 ────────────────────────────────────────────────────────────────

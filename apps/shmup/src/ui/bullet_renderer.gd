@@ -5,6 +5,12 @@ extends Node2D
 ## 게이트 5 에서 이 클래스의 _draw 하나만 MultiMesh + premul SDF 셰이더로 교체한다.
 ## 그때 BulletField 의 공개 인터페이스는 건드리지 않는다.
 
+## 사망 교재 중에는 리플레이 프레임을 **같은 텍스처·회전·잔광**으로 그린다.
+## 이 레이어를 교재 중에 재드로우하지 않았더니 사망 프레임의 탄이 얼어붙은 채 남고
+## 그 위로 0.5초 과거의 교재 탄이 따로 그려져 모든 탄이 두 벌로 보였다 —
+## 하나는 정지, 하나는 과거에서 미끄러져 들어온다. 실기 증상 "순간이동" 의 한 축이다.
+var main: Node = null
+
 var _tex: Array[ImageTexture] = []
 var _size: Array[Vector2] = []
 var _trail := PackedVector2Array()
@@ -19,8 +25,23 @@ func _ready() -> void:
 	_size = built[1]
 
 func _draw() -> void:
+	var st: int = SimClock.state
+	if main != null and (st == SimClock.State.DEATH_REPLAY or st == SimClock.State.DEATH_FROZEN):
+		var rp: Replay = main.replay
+		if rp.length() == 0:
+			return
+		var step := clampi(int(main.lesson_step), 0, rp.length() - 1)
+		_draw_set(rp.xs, rp.ys, rp.vxs, rp.vys, rp.kinds,
+				rp.base_of(step), rp.frame_count(step), rp.frame_tick(step))
+		return
 	var bf := BulletField
-	var cnt: int = bf.n
+	_draw_set(bf.pos_x, bf.pos_y, bf.vel_x, bf.vel_y, bf.kind, 0, bf.n, SimClock.sim_tick)
+
+## 실시간과 교재가 공유하는 단일 드로우 경로. 두 경로가 갈라지면 외형이 갈라진다.
+func _draw_set(px: PackedFloat32Array, py: PackedFloat32Array,
+		pvx: PackedFloat32Array, pvy: PackedFloat32Array, pk: PackedInt32Array,
+		base: int, cnt: int, tick: int) -> void:
+	var bf := BulletField
 	# ── 잔광 궤적선. "휘어짐"이 조류 표시의 3번째 채널이다.
 	#
 	#    직선 2점으로 그리면 방향만 보이고 휘어짐은 보이지 않는다 — 그러면 이 채널이
@@ -33,16 +54,16 @@ func _draw() -> void:
 	_trail.resize(seg_n * 2)
 	_trail_col.resize(seg_n)
 	var cols := [Tune.COL_TIDE, Tune.COL_GRID, Tune.COL_NEEDLE]
-	var tick: int = SimClock.sim_tick
 	var c_t := bf.flow_c(tick)
 	var u_max: float = Tune.FLOW_SLOW_U_MAX if bf.flow_slow else Tune.FLOW_U_MAX
 	for i in cnt:
-		var kd: int = bf.kind[i]
+		var j := base + i
+		var kd: int = pk[j]
 		var span: float = Tune.KIND_TRAIL[kd]
-		var x: float = bf.pos_x[i]
-		var y: float = bf.pos_y[i]
-		var vx: float = bf.vel_x[i]
-		var vy: float = bf.vel_y[i]
+		var x: float = px[j]
+		var y: float = py[j]
+		var vx: float = pvx[j]
+		var vy: float = pvy[j]
 		var tau: float = Tune.KIND_TAU[kd]
 		var ax := 0.0
 		if tau > 0.0:
@@ -76,22 +97,23 @@ func _draw() -> void:
 	#    패스를 나누면 원천적으로 생기지 않고, 무회전 패스가 통째로 배칭되어 더 싸다.
 	#    ── 1패스: 무회전 탄 (transform 을 건드리지 않는다)
 	for i in cnt:
-		var kd2: int = bf.kind[i]
+		var j2 := base + i
+		var kd2: int = pk[j2]
 		if Tune.KIND_H[kd2] > 0.0:
 			continue
 		var sz: Vector2 = _size[kd2]
-		draw_texture_rect(_tex[kd2],
-				Rect2(Vector2(bf.pos_x[i], bf.pos_y[i]) - sz * 0.5, sz), false)
+		draw_texture_rect(_tex[kd2], Rect2(Vector2(px[j2], py[j2]) - sz * 0.5, sz), false)
 
 	#    ── 2패스: 회전 탄 (바늘). τ=∞ 라 회전은 생성 시 고정이다.
 	var rotated := false
 	for i in cnt:
-		var kd3: int = bf.kind[i]
+		var j3 := base + i
+		var kd3: int = pk[j3]
 		if Tune.KIND_H[kd3] <= 0.0:
 			continue
 		var sz3: Vector2 = _size[kd3]
-		var rot := atan2(bf.vel_y[i], bf.vel_x[i]) - PI * 0.5
-		draw_set_transform(Vector2(bf.pos_x[i], bf.pos_y[i]), rot, Vector2.ONE)
+		var rot := atan2(pvy[j3], pvx[j3]) - PI * 0.5
+		draw_set_transform(Vector2(px[j3], py[j3]), rot, Vector2.ONE)
 		draw_texture_rect(_tex[kd3], Rect2(-sz3 * 0.5, sz3), false)
 		rotated = true
 	if rotated:

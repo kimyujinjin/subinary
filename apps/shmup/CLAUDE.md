@@ -30,6 +30,7 @@ Godot 4.7.2 · GDScript 전면 정적 타입 · 이 저장소의 pnpm/turbo 파�
 ```bash
 scripts/doctor.sh        # 엔진 버전 + 프로젝트 설정 키 대조 (키 이름이 틀리면 Godot 은 조용히 무시한다)
 scripts/fairness.sh      # 1D 공정성 스캔. exit 1 = 패턴 저작 규칙 위반
+godot --headless --path . scenes/invariants.tscn   # 회귀 불변식 (조류 위상 부호 · 첫 바늘 생존)
 GODOT=... godot --headless --path . scenes/soak.tscn   # 30초 루프 5회 — 탄 누적 확인
 ../../scripts/pull-shmup-runlog.sh {ios|android|local}  # 실기 CSV → 게이트 1 판정
 ```
@@ -150,6 +151,25 @@ k 는 유닛 공간의 무차원 이득이므로 이 값이 곧 조작감의 척
 draw call 36 대 25.
 
 **규칙: 탄종을 회전/무회전 두 패스로 나눈다.** 배칭에도 유리하다.
+
+## 사망 교재 중에는 탄 레이어도 다시 그려야 한다
+
+캔버스 아이템은 `queue_redraw()` 전까지 이전 커맨드를 계속 렌더한다. 교재 중에
+BulletRenderer 를 재드로우하지 않았더니 사망 프레임의 탄이 얼어붙은 채 남고,
+그 위로 0.5초 과거의 교재 탄이 따로 그려져 **모든 탄이 두 벌**로 보였다 —
+하나는 정지, 하나는 과거에서 미끄러져 들어온다. 실기 증상 "순간이동" 의 한 축이다.
+
+규칙: 교재 탄은 BulletRenderer 가 리플레이 프레임을 **같은 드로우 경로**(`_draw_set`)로
+그리고, FieldOverlay 는 주석(베일·되감기 표식·틈·살해탄 링·궤적)만 그린다.
+두 경로가 갈라지면 외형이 갈라진다.
+
+## 화면 스크롤 위상은 속도의 적분이다
+
+조류 띠 눈금 위상을 `tick × c(tick)` 로 계산했더니 램프마다 역주행했다
+(d/dt[t·c] = c + t·c′ 에서 t·c′ 가 c 를 압도한다). 불변식 검사 결과 기본 주기 1440틱 중
+144틱, 감속 2880틱 중 432틱에서 부호가 거꾸로였다. `BulletField.flow_phase()` 는
+닫힌형 적분이다 — 한 주기 적분이 0 이라 누산기도 드리프트도 없다.
+`scenes/invariants.tscn` 이 회귀를 막는다.
 
 ## 시각 반폭과 판정 반폭을 분리한다
 
