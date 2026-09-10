@@ -219,6 +219,7 @@ func _physics_process(_delta: float) -> void:
 	# 매 틱 상태 클램프. 가상 위치를 저장하지 않는다.
 	player.x = clampf(player.x, Tune.MARGIN, Tune.PF_W - Tune.MARGIN)
 	player.y = clampf(player.y, Tune.MARGIN + Backdrop.BAND_H, Tune.PF_H - Tune.MARGIN)
+	_log_regrips(tick)
 
 	# 2. 자탄 (자동 사격)
 	if tick % Tune.SHOT_PERIOD_TICKS == 0:
@@ -272,6 +273,21 @@ func _redraw_all(tick: int) -> void:
 	_overlay.queue_redraw()
 	_screen_ui.queue_redraw()
 
+## 재파지 원인 행. 기체 위치와 함께 남겨야 "벽에 붙어서 뗐는지" 를 가를 수 있다.
+func _log_regrips(tick: int) -> void:
+	if TouchRouter.regrip_events.is_empty():
+		return
+	for e in TouchRouter.regrip_events:
+		var detail := "fx=%.0f;fy=%.0f;held=%d;moved=%.0f;rl=%.0f;rr=%.0f;ru=%.0f;rd=%.0f;excl=%d" % [
+			e["fx"], e["fy"], e["held"], e["moved"],
+			e["reach_l"], e["reach_r"], e["reach_u"], e["reach_d"], 1 if e["excl"] else 0]
+		RunLog.write("regrip", [SimClock.run_index, tick, SimClock.run_seed,
+				player.x, player.y, "", 0, 0, 0,
+				TouchRouter.k, TouchRouter.focus, TouchRouter.regrip_count, 0,
+				BulletField.flow_c(tick), BulletField.flow_u(player.y, tick),
+				BulletField.n, int(Engine.get_frames_per_second()), "", 0.0, 0.0, detail])
+	TouchRouter.regrip_events.clear()
+
 # ── 사망 ────────────────────────────────────────────────────────────────
 func _on_death() -> void:
 	deaths += 1
@@ -287,7 +303,8 @@ func _on_death() -> void:
 			TouchRouter.k, TouchRouter.focus, TouchRouter.regrip_count, since,
 			BulletField.flow_c(SimClock.sim_tick),
 			BulletField.flow_u(player.y, SimClock.sim_tick),
-			BulletField.n, int(Engine.get_frames_per_second()), "", 0.0, 0.0])
+			BulletField.n, int(Engine.get_frames_per_second()), "", 0.0, 0.0,
+			"relay=%d" % TouchRouter.relay_count])
 	_death_wall_tick = SimClock.wall_tick
 	# 히트스톱 — 정지 프레임으로 상황을 읽을 시간. 연출은 _process 에서 계속 돈다.
 	SimClock.hitstop(DEATH_HITSTOP)

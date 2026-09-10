@@ -50,6 +50,11 @@ var _edge_ramp: Vector2 = Vector2.ZERO        # 0..1
 var regrip_count: int = 0
 var last_regrip_tick: int = -9999
 var focus_toggles: int = 0
+var relay_count: int = 0
+## 재파지 원인 기록. 실기에서 3회/분(목표 0.1)이 나왔는데 로그로는 원인을 가를 수 없었다 —
+## 도달 여유가 바닥났는지, 제외 영역에 걸렸는지, 그냥 습관인지. 떼는 순간의 손가락 위치·
+## 누른 시간·축별 도달 여유를 남긴다. Main 이 틱마다 비워 RunLog 에 쓴다.
+var regrip_events: Array = []
 
 var _touch: Dictionary = {}                   # index -> Vector2 (뷰포트 유닛)
 var _touch_delta: Dictionary = {}             # index -> Vector2 (물리 px, 이 프레임)
@@ -119,7 +124,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_touch.erase(t.index)
 			_touch_delta.erase(t.index)
 			if t.index == drag_idx:
-				_on_drag_release(last)
+				if not _relay():
+					_on_drag_release(last)
 		get_viewport().set_input_as_handled()
 	elif event is InputEventScreenDrag:
 		var d := event as InputEventScreenDrag
@@ -159,6 +165,30 @@ func _on_press(idx: int, p: Vector2) -> void:
 	_press_pos = p
 	_pending_px = Vector2.ZERO
 
+## 릴레이 인계 — 설계서 §3 "두 번째 손가락이 이미 덱에 있으면 첫 손가락 릴리스 시
+## 드래그 역할을 0프레임으로 넘긴다". 빠져 있던 항목이다.
+## 엄지를 옮겨 잡는 동안(p50 180ms) 기체가 완전히 멈추는 것이 재파지의 비용인데,
+## 다른 손가락이 이미 화면에 있으면 그 비용을 0 으로 만들 수 있다.
+## 오프셋 상대 매핑이라 넘겨받는 손가락의 위치는 도달력 외에 아무 영향이 없다.
+func _relay() -> bool:
+	if SimClock.state != SimClock.State.RUN or _touch.size() > 2:
+		return false
+	for idx in _touch:
+		var p: Vector2 = _touch[idx]
+		if _excluded(p):
+			continue
+		drag_idx = idx
+		drag_pos = p
+		_pending_px = Vector2.ZERO
+		edge_push = Vector2.ZERO
+		_edge_ramp = Vector2.ZERO
+		_press_tick = SimClock.wall_tick
+		_press_pos = p
+		_press_live = true
+		relay_count += 1
+		return true
+	return false
+
 func _on_drag_release(last: Vector2) -> void:
 	var held := SimClock.wall_tick - _press_tick
 	var moved := _press_pos.distance_to(last if last.x >= 0.0 else _press_pos)
@@ -178,6 +208,13 @@ func _on_drag_release(last: Vector2) -> void:
 		# 의도치 않은 손 떼기 = 재파지. 이 동안 기체가 완전히 정지한다 (p50 180ms).
 		regrip_count += 1
 		last_regrip_tick = SimClock.wall_tick
+		var fp := last if last.x >= 0.0 else drag_pos
+		var rm := Vector4(fp.x * k, (view_size.x - fp.x) * k, fp.y * k, (view_size.y - fp.y) * k)
+		regrip_events.append({
+			"fx": fp.x, "fy": fp.y, "held": held, "moved": moved,
+			"reach_l": rm.x, "reach_r": rm.y, "reach_u": rm.z, "reach_d": rm.w,
+			"excl": _excluded(fp),
+		})
 
 func _set_k(target: float) -> void:
 	if is_equal_approx(target, _k_to):
@@ -275,6 +312,8 @@ func reset_run() -> void:
 	edge_push = Vector2.ZERO
 	_edge_ramp = Vector2.ZERO
 	_tap_tick = -9999
+	regrip_events.clear()
+	relay_count = 0
 	regrip_count = 0
 	last_regrip_tick = -9999
 	focus_toggles = 0

@@ -94,10 +94,14 @@ func _draw_death_feedback() -> void:
 
 ## 재시작 어포던스. 텍스트 0줄 방침이므로 도형으로만 알린다.
 ##
-## 정지 프레임에서 무엇을 해야 하는지 알려주는 것이 없으면 사용자는 "멈췄다/고장났다"로
-## 읽는다 — 실기에서 실제로 그렇게 보고됐다. 사망 지점에 맥동하는 원을 둔다.
+## 무엇을 해야 하는지 알려주는 것이 없으면 사용자는 "멈췄다/고장났다" 로 읽는다 —
+## 실기에서 실제로 그렇게 보고됐다. 사망 지점에 맥동하는 원을 둔다.
 func _draw_restart_prompt() -> void:
-	if SimClock.state != SimClock.State.DEATH_FROZEN:
+	# 되감기 시작부터 보인다. 정지 프레임에서만 띄웠더니 "표식이 나올 때까지 기다린다" 를
+	# 가르쳐서 실기 재시작 반응이 p50 2.15초(목표 p90 < 1.0초)였다. 입력은 이미 히트스톱
+	# 직후부터 받고 있었으므로, 받는 시점과 알리는 시점을 일치시킨다.
+	if SimClock.state != SimClock.State.DEATH_REPLAY \
+			and SimClock.state != SimClock.State.DEATH_FROZEN:
 		return
 	var t := float(SimClock.death_anim) / 60.0
 	var pulse := 0.5 + 0.5 * sin(t * TAU * 0.9)

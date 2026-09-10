@@ -30,7 +30,8 @@ Godot 4.7.2 · GDScript 전면 정적 타입 · 이 저장소의 pnpm/turbo 파�
 ```bash
 scripts/doctor.sh        # 엔진 버전 + 프로젝트 설정 키 대조 (키 이름이 틀리면 Godot 은 조용히 무시한다)
 scripts/fairness.sh      # 1D 공정성 스캔. exit 1 = 패턴 저작 규칙 위반
-godot --headless --path . scenes/invariants.tscn   # 회귀 불변식 (조류 위상 부호 · 첫 바늘 생존)
+godot --headless --path . scenes/invariants.tscn   # 회귀 불변식 (조류 위상 · 첫 바늘 · 다손가락 터치 6종)
+godot --headless --path . scenes/onramp.tscn       # 첫 10초 압력 (볼리 수 × 첫 직침어 진입)
 GODOT=... godot --headless --path . scenes/soak.tscn   # 30초 루프 5회 — 탄 누적 확인
 ../../scripts/pull-shmup-runlog.sh {ios|android|local}  # 실기 CSV → 게이트 1 판정
 ```
@@ -139,6 +140,7 @@ k 는 유닛 공간의 무차원 이득이므로 이 값이 곧 조작감의 척
 | 통로 유지 시간 지표 | 폭만 보는 1D 스캔이 실기의 "8초 사망"을 통과시켰다. 반응 하한 24틱 |
 | 첫 교사 P01 1기 · 볼리 66틱 | 2기 동시 · 42틱은 12런 전부 5~9초에 죽었다 |
 | 웨이브 후보 C | A·B·C 전부 실패 0 이지만 B 는 두 밴드가 항상 열려 압력이 0 |
+| 첫 교사 4볼리 · 첫 직침어 t=640 | 2차 실기 9~11초 사망 9/25. 첫 바늘 등장 시 잔여 포자 46 → 10 (`scenes/onramp.tscn`) |
 
 ## _draw() 안에서 draw_set_transform 은 상태를 남긴다
 
@@ -180,6 +182,21 @@ BulletRenderer 를 재드로우하지 않았더니 사망 프레임의 탄이 �
 
 즉 P03 직침이 **보이지 않는 탄**이었다. BulletAtlas 는 림·AA 를 `w * 0.42` / `w * 0.30`
 으로 클램프해 얇은 탄에서도 코어가 남게 한다.
+
+## 다손가락 로직은 헤드리스에서 검증한다
+
+맥의 합성 터치는 index 0 하나뿐이라 릴레이 인계·재시작 탭·사망 화면 해제 같은
+다손가락 경로를 에디터로 재현할 수 없다. `InputEventScreenTouch`/`ScreenDrag` 를 만들어
+`TouchRouter._unhandled_input()` 에 직접 넣으면 된다 — `tools/invariants_runner.gd` 의
+`_touch_cases()`. 실기는 "손에 어떻게 느껴지는가" 만 판정하게 남긴다.
+
+## RunLog 의 detail 칼럼
+
+마지막 칼럼 `detail` 은 `key=value;key=value` 자유 형식이다. 새 계측마다 헤더를 바꾸지
+않기 위해서다. 헤더가 바뀌면 `run_log.gd` 가 기존 파일을 `runlog-<unix>.old.csv` 로
+치우고 새로 쓴다 — 헤더가 다른 파일에 이어 쓰면 칼럼이 어긋나 판정이 조용히 틀린다.
+`ev=regrip` 행은 떼는 순간의 손가락 위치·누른 시간·축별 도달 여유를 남기고,
+verify 가 원인(제외 영역 / 도달 소진 / 짧은 드래그 / 기타)을 집계한다.
 
 ## 1D 스캔은 "틈이 열려 있는 시간"을 보지 않는다
 

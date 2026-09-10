@@ -122,6 +122,30 @@ for (const r of out) {
 const measured = out.filter(r => r.ok !== null)
 const failed = measured.filter(r => !r.ok)
 const missing = out.filter(r => r.ok === null)
+// 재파지 원인 — ev=regrip 행의 detail (key=value;...). 판정이 아니라 다음 수정의 근거다.
+const regrips = rows.filter(r => r[0] === 'regrip').map(r => Object.fromEntries(
+  String(of(r, 'detail') || '').split(';').filter(Boolean).map(kv => kv.split('='))
+))
+if (regrips.length) {
+  const REACH = 60, SHORT = 30
+  const cause = { '제외 영역에서 뗌': 0, '도달 소진': 0, '짧은 드래그(<0.5s)': 0, '기타': 0 }
+  const axis = { 좌: 0, 우: 0, 상: 0, 하: 0 }
+  for (const e of regrips) {
+    const r = { 좌: +e.rl, 우: +e.rr, 상: +e.ru, 하: +e.rd }
+    const low = Object.entries(r).filter(([, v]) => v < REACH)
+    if (e.excl === '1') cause['제외 영역에서 뗌']++
+    else if (low.length) { cause['도달 소진']++; for (const [k] of low) axis[k]++ }
+    else if (+e.held < SHORT) cause['짧은 드래그(<0.5s)']++
+    else cause['기타']++
+  }
+  console.log(`\n재파지 원인 (${regrips.length}건):`)
+  for (const [k, v] of Object.entries(cause)) if (v) console.log(`  ${k.padEnd(18)} ${v}`)
+  const ax = Object.entries(axis).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(' · ')
+  if (ax) console.log(`  도달 소진 방향: ${ax}`)
+}
+const relays = deaths.map(r => Number((String(of(r, 'detail') || '').match(/relay=(\d+)/) || [])[1] || 0))
+if (relays.some(v => v > 0)) console.log(`릴레이 인계: ${relays.reduce((a, b) => a + b, 0)}회`)
+
 console.log('')
 if (!isRelease) {
   console.log('무효: 실기 release 빌드의 로그가 아니다. 에디터 실행은 1.6~1.9배 느리고')
