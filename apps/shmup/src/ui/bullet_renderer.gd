@@ -65,16 +65,34 @@ func _draw() -> void:
 	if cnt > 0:
 		draw_multiline_colors(_trail, _trail_col, 2.5)
 
-	# ── 본체. 원형(포자)은 회전이 없으므로 draw_texture_rect 로 배칭되고,
-	#    바늘만 draw_set_transform 을 쓴다 (τ=∞ 라 회전은 생성 시 고정이다).
+	# ── 본체. 탄종을 두 패스로 나눈다.
+	#
+	#    draw_set_transform() 은 캔버스 아이템의 **상태를 남긴다**. 한 루프 안에서
+	#    회전 탄과 무회전 탄을 섞으면, 바늘을 그린 뒤 다음에 오는 원형 탄이 그
+	#    바늘의 위치·회전 좌표계로 변환되어 그려진다 — 실기에서 "총알이 갑자기 변하고
+	#    순간이동한다" 로 보고된 증상의 원인이다. SoA 에서 바늘의 인덱스가 swap-remove 로
+	#    매 프레임 바뀌므로 어느 탄이 틀어지는지도 계속 변한다.
+	#
+	#    패스를 나누면 원천적으로 생기지 않고, 무회전 패스가 통째로 배칭되어 더 싸다.
+	#    ── 1패스: 무회전 탄 (transform 을 건드리지 않는다)
 	for i in cnt:
 		var kd2: int = bf.kind[i]
+		if Tune.KIND_H[kd2] > 0.0:
+			continue
 		var sz: Vector2 = _size[kd2]
-		var p := Vector2(bf.pos_x[i], bf.pos_y[i])
-		if Tune.KIND_H[kd2] <= 0.0:
-			draw_texture_rect(_tex[kd2], Rect2(p - sz * 0.5, sz), false)
-		else:
-			var rot := atan2(bf.vel_y[i], bf.vel_x[i]) - PI * 0.5
-			draw_set_transform(p, rot, Vector2.ONE)
-			draw_texture_rect(_tex[kd2], Rect2(-sz * 0.5, sz), false)
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		draw_texture_rect(_tex[kd2],
+				Rect2(Vector2(bf.pos_x[i], bf.pos_y[i]) - sz * 0.5, sz), false)
+
+	#    ── 2패스: 회전 탄 (바늘). τ=∞ 라 회전은 생성 시 고정이다.
+	var rotated := false
+	for i in cnt:
+		var kd3: int = bf.kind[i]
+		if Tune.KIND_H[kd3] <= 0.0:
+			continue
+		var sz3: Vector2 = _size[kd3]
+		var rot := atan2(bf.vel_y[i], bf.vel_x[i]) - PI * 0.5
+		draw_set_transform(Vector2(bf.pos_x[i], bf.pos_y[i]), rot, Vector2.ONE)
+		draw_texture_rect(_tex[kd3], Rect2(-sz3 * 0.5, sz3), false)
+		rotated = true
+	if rotated:
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
