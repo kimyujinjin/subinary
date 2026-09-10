@@ -109,7 +109,7 @@ iOS export 산출물의 PNG 가 프로젝트 리소스로 임포트되어 `.godo
 | Android 실기 | Galaxy S25+ (SM-S942N) · Android 16 · Vulkan 1.4.304 Forward Mobile · Xclipse 960 |
 | 실기 가시영역 | 720×1560 (1080×2340). 플레이필드 1280 + 하단 여백 280 → 덱 240 이 여백 안에 들어간다 |
 | 실기 프레임 | 121탄 debug: phys 4.60ms · proc 15.95ms · dc 39 · fps 60 (120Hz 패널에서 max_fps 60 적중) |
-| gfxinfo | 50th 5ms · 90th 5ms · 95th 7~8ms · 99th 15~19ms · Missed Vsync 0 |
+| gfxinfo | **Godot 프레임을 세지 않는다.** 수 분 플레이 후에도 "Total frames 24" — Android UI 프레임만 센다(Godot 은 SurfaceView 에 그린다). 프레임 판정에 쓰지 말 것. HUD fps·RunLog fps 칼럼·Godot Performance 모니터를 쓴다 |
 
 ## 화면 물리 폭은 엔진 API 로 알 수 없다
 
