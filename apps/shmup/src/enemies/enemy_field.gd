@@ -6,15 +6,15 @@ class_name EnemyField
 ## 그 적 타입 전체를 오염시킨다. duplicate() 도 얕은 복사라 답이 아니다.
 ## 게이트 1 은 코드 상수 + 별도 SoA 로 그 함정을 원천 차단한다.
 
-enum Type { SPORANGIUM, NEEDLEFISH }
+enum Type { SPORANGIUM, NEEDLEFISH, MEDUSA }
 
 # HP 는 40/18 로 시작했는데, 관통 자탄이 겹치는 동안 매 틱 데미지를 넣으므로
 # 실효 DPS 가 ≈45/s 였고 P07 발광관(플레이어 바로 위)이 0.9초에 죽어 격자가 아예
 # 화면에 안 나왔다. 방출 창의 3분의 2 정도를 버티는 값으로 올린다 —
 # 그보다 크면 "빨리 죽이고 짧게 끝낸다"는 관측침의 정체성이 사라진다.
-const HP := [240.0, 60.0]
-const R_VIS := [30.0, 20.0]
-const R_HIT := [30.0, 22.0]
+const HP := [240.0, 60.0, 300.0]
+const R_VIS := [30.0, 20.0, 34.0]
+const R_HIT := [30.0, 22.0, 34.0]
 
 # 부유 포자낭 — 하강 → 정지 방출 → 이탈.
 # 하강 속도는 62 로 시작했는데 첫 탄이 t=360(5.5초)에 나왔다 —
@@ -26,6 +26,10 @@ const S_EXIT := 300.0
 # 직침어 — 고정 y 를 횡단하며 3연발
 const NF_SPEED := 195.0
 const NF_BURST_GAP := 66
+# 관 해파리 — 정지 후 좌우 사인(진폭 120, 주기 3.2s). 화면 하단을 떠나게 만드는 적이다.
+# 속도로 적분한다 — 기준 x 를 따로 들지 않기 위해서다(260틱 구간의 누적 오차는 무시 가능).
+const MD_AMP := 120.0
+const MD_PERIOD := 192.0
 
 var px := PackedFloat32Array()
 var py := PackedFloat32Array()
@@ -79,6 +83,18 @@ func step(tick: int, player: Vector2) -> void:
 					Patterns.p01(local, px[i], py[i])
 				else:
 					Patterns.p07(local, tick, px[i], py[i])
+			else:
+				py[i] += S_EXIT * Tune.DT
+		elif k == Type.MEDUSA:
+			if py[i] < y_hold[i] - 0.5:
+				py[i] += S_DESCEND * Tune.DT
+				t0[i] = tick + 1
+			elif hold_left[i] > 0:
+				hold_left[i] -= 1
+				var lt := tick - t0[i]
+				var w := TAU / MD_PERIOD
+				px[i] += MD_AMP * w * cos(w * float(lt)) * 60.0 * Tune.DT
+				Patterns.p02(lt, px[i], py[i])
 			else:
 				py[i] += S_EXIT * Tune.DT
 		else:

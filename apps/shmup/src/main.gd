@@ -13,7 +13,7 @@ extends Node2D
 const SCENE_STAGE := "res://scenes/main.tscn"
 const SCENE_BOSS := "res://scenes/boss_rush.tscn"
 ## 격파 시 광립 수 — 적 종류별. 보스 P1 은 아래 _step_boss_clear 에서 따로 뿌린다.
-const MOTES_ON_KILL := [6, 3]
+const MOTES_ON_KILL := [6, 3, 10]
 const CLEAR_TICKS := 120            # 보스 P1 격파 후 재시작까지 2초
 const DEATH_HITSTOP := 8
 const LESSON_HOLD_TICKS := 12       # 정지 프레임
@@ -486,7 +486,7 @@ func _on_hit() -> void:
 	lesson_death_pos = player
 	SimClock.rescue(Tune.RESCUE_TICKS)
 	RunLog.write("hit", [SimClock.run_index, SimClock.sim_tick, SimClock.run_seed,
-			player.x, player.y, ["spore_tide", "spore_grid", "needle"][BulletField.hit_kind],
+			player.x, player.y, ["spore_tide", "spore_grid", "needle", "bubble"][BulletField.hit_kind],
 			lesson_bid, fairness.gap_x0, fairness.gap_w,
 			TouchRouter.k, TouchRouter.focus, TouchRouter.regrip_count, 0,
 			BulletField.flow_c(SimClock.sim_tick), 0.0, BulletField.n,
@@ -502,7 +502,7 @@ func _on_death() -> void:
 	_restart_armed = false
 	var since := -1 if TouchRouter.last_regrip_tick < 0 else SimClock.wall_tick - TouchRouter.last_regrip_tick
 	RunLog.write("death", [SimClock.run_index, SimClock.sim_tick, SimClock.run_seed,
-			player.x, player.y, ["spore_tide", "spore_grid", "needle"][BulletField.hit_kind],
+			player.x, player.y, ["spore_tide", "spore_grid", "needle", "bubble"][BulletField.hit_kind],
 			lesson_bid, fairness.gap_x0, fairness.gap_w,
 			TouchRouter.k, TouchRouter.focus, TouchRouter.regrip_count, since,
 			BulletField.flow_c(SimClock.sim_tick),

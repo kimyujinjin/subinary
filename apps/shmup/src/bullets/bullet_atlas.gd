@@ -20,11 +20,16 @@ const HALO_A := 0.055
 const HALO_RGB := 0.34
 
 ## 캡슐 SDF 로 한 장을 굽는다. h=0 이면 원, h>0 이면 세로 캡슐(바늘).
-static func bake(color: Color, w: float, h: float, halo: float) -> ImageTexture:
+## ring > 0 이면 속 빈 링을 굽는다 — 바깥 반지름 w, 테두리 두께 2·ring.
+## 부호거리를 |d − (w − ring)| − ring 으로 접으면 채움/링이 같은 셰이딩 경로를 쓴다.
+static func bake(color: Color, w: float, h: float, halo: float, ring := 0.0) -> ImageTexture:
 	# 림·AA 두께를 탄 크기로 클램프한다. 고정값을 쓰면 얇은 탄에서
 	# 림이 코어를 통째로 덮어 "검은 림만 남은 투명한 탄" 이 된다(바늘에서 실측).
-	var rim := minf(RIM, w * 0.42)
-	var aa := minf(AA, w * 0.30)
+	# 링은 테두리 두께가 반폭보다 훨씬 얇다. w 로 클램프하면 림이 링을 통째로 덮어
+	# 바늘에서 겪은 "검은 림만 남은 투명한 탄" 이 그대로 재현된다.
+	var t: float = ring if ring > 0.0 else w
+	var rim := minf(RIM, t * 0.42)
+	var aa := minf(AA, t * 0.30)
 	var pad := halo + aa
 	var hx := w + pad
 	var hy := h + w + pad
@@ -38,6 +43,8 @@ static func bake(color: Color, w: float, h: float, halo: float) -> ImageTexture:
 			# 세로 선분(±h)까지의 거리 − w = 표면까지의 부호거리
 			var cy := clampf(uy, -h, h)
 			var d := sqrt(ux * ux + (uy - cy) * (uy - cy)) - w
+			if ring > 0.0:
+				d = absf(d + ring) - ring
 			img.set_pixel(px, py, _shade(color, d, halo, rim, aa))
 	return ImageTexture.create_from_image(img)
 
@@ -64,13 +71,14 @@ static func _shade(c: Color, d: float, halo: float, rim: float, aa: float) -> Co
 static func build() -> Array:
 	var texs: Array[ImageTexture] = []
 	var sizes: Array[Vector2] = []
-	var cols := [Tune.COL_TIDE, Tune.COL_GRID, Tune.COL_NEEDLE]
+	var cols := [Tune.COL_TIDE, Tune.COL_GRID, Tune.COL_NEEDLE, Tune.COL_BUBBLE]
 	for k in Tune.KIND_N:
 		# 시각 반폭으로 굽는다. 판정 반폭(KIND_W)과 분리되어 있다.
 		var w: float = Tune.KIND_VIS_W[k]
 		var h: float = Tune.KIND_H[k]
 		var halo: float = Tune.KIND_HALO[k]
-		texs.append(bake(cols[k], w, h, halo))
+		var ring: float = Tune.KIND_RING[k]
+		texs.append(bake(cols[k], w, h, halo, ring))
 		var pad: float = halo + minf(AA, w * 0.30)
 		sizes.append(Vector2((w + pad) * 2.0, (h + w + pad) * 2.0))
 	return [texs, sizes]

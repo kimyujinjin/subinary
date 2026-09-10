@@ -10,8 +10,9 @@ class_name Patterns
 ## process_in_physics 기본값이 false 라 가변 delta 기준이 되어
 ## 탄막 타이밍이 기기 성능에 좌우된다. 그건 공정성 문제다.
 
-enum Id { P01_TIDEFALL, P03_NEEDLE, P07_FLOWGRID, P05_HALO_RING, P09_LOW_RIPPLE }
-const NAMES := ["P01 적조 낙하", "P03 직침", "P07 조류 격자", "P05 회광륜", "P09 저광 파문"]
+enum Id { P01_TIDEFALL, P03_NEEDLE, P07_FLOWGRID, P05_HALO_RING, P09_LOW_RIPPLE, P02_BACKBUBBLE }
+const NAMES := ["P01 적조 낙하", "P03 직침", "P07 조류 격자", "P05 회광륜", "P09 저광 파문",
+		"P02 역기포"]
 
 # ── P01 적조 낙하 · Fan 초광각 160° · 조류 100% ─────────────────────────
 # 독해 단서: 줄의 기울기 = 조류 방향. 회피 답이 좌/우 이진 선택이다.
@@ -136,3 +137,41 @@ static func p09_ex(y0: float, phase: float, tick: int, speed: float, kind: int) 
 		if d >= P09_GAP_HALF:
 			BulletField.spawn(x, y0 + P09_AMP * sin(TAU * x / P09_LAMBDA + phase), u0, speed, kind)
 		x += P09_PITCH
+
+# ── P02 역기포 · Circle + 역행 · 조류 35% ───────────────────────────────
+# 독해 단서(설계서 §4): "링 테두리가 흰색으로 밝아지면 **상승 시작**.
+# 방사 중심선은 기하학적으로 항상 안전."
+#
+# 처음에 방사 방향의 반대로 감속을 걸어 원점으로 되돌리게 만들었더니 두 가지가 틀렸다:
+#   · 기포가 물에서 **떠오른다**는 세계관과 어긋난다(설계서는 "상승" 이라고 적었다)
+#   · 원점 복귀형은 반경이 곧 도달 한계라, 해파리가 y=200 에 서면 탄이 플레이어 밴드
+#     (y 640~1180)에 **영영 닿지 않는다**. 헤드리스로 재니 peak 가 118 그대로였다 —
+#     즉 화면에 아무 일도 일어나지 않는 패턴이었다.
+#
+# 그래서 전원에게 **위쪽 상수 가속**을 건다. 아래로 나간 탄은 감속 → 정지 → 상승으로
+# 같은 자리를 두 번 지나고, 옆으로 나간 탄은 수평 속도를 유지한 채 천천히 떠오른다.
+# 위로 나간 탄은 그대로 이탈한다. "두 번 온다" 가 물리로 성립한다.
+# 값은 공정성 격자(발수 8~12 × 속도 290~330 × 해파리 깊이 380~440)로 골랐다.
+# 처음 넣은 배치(해파리 y=380 · 14발)는 y640 밴드에서 강제 점프 416유닛 — 요구 이동
+# 상한 250 초과로 실패했다. 해파리를 440 으로 내리고 10발로 줄여 통로min 102 로 맞췄다.
+const P02_COUNT := 10
+const P02_SPEED := 330.0
+const P02_STOP_SEC := 2.0      # 아래로 나간 탄의 하강 깊이 = v0·t/2 = 330유닛
+const P02_EVERY := 180         # 3.0초마다 한 겹
+
+static func p02(local: int, ex: float, ey: float) -> void:
+	if local < 0 or local % P02_EVERY != 0:
+		return
+	p02_ex(ex, ey, P02_COUNT, P02_SPEED, P02_STOP_SEC,
+			float(local / P02_EVERY) * 0.42)
+
+## rise = 위쪽 상수 가속(유닛/s²). 아래로 v0 로 나간 탄이 stop_sec 에 멈춘다.
+static func p02_ex(cx: float, cy: float, count: int, speed: float,
+		stop_sec: float, phase: float) -> void:
+	var rise := speed / stop_sec
+	for i in count:
+		var ang := phase + TAU * float(i) / float(count)
+		var dx := cos(ang)
+		var dy := sin(ang)
+		BulletField.spawn_acc(cx + dx * 26.0, cy + dy * 26.0,
+				dx * speed, dy * speed, Tune.Kind.BUBBLE, 0.0, -rise)

@@ -11,6 +11,11 @@ var pos_x := PackedFloat32Array()
 var pos_y := PackedFloat32Array()
 var vel_x := PackedFloat32Array()
 var vel_y := PackedFloat32Array()
+## 상수 가속(유닛/s²). 기포만 쓴다 — 방사 방향의 반대로 걸어 감속 → 정지 → 역행을 만든다.
+## 조류 이완과는 별개 축이다: 이완은 x 만 건드리고 목표 속도로 수렴시키지만,
+## 이것은 발사 방향을 따라 선형으로 감속해 부호를 뒤집는다.
+var acc_x := PackedFloat32Array()
+var acc_y := PackedFloat32Array()
 var kind := PackedInt32Array()
 var bid := PackedInt32Array()
 var flags := PackedByteArray()
@@ -42,6 +47,8 @@ func _ready() -> void:
 	pos_y.resize(Tune.MAX_BULLETS)
 	vel_x.resize(Tune.MAX_BULLETS)
 	vel_y.resize(Tune.MAX_BULLETS)
+	acc_x.resize(Tune.MAX_BULLETS)
+	acc_y.resize(Tune.MAX_BULLETS)
 	kind.resize(Tune.MAX_BULLETS)
 	bid.resize(Tune.MAX_BULLETS)
 	flags.resize(Tune.MAX_BULLETS)
@@ -63,6 +70,9 @@ func clear() -> void:
 	_spawn_overflow = 0
 
 func spawn(x: float, y: float, vx: float, vy: float, k: int) -> void:
+	spawn_acc(x, y, vx, vy, k, 0.0, 0.0)
+
+func spawn_acc(x: float, y: float, vx: float, vy: float, k: int, ax: float, ay: float) -> void:
 	if n >= Tune.MAX_BULLETS:
 		_spawn_overflow += 1
 		return
@@ -70,6 +80,8 @@ func spawn(x: float, y: float, vx: float, vy: float, k: int) -> void:
 	pos_y[n] = y
 	vel_x[n] = vx
 	vel_y[n] = vy
+	acc_x[n] = ax
+	acc_y[n] = ay
 	kind[n] = k
 	bid[n] = _next_bid
 	_next_bid += 1
@@ -168,6 +180,9 @@ func step_and_collide(tick: int, p0: Vector2, p1: Vector2, invincible: bool) -> 
 		if relax > 0.0:
 			var u := c * (Tune.FLOW_S_BASE + Tune.FLOW_S_AMP * sin(PI * clampf(oy, 0.0, Tune.PF_H) / Tune.PF_H)) * u_max
 			vel_x[i] += (u - vel_x[i]) * relax
+		if Tune.KIND_ACCEL[kd]:
+			vel_x[i] += acc_x[i] * Tune.DT
+			vel_y[i] += acc_y[i] * Tune.DT
 		var vx := vel_x[i]
 		var vy := vel_y[i]
 		var nx := ox + vx * Tune.DT
@@ -180,6 +195,7 @@ func step_and_collide(tick: int, p0: Vector2, p1: Vector2, invincible: bool) -> 
 			n -= 1
 			pos_x[i] = pos_x[n]; pos_y[i] = pos_y[n]
 			vel_x[i] = vel_x[n]; vel_y[i] = vel_y[n]
+			acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]
 			kind[i] = kind[n]; bid[i] = bid[n]; flags[i] = flags[n]
 			continue
 
@@ -252,6 +268,7 @@ func clear_column(cx: float, half_w: float, y_max: float) -> void:
 			n -= 1
 			pos_x[i] = pos_x[n]; pos_y[i] = pos_y[n]
 			vel_x[i] = vel_x[n]; vel_y[i] = vel_y[n]
+			acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]
 			kind[i] = kind[n]; bid[i] = bid[n]; flags[i] = flags[n]
 		else:
 			i += 1
@@ -267,6 +284,7 @@ func clear_radius(cx: float, cy: float, r: float) -> void:
 			n -= 1
 			pos_x[i] = pos_x[n]; pos_y[i] = pos_y[n]
 			vel_x[i] = vel_x[n]; vel_y[i] = vel_y[n]
+			acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]
 			kind[i] = kind[n]; bid[i] = bid[n]; flags[i] = flags[n]
 		else:
 			i += 1

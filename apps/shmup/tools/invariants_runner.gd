@@ -5,6 +5,7 @@ extends Node
 ##   ① 조류 띠 위상의 부호 = 유속의 부호 (tick × c 로 계산하면 램프마다 역주행했다)
 ##   ② 직침어의 첫 바늘이 생성된 틱을 넘겨 살아남는다 (컬링 경계 밖에서 쏘면 즉사했다)
 ##   ③ 조류 위상 한 주기 적분 = 0 (flow_phase 의 닫힌형 전제)
+##   ⑧ P02 역기포 — 감속 → 정지 → 역행이 실제로 원점으로 돌아온다
 ##   ⑦ 보스 발광 기관 예고 — 모든 발사에 8틱 예고가 붙고, 오지 않는 발사를 예고하지 않는다
 ##   ⑥ Reach1D — 정적 벽과 틈에서 "속도 v 로 틈에 닿는가" 가 손 계산과 일치한다
 ##   ⑤ 보스 P1 — 호흡 창에 새 발사 0 · 링 회전 방향 = 조류 방향 (설계서 §6 의 약속)
@@ -22,6 +23,7 @@ func _ready() -> void:
 	_boss_rhythm()
 	_reach_cases()
 	_glow_cases()
+	_bubble_cases()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
 
@@ -237,3 +239,42 @@ func _glow_cases() -> void:
 		_check(fires.size() > 0 and unwarned == 0 and phantom == 0,
 			"보스 예고 = 발사 (%s · 발사 %d · 무예고 %d · 유령 %d)" % [
 				tag, fires.size(), unwarned, phantom])
+
+# ── P02 역기포 ──────────────────────────────────────────────────────────
+## "속 빈 링 = 두 번 온다" 가 실루엣 문법이므로 역행이 실제로 성립해야 한다.
+## 감속 t1 = v0/a 에 정지하고 2·t1 에 원점으로 돌아온다.
+func _bubble_cases() -> void:
+	BulletField.clear()
+	var cx := 360.0
+	var cy := 400.0
+	Patterns.p02_ex(cx, cy, Patterns.P02_COUNT, Patterns.P02_SPEED, Patterns.P02_STOP_SEC, 0.0)
+	var n0 := BulletField.n
+	var t1 := int(round(Patterns.P02_STOP_SEC * 60.0))
+	var deepest := cy
+	var crossings := 0        # 발사선(cy)을 아래로 넘었다가 다시 위로 넘는 탄의 수
+	var below := {}
+	for t in t1 * 2 + 8:
+		BulletField.step_and_collide(t + 90, Vector2(-999.0, -999.0), Vector2(-999.0, -999.0), true)
+		for i in BulletField.n:
+			var id: int = BulletField.bid[i]
+			var y: float = BulletField.pos_y[i]
+			deepest = maxf(deepest, y)
+			if y > cy + 40.0:
+				below[id] = true
+			elif below.has(id) and y < cy - 10.0:
+				below.erase(id)
+				crossings += 1
+	_check(n0 == Patterns.P02_COUNT, "P02 발사 수 (%d)" % n0)
+	# 정확히 아래로 나가는 탄은 없다 — 발수·위상에 따라 가장 아래에 가까운 각이 정해진다.
+	# 그 각의 sin 으로 계산해야 맞는다(90° 를 가정하면 count=10 에서 35유닛 어긋난다).
+	var sin_max := 0.0
+	for i in Patterns.P02_COUNT:
+		sin_max = maxf(sin_max, sin(TAU * float(i) / float(Patterns.P02_COUNT)))
+	var vy := Patterns.P02_SPEED * sin_max
+	var rise := Patterns.P02_SPEED / Patterns.P02_STOP_SEC
+	var want_depth := cy + sin_max * 26.0 + vy * vy / (2.0 * rise)
+	_check(absf(deepest - want_depth) < 12.0,
+		"P02 하강 깊이 y%.0f (계산 %.0f · 최심각 sin %.3f)" % [deepest, want_depth, sin_max])
+	_check(crossings >= 4,
+		"P02 상승 — 같은 자리를 두 번 지난다 (복귀 %d발)" % crossings)
+	BulletField.clear()

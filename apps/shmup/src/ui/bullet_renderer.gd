@@ -53,7 +53,7 @@ func _draw_set(px: PackedFloat32Array, py: PackedFloat32Array,
 	var seg_n := cnt * 2
 	_trail.resize(seg_n * 2)
 	_trail_col.resize(seg_n)
-	var cols := [Tune.COL_TIDE, Tune.COL_GRID, Tune.COL_NEEDLE]
+	var cols := [Tune.COL_TIDE, Tune.COL_GRID, Tune.COL_NEEDLE, Tune.COL_BUBBLE]
 	var c_t := bf.flow_c(tick)
 	var u_max: float = Tune.FLOW_SLOW_U_MAX if bf.flow_slow else Tune.FLOW_U_MAX
 	for i in cnt:
@@ -102,7 +102,20 @@ func _draw_set(px: PackedFloat32Array, py: PackedFloat32Array,
 		if Tune.KIND_H[kd2] > 0.0:
 			continue
 		var sz: Vector2 = _size[kd2]
-		draw_texture_rect(_tex[kd2], Rect2(Vector2(px[j2], py[j2]) - sz * 0.5, sz), false)
+		var r := Rect2(Vector2(px[j2], py[j2]) - sz * 0.5, sz)
+		if Tune.KIND_ACCEL[kd2]:
+			# 기포 — 정지가 가까울수록 테두리가 밝아진다. "곧 되돌아온다" 예고이고,
+			# 이 경고가 없으면 역행이 기습이 되어 "두 번 온다" 를 배울 방법이 없다.
+			# modulate 는 성분별이므로 rgb 만 올린다(알파를 올리면 사전곱셈이 깨진다).
+			var sp := sqrt(pvx[j2] * pvx[j2] + pvy[j2] * pvy[j2])
+			var a2 := sqrt(bf.acc_x[j2] * bf.acc_x[j2] + bf.acc_y[j2] * bf.acc_y[j2])
+			var warn := 0.0
+			if a2 > 0.001:
+				warn = clampf(1.0 - sp / (a2 * Tune.BUBBLE_WARN_SEC), 0.0, 1.0)
+			var m := lerpf(1.0, Tune.BUBBLE_WARN_MULT, warn)
+			draw_texture_rect(_tex[kd2], r, false, Color(m, m, m, 1.0))
+		else:
+			draw_texture_rect(_tex[kd2], r, false)
 
 	#    ── 2패스: 회전 탄 (바늘). τ=∞ 라 회전은 생성 시 고정이다.
 	var rotated := false
