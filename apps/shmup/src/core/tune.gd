@@ -89,6 +89,18 @@ const GAP_NORMAL := 96.0        # Normal 최소 통과 폭 (중심간)
 const BAND_HALF := 16.0
 const SCAN_CELLS := 720
 
+# ── 통과 폭의 단위 ──────────────────────────────────────────────────────
+# 위 두 값(MIN_GAP_UNITS · GAP_NORMAL)과 설계서의 정지 창 88 은 **탄 중심 사이 거리 D** 다.
+# 1D 스캔(Fairness)이 재는 것은 판정 반경만큼 부풀린 뒤 남는 **자유 폭 F** 이고,
+# 포자 사이에서 F = D − 2·(12 + 4) = D − 32 다. 둘을 그대로 비교하면 게이트가 32유닛
+# 엄격해진다 — 한동안 실제로 그렇게 쟀다(스테이지 판정은 그만큼 보수적이었다).
+# 바늘이 낀 틈은 F = D − 21.5 라, 포자 기준 환산은 바늘에 조금 관대하다.
+const SPORE_CLEAR := 32.0
+const FREE_FLOOR := 1           # 자유 칸 0 = 절대 벽 (D < 32 — 기하학적 하한)
+const FREE_NORMAL := 64         # D 96 — Normal 최소 통과 폭
+const FREE_STILL := 56          # D 88 — 이 미만이면 정지 창 필수
+const SLIVER_FREE := 32         # D 64 (Lunatic 76 미만) — 통로로 세지 않는 슬리버
+
 # ── 사망 교재 ───────────────────────────────────────────────────────────
 const REPLAY_TICKS := 30        # 0.5초 되감기
 const REPLAY_MAX := 512

@@ -5,6 +5,8 @@ extends Node
 ##   ① 조류 띠 위상의 부호 = 유속의 부호 (tick × c 로 계산하면 램프마다 역주행했다)
 ##   ② 직침어의 첫 바늘이 생성된 틱을 넘겨 살아남는다 (컬링 경계 밖에서 쏘면 즉사했다)
 ##   ③ 조류 위상 한 주기 적분 = 0 (flow_phase 의 닫힌형 전제)
+##   ⑥ Reach1D — 정적 벽과 틈에서 "속도 v 로 틈에 닿는가" 가 손 계산과 일치한다
+##   ⑤ 보스 P1 — 호흡 창에 새 발사 0 · 링 회전 방향 = 조류 방향 (설계서 §6 의 약속)
 ##   ④ 터치 로직 — 합성 이벤트를 TouchRouter 에 직접 넣는다. 맥의 합성 터치는 index 0
 ##      하나뿐이라 실기에서만 보이던 다손가락 경로를 여기서 숫자로 확인할 수 있다.
 
@@ -16,6 +18,8 @@ func _ready() -> void:
 	_flow_phase_sign(true)
 	_needle_first_shot()
 	_touch_cases()
+	_boss_rhythm()
+	_reach_cases()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
 
@@ -143,3 +147,58 @@ func _touch_cases() -> void:
 	TouchRouter.clear_touches()
 	TouchRouter.reset_run()
 	SimClock.state = SimClock.State.RUN
+
+# ── 보스 ────────────────────────────────────────────────────────────────
+func _boss_rhythm() -> void:
+	BulletField.clear()
+	var b := Boss.new()
+	b.reset(0)
+	var p := Vector2(360.0, 1000.0)
+	var breath_fire := 0
+	var pressure_fire := 0
+	var bad_dir := 0
+	for t in Boss.P1_MAX_TICKS:
+		var before := BulletField.n
+		b.step(t, p)
+		var fired := BulletField.n > before
+		if fired:
+			if b.window(t).x == 0:
+				breath_fire += 1
+			else:
+				pressure_fire += 1
+		var c := BulletField.flow_c(t) + BulletField.flow_c(t + 1)
+		var da := b.ring_angle(t + 1) - b.ring_angle(t)
+		if absf(c) > 0.001 and signf(da) != signf(c):
+			bad_dir += 1
+		BulletField.step_and_collide(t, p, p, true)
+		if BulletField.n > Tune.MAX_BULLETS - 64:
+			break
+	_check(breath_fire == 0 and pressure_fire > 0,
+		"보스 호흡 창 발사 0 (호흡 %d · 압력 %d틱)" % [breath_fire, pressure_fire])
+	_check(bad_dir == 0, "링 회전 방향 = 조류 방향 (역방향 %d틱)" % bad_dir)
+	BulletField.clear()
+
+# ── Reach1D ─────────────────────────────────────────────────────────────
+## 손 계산 가능한 장면: t=0 에 전 칸 자유, t ≥ T 에 [600, 660) 만 자유(벽 + 틈).
+## 시작점은 전 칸이므로 틈까지 거리는 0 — 항상 산다. 그래서 시작 집합을 [0, 60) 으로 제한하고
+## 틈까지 540칸을 T 틱 안에 가야 한다: v·T ≥ 541 이어야 산다.
+func _reach_cases() -> void:
+	var cells := Tune.SCAN_CELLS
+	var start := PackedByteArray(); start.resize(cells); start.fill(0)
+	for i in 60: start[i] = 1
+	var open := PackedByteArray(); open.resize(cells); open.fill(1)
+	var wall := PackedByteArray(); wall.resize(cells); wall.fill(0)
+	for i in range(600, 660): wall[i] = 1
+	# 경계에 딱 걸리게 고른다: 59 + v·T ≥ 600 → v5 는 T109 생존·T108 사망, v3 은 T181·T180
+	for c in [[5, 109, true], [5, 108, false], [3, 181, true], [3, 180, false], [8, 68, true], [8, 67, false]]:
+		var v: int = c[0]
+		var T: int = c[1]
+		var r := Reach1D.new()
+		r.step_mask(start, v, 0)
+		for t in range(1, T):
+			r.step_mask(open, v, t)
+		r.step_mask(wall, v, T)
+		# 시작 [0,60) 끝 59 → 틱 T-1 번 확장 후 틈 시작 600 에 닿으려면 59 + v·T ≥ 600
+		var expect: bool = 59 + v * T >= 600
+		_check(r.alive == expect and expect == c[2],
+			"Reach1D v=%d T=%d → 생존 %s (손 계산 %s)" % [v, T, r.alive, expect])

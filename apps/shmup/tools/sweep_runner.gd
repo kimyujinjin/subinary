@@ -4,7 +4,7 @@ extends Node
 
 const BANDS := [640.0, 860.0, 1040.0]
 const XS := [120.0, 360.0, 600.0]
-const STILL_GAP := 88
+const STILL_GAP := Tune.FREE_STILL   # 자유 폭 F 기준 (D 88)
 const STILL_WIN := 21
 const STILL_MOVE := 16.0
 const MOVE_WIN := 36

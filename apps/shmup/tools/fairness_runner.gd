@@ -8,9 +8,12 @@ extends Node
 ##      (포자낭 2기가 겹치면 틈이 절반이 된다).
 ##
 ## 판정
-##   FAIL  최장 자유 구간 < MIN_GAP_UNITS(32)          — 기하학적 하한. 어떤 조작으로도 불가능
+## 모든 폭은 **자유 폭 F**(판정 반경만큼 부풀린 뒤 남는 폭)다. 설계서 값은 중심간 D 이고
+## 포자 사이에서 F = D − 32 다(Tune 의 통과 폭 단위 주석). 출력은 F 로 하고 필요한 곳에 D 를 병기한다.
+##
+##   FAIL  자유 칸 0 (절대 벽)                          — 기하학적 하한 D 32. 어떤 조작으로도 불가능
 ##   FAIL  틈 < 88유닛인데 정지 창이 없음               — 직전 0.35초간 틈 중심 이동 ≤16유닛 규칙
-##   WARN  틈 < GAP_NORMAL(96)                          — 정지 창은 있으나 Normal 하한 미달
+##   WARN  F < 64 (D < 96)                              — Normal 하한 미달
 ##   FAIL  강제 전환 — 통로가 겹침 없이 사라져 점프를 강요                — 재앵커 불가
 ##   FAIL  통로 유지 시간 < 24틱(400ms) — 반응 시간 밑이라 인간이 통과할 수 없다
 ##   WARN  절대 벽 (자유 구간 0)
@@ -22,7 +25,7 @@ extends Node
 
 const BANDS := [640.0, 860.0, 1040.0]
 const TIGHT := 200          # 이 폭 미만일 때만 "요구 이동량"으로 센다
-const STILL_GAP := 88       # 이 폭 미만이면 정지 창 필수
+const STILL_GAP := Tune.FREE_STILL   # F 56 (D 88) 미만이면 정지 창 필수
 const STILL_WIN := 21       # 0.35초
 const STILL_MOVE := 16.0
 const MOVE_WIN := 36        # 0.6초
@@ -37,8 +40,8 @@ var _warn := 0
 func _ready() -> void:
 	_fair = Fairness.new()
 	print("== 1D 공정성 스캔 ==")
-	print("   MIN=%d  NORMAL=%d  정지창=<%d폭/0.35s이동≤%d  요구이동상한=%d유닛/0.6s" % [
-		Tune.MIN_GAP_UNITS, int(Tune.GAP_NORMAL), STILL_GAP, int(STILL_MOVE), int(MOVE_CAP)])
+	print("   자유폭F: 하한=%d  Normal=%d  정지창=<%d/0.35s이동≤%d  요구이동상한=%d유닛/0.6s" % [
+		Tune.FREE_FLOOR, Tune.FREE_NORMAL, STILL_GAP, int(STILL_MOVE), int(MOVE_CAP)])
 
 	print("\n-- A) 패턴 단독 --")
 	_scan("P01 적조 낙하", func(t: int, p: Vector2) -> void:
@@ -106,7 +109,7 @@ func _scan(label: String, emit: Callable, ticks: int, ef: EnemyField = null) -> 
 		var still_viol := cor.still_violations(STILL_GAP, STILL_WIN, STILL_MOVE, flow_x)
 		var max_move := cor.max_demand(MOVE_WIN, TIGHT)
 		# 통로 유지 시간 — 통과 폭 이상으로 열려 있던 연속 구간
-		var hold: Array = cor.hold_times(int(Tune.GAP_NORMAL))
+		var hold: Array = cor.hold_times(Tune.FREE_NORMAL)
 		for t in ticks:
 			var g := gaps[t]
 			if g < 0:
@@ -115,7 +118,7 @@ func _scan(label: String, emit: Callable, ticks: int, ef: EnemyField = null) -> 
 			sum += g
 			if g == 0:
 				walls += 1
-			if g < int(Tune.GAP_NORMAL):
+			if g < Tune.FREE_NORMAL:
 				below_normal += 1
 			if g < min_gap:
 				min_gap = g
@@ -125,7 +128,7 @@ func _scan(label: String, emit: Callable, ticks: int, ef: EnemyField = null) -> 
 			continue
 
 		var flags := PackedStringArray()
-		if min_gap < Tune.MIN_GAP_UNITS:
+		if min_gap < Tune.FREE_FLOOR:
 			flags.append("FAIL:하한%d" % min_gap); _fail += 1
 		if still_viol > 0:
 			flags.append("FAIL:정지창%d@%s" % [still_viol,
@@ -146,10 +149,10 @@ func _scan(label: String, emit: Callable, ticks: int, ef: EnemyField = null) -> 
 				flags.append("전환%d(%.0fu)" % [cor.forced, cor.forced_jump])
 		if walls > 0:
 			flags.append("WARN:절대벽%d" % walls); _warn += 1
-		if min_gap < int(Tune.GAP_NORMAL) and min_gap >= Tune.MIN_GAP_UNITS:
-			flags.append("WARN:<96"); _warn += 1
+		if min_gap < Tune.FREE_NORMAL and min_gap >= Tune.FREE_FLOOR:
+			flags.append("WARN:F<64"); _warn += 1
 		if flags.is_empty():
 			flags.append("OK")
-		print("  %-14s y%4d : 최장min=%3d avg=%3d <96:%3d/%-4d 통로min=%3d 유지min=%2d@t%-4d p50=%3d(n%d) peak=%3d  %s" % [
+		print("  %-14s y%4d : 최장min=%3d avg=%3d <64:%3d/%-4d 통로min=%3d 유지min=%2d@t%-4d p50=%3d(n%d) peak=%3d  %s" % [
 			label, int(band), min_gap, sum / samples, below_normal, samples,
 			min_track, int(hold[0]), int(hold[3]), int(hold[1]), int(hold[2]), peak, " ".join(flags)])

@@ -100,6 +100,20 @@ func flow_c(tick: int) -> float:
 	var b: float = Tune.FLOW_LEVELS[(i + 1) % 4]
 	return lerpf(a, b, float(local - hold) / float(ramp))
 
+## 조류 세그먼트 (index, 세그먼트 내 국소 틱). index 0 = 우 · 1 = 정 · 2 = 좌 · 3 = 정.
+## 보스 P1 의 압력/호흡 창이 이것이다 — 리듬을 따로 두지 않고 조류에서 직접 읽는다.
+func flow_seg(tick: int) -> Vector2i:
+	var period: int = Tune.FLOW_SLOW_PERIOD if flow_slow else Tune.FLOW_PERIOD
+	var scale: int = period / Tune.FLOW_PERIOD
+	var p: int = tick % period
+	var acc := 0
+	for i in 4:
+		var seg: int = int(Tune.FLOW_SEGS[i]) * scale
+		if p < acc + seg:
+			return Vector2i(i, p - acc)
+		acc += seg
+	return Vector2i(3, 0)
+
 ## ∫₀^tick C(t) dt (틱 단위) — 조류 띠 눈금의 스크롤 위상.
 ##
 ## 위상을 tick × C(tick) 으로 계산했더니 램프 구간마다 눈금이 역주행했다:

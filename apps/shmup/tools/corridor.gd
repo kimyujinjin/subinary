@@ -44,7 +44,7 @@ func update(fair: Fairness, player_x: float) -> void:
 		if free:
 			run += 1
 		else:
-			if run >= Tune.MIN_GAP_UNITS:
+			if run >= Tune.SLIVER_FREE:
 				runs_a.append(c - run)
 				runs_b.append(c - 1)
 			run = 0
@@ -158,8 +158,11 @@ func hold_times(pass_w: int) -> Array:
 		elif run > 0:
 			spans.append([run, i - run])
 			run = 0
-	if run > 0:
-		spans.append([run, width_hist.size() - run])
+	# 측정 끝에 닿은 마지막 구간은 **잘린(censored)** 값이다 — 시뮬레이션이 끝나서 닫혔을 뿐
+	# 통로가 닫힌 것이 아니다. 넣으면 "@t2999 유지 1틱" 같은 인공물이 최단값이 된다.
+	# 같은 이유로 t=0 에서 시작한 구간(탄이 아직 오지 않은 서두)도 뺀다.
+	if spans.size() > 0 and int(spans[0][1]) == 0:
+		spans.remove_at(0)
 	if spans.is_empty():
 		return [0, 0, 0, -1]
 	spans.sort_custom(func(a, b): return int(a[0]) < int(b[0]))

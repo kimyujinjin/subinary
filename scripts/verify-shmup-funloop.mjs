@@ -110,6 +110,30 @@ judge('⑤b', '재파지 후 400ms 내 사망 ≤ 15%',
   Number.isFinite(regripDeathPct) ? `${regripDeathPct.toFixed(1)}% (${regripDeaths}/${deaths.length})` : '미측정',
   Number.isFinite(regripDeathPct) ? regripDeathPct <= 15 : null)
 
+// 보스 러시 세션이면 게이트 1 지표가 아니라 게이트 2 요약을 낸다.
+// 게이트 2 의 질문은 숫자가 아니다 — "이 싸움이 재미있는가". 숫자는 그 대답의 근거로만 쓴다.
+const sessionMode = (String(of(rows[0] || [], 'detail') || '').match(/mode=(\w+)/) || [])[1] || 'stage'
+if (sessionMode === 'boss') {
+  const clears = rows.filter(r => r[0] === 'clear').map(r => Object.fromEntries(
+    String(of(r, 'detail') || '').split(';').filter(Boolean).map(kv => kv.split('='))))
+  const byKind = {}
+  for (const d of deaths) byKind[of(d, 'kind')] = (byKind[of(d, 'kind')] || 0) + 1
+  const surv = deaths.map(d => num(d, 'tick') / 60)
+  console.log(`\n게이트 2 요약 (보스 P1) — ${file}`)
+  console.log(`빌드: ${[...builds].join(', ') || '불명'}`)
+  console.log(`도전 ${perRun.size}회 · 격파 ${clears.length} · 사망 ${deaths.length}`)
+  if (clears.length) {
+    const t = clears.map(c => +c.t)
+    const hp = clears.filter(c => c.reason === 'hp').length
+    console.log(`  격파 시간 p50 ${p(t, 0.5).toFixed(1)}s (HP 도달 ${hp} · 50초 경과 ${clears.length - hp})`)
+  }
+  if (deaths.length) {
+    console.log(`  사망 시점 p50 ${p(surv, 0.5).toFixed(1)}s · 원인 ${Object.entries(byKind).map(([k, v]) => `${k} ${v}`).join(', ')}`)
+  }
+  console.log('\n게이트 2 는 한 문장이다 — "이 싸움이 재미있는가."  예 / 아니오')
+  process.exit(0)
+}
+
 console.log(`\n게이트 1 판정 — ${file}`)
 console.log(`빌드: ${[...builds].join(', ') || '불명'}${isRelease ? '' : '   ← release 아님. 이 판정은 무효다'}`)
 console.log(`사망 ${deaths.length}회 · 재시작 ${restarts.length}회 · 플레이 ${playMin.toFixed(1)}분 · 런 ${perRun.size}개`

@@ -10,8 +10,8 @@ class_name Patterns
 ## process_in_physics 기본값이 false 라 가변 delta 기준이 되어
 ## 탄막 타이밍이 기기 성능에 좌우된다. 그건 공정성 문제다.
 
-enum Id { P01_TIDEFALL, P03_NEEDLE, P07_FLOWGRID }
-const NAMES := ["P01 적조 낙하", "P03 직침", "P07 조류 격자"]
+enum Id { P01_TIDEFALL, P03_NEEDLE, P07_FLOWGRID, P05_HALO_RING, P09_LOW_RIPPLE }
+const NAMES := ["P01 적조 낙하", "P03 직침", "P07 조류 격자", "P05 회광륜", "P09 저광 파문"]
 
 # ── P01 적조 낙하 · Fan 초광각 160° · 조류 100% ─────────────────────────
 # 독해 단서: 줄의 기울기 = 조류 방향. 회피 답이 좌/우 이진 선택이다.
@@ -96,3 +96,43 @@ static func p07_ex(local: int, tick: int, ex: float, ey: float,
 			continue
 		# 발사 시점의 유속을 그대로 실어 준다 → 즉시 조류에 탄다
 		BulletField.spawn(x, ey, u0, P07_VY, Tune.Kind.SPORE_GRID)
+
+# ── P05 회광륜 · RotatingRing · 조류 100% ─────────────────────────────
+# 보스 외륜의 발광 기관 24개가 탄 24발과 1:1 대응한다 — 다음 발사가 어느 각도에서
+# 오는지 몸통을 보면 안다. 링은 조류와 같이 돈다(시계방향 = 물이 오른쪽).
+const P05_COUNT := 24
+# 탄속은 tools/boss_runner.gd 격자(ω 0.2/0.3/0.4 × 150/170/200)로 골랐다.
+# 판정 기준은 1D 도달 가능성(Reach1D): 9조합 모두 60 u/s 로 생존 가능했고, 차이는 정밀도였다.
+#   ω 0.30 · 170 → 최악 순간 도달 폭 51 (요구 52 미달)
+#   ω 0.30 · 200 → 97, 탄 피크 247(최저) ← 선택
+const P05_SPEED := 200.0
+
+static func p05_ex(cx: float, cy: float, radius: float, angle: float,
+		speed: float, count: int, kind: int) -> void:
+	for i in count:
+		var a := angle + TAU * float(i) / float(count)
+		var dx := cos(a)
+		var dy := sin(a)
+		BulletField.spawn(cx + dx * radius, cy + dy * radius, dx * speed, dy * speed, kind)
+
+# ── P09 저광 파문 · Wave · 조류 100% ────────────────────────────────────
+# 게임 최저속(110 u/s). 파문 한 줄이 내려오고, 움푹 내려온 골에 구멍이 있다 —
+# "튀어나온 곳에 틈" 이 독해 단서다. 발사마다 위상을 반 파장 교대해 골이 좌우로 옮겨 가고,
+# 줄 전체가 조류를 타므로 "골과 함께 조류 방향으로 흐른다" 가 회피 답이다.
+const P09_SPEED := 110.0
+const P09_PITCH := 40.0
+const P09_AMP := 36.0
+const P09_LAMBDA := 360.0
+const P09_GAP_HALF := 60.0     # 골 중심 ±60 을 비운다 → 중심간 160, 자유폭 128 > Normal 96
+
+static func p09_ex(y0: float, phase: float, tick: int, speed: float, kind: int) -> void:
+	# 발사 시점의 유속을 실어 준다 → 즉시 조류에 탄다
+	var u0 := BulletField.flow_u(y0, tick)
+	# 골 = sin(2πx/λ + φ) = 1 인 x — 가장 앞선(아래로 내려온) 지점
+	var x_valley := (PI * 0.5 - phase) * P09_LAMBDA / TAU
+	var x := P09_PITCH * 0.5
+	while x < Tune.PF_W:
+		var d := absf(fposmod(x - x_valley + P09_LAMBDA * 0.5, P09_LAMBDA) - P09_LAMBDA * 0.5)
+		if d >= P09_GAP_HALF:
+			BulletField.spawn(x, y0 + P09_AMP * sin(TAU * x / P09_LAMBDA + phase), u0, speed, kind)
+		x += P09_PITCH

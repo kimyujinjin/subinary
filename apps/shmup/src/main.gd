@@ -5,6 +5,14 @@ extends Node2D
 ## 틱 순서를 여기서 명시적으로 고정한다. 시그널로 흩뿌리지 않는 이유는
 ## 결정론에서 순서가 곧 결과이고, 순서가 코드 한 곳에 없으면 디버깅이 불가능해지기 때문이다.
 
+## 보스 러시(boss_rush.tscn)는 이 스크립트를 boss_mode = true 로 쓴다. 틱 순서·판정·
+## 사망 교재·계측을 전부 공유하고, 웨이브 대신 보스가 탄을 낸다 — 두 벌로 가르면
+## 한쪽에서 고친 결함이 다른 쪽에 남는다(이 슬라이스에서 이미 여러 번 겪었다).
+@export var boss_mode: bool = false
+
+const SCENE_STAGE := "res://scenes/main.tscn"
+const SCENE_BOSS := "res://scenes/boss_rush.tscn"
+const CLEAR_TICKS := 120            # 보스 P1 격파 후 재시작까지 2초
 const DEATH_HITSTOP := 8
 const LESSON_HOLD_TICKS := 12       # 정지 프레임
 const INVINCIBLE_TICKS := 90
@@ -21,6 +29,12 @@ var shot_y := PackedFloat32Array()
 var shot_n: int = 0
 
 var enemies: EnemyField = null
+var boss: Boss = null
+var clear_anim: int = -1            # 보스 P1 격파 연출 시계 (ScreenOverlay 가 읽는다)
+var _clear_left: int = -1
+var _boss_view: BossView = null
+var _toggle_taps: int = 0
+var _toggle_tick: int = -9999
 var fairness: Fairness = null
 var replay: Replay = null
 
@@ -67,6 +81,11 @@ func _ready() -> void:
 	_overlay = FieldOverlay.new()
 	_overlay.main = self
 	_field.add_child(_backdrop)
+	if boss_mode:
+		boss = Boss.new()
+		_boss_view = BossView.new()
+		_boss_view.boss = boss
+		_field.add_child(_boss_view)      # 탄 레이어 아래 — 탄이 몸통 위를 지나간다
 	_field.add_child(_bullets)
 	_field.add_child(_overlay)
 	_screen_ui = ScreenOverlay.new()
@@ -79,7 +98,8 @@ func _ready() -> void:
 	_reset(FIXED_SEED)
 	RunLog.write("run", [SimClock.run_index, 0, SimClock.run_seed, 0, 0, "", 0, 0, 0,
 			0.0, false, 0, 0, 0.0, 0.0, 0, 0, _build_tag(),
-			TouchRouter.field_per_px, TouchRouter.screen_width_mm()])
+			TouchRouter.field_per_px, TouchRouter.screen_width_mm(),
+			"mode=%s" % ("boss" if boss_mode else "stage")])
 
 ## --capture=<tick>:<경로> — 지정 틱의 프레임을 PNG 로 저장하고 종료한다.
 ## 게이트 1 지표 ④(조류 표시 대 배경의 Weber 콘트라스트 ≥ 0.25)는 스크린샷 픽셀값으로
@@ -160,9 +180,46 @@ func _reset(seed_value: int) -> void:
 	lesson_step = 0
 	lesson_hold = 0
 	_restart_armed = false
+	_clear_left = -1
+	clear_anim = -1
+	if boss != null:
+		boss.reset(SimClock.sim_tick)
 
 # ── 입력: 사망 후 탭 재시작 ─────────────────────────────────────────────
+## 디버그 장면 전환 — 로드맵 2단계 "스테이지를 건너뛰는 디버그 키".
+## 텍스트 0줄이라 버튼을 둘 수 없다. 플레이 중 손가락이 가지 않는 최상단 HUD 띠(64유닛)를
+## 0.5초 안에 세 번 두드리면 스테이지 ↔ 보스 러시를 오간다. 데스크톱은 B 키.
+## 그 띠의 press 는 소비한다 — 드래그 역할이나 재시작으로 새지 않게.
+func _debug_toggle(event: InputEvent) -> bool:
+	if event is InputEventKey:
+		var k := event as InputEventKey
+		if k.pressed and not k.echo and k.keycode == KEY_B:
+			_switch_scene()
+			return true
+		return false
+	if event is InputEventScreenTouch:
+		var t := event as InputEventScreenTouch
+		if t.position.y >= 64.0:
+			return false
+		if t.pressed:
+			if SimClock.wall_tick - _toggle_tick > 30:
+				_toggle_taps = 0
+			_toggle_taps += 1
+			_toggle_tick = SimClock.wall_tick
+			if _toggle_taps >= 3:
+				_toggle_taps = 0
+				_switch_scene()
+		return true
+	return false
+
+func _switch_scene() -> void:
+	RunLog.flush()
+	get_tree().change_scene_to_file.call_deferred(SCENE_STAGE if boss_mode else SCENE_BOSS)
+
 func _unhandled_input(event: InputEvent) -> void:
+	if _debug_toggle(event):
+		get_viewport().set_input_as_handled()
+		return
 	# 히트스톱(8틱)이 끝난 뒤, 되감기 중에도 받는다.
 	#
 	# 한때 "정지 프레임부터만 받는다" 로 바꿨는데 근거가 틀렸다 — 사망→입력 0.00초는
@@ -218,7 +275,8 @@ func _physics_process(_delta: float) -> void:
 	player += step
 	# 매 틱 상태 클램프. 가상 위치를 저장하지 않는다.
 	player.x = clampf(player.x, Tune.MARGIN, Tune.PF_W - Tune.MARGIN)
-	player.y = clampf(player.y, Tune.MARGIN + Backdrop.BAND_H, Tune.PF_H - Tune.MARGIN)
+	var y_min: float = Boss.PLAYER_MIN_Y if boss != null else Tune.MARGIN + Backdrop.BAND_H
+	player.y = clampf(player.y, y_min, Tune.PF_H - Tune.MARGIN)
 	_log_regrips(tick)
 
 	# 2. 자탄 (자동 사격)
@@ -226,15 +284,21 @@ func _physics_process(_delta: float) -> void:
 		_fire()
 	_step_shots()
 
-	# 3. 웨이브 → 적 → 이미터
-	_spawn_waves(tick)
-	enemies.step(tick, player)
+	# 3. 웨이브 → 적 → 이미터 (보스 러시에서는 보스가 대신한다)
+	if boss != null:
+		boss.step(tick, player)
+	else:
+		_spawn_waves(tick)
+		enemies.step(tick, player)
 
 	# 4. 자탄 대 적
-	_shots_vs_enemies()
+	if boss != null:
+		_shots_vs_boss(tick)
+	else:
+		_shots_vs_enemies()
 
 	# 5. 탄 적분 + 컬링 + 판정 (단일 순회)
-	if _cap_invincible:
+	if _cap_invincible or _clear_left >= 0:
 		invincible_left = 2
 	elif invincible_left > 0:
 		invincible_left -= 1
@@ -264,11 +328,38 @@ func _physics_process(_delta: float) -> void:
 		_cap_tick = 0
 		_capture.call_deferred()
 
+	if boss != null and _step_boss_clear(tick):
+		return
 	_redraw_all(tick)
+
+## 보스 P1 격파(70% 또는 50초). L0 에서는 P2 가 아직 없으므로 탄을 걷고 2초 뒤 재시작한다.
+## 반환값 true = 이번 틱에 재시작했다(재드로우는 _restart 가 이미 했다).
+func _step_boss_clear(tick: int) -> bool:
+	if boss.done and _clear_left < 0:
+		_clear_left = CLEAR_TICKS
+		clear_anim = 0
+		BulletField.clear()
+		RunLog.write("clear", [SimClock.run_index, tick, SimClock.run_seed,
+				player.x, player.y, "", 0, 0, 0,
+				TouchRouter.k, TouchRouter.focus, TouchRouter.regrip_count, 0,
+				BulletField.flow_c(tick), 0.0, 0, int(Engine.get_frames_per_second()),
+				"", 0.0, 0.0,
+				"reason=%s;hp=%.0f;t=%.2f;relay=%d" % [boss.done_reason, boss.hp,
+						float(boss.elapsed(tick)) / 60.0, TouchRouter.relay_count]])
+	elif _clear_left > 0:
+		_clear_left -= 1
+		clear_anim += 1
+		if _clear_left == 0:
+			_restart()
+			return true
+	return false
 
 func _redraw_all(tick: int) -> void:
 	_backdrop.tick = tick
 	_backdrop.queue_redraw()
+	if _boss_view != null:
+		_boss_view.tick = tick
+		_boss_view.queue_redraw()
 	_bullets.queue_redraw()
 	_overlay.queue_redraw()
 	_screen_ui.queue_redraw()
@@ -363,6 +454,25 @@ func _shots_vs_enemies() -> void:
 		if dmg > 0.0 and enemies.damage(j, dmg):
 			continue
 		j += 1
+
+## 자탄 대 보스 — 관통하지 않는다. 코어를 지나는 동안 매 틱 대미지를 넣으면
+## 판정 반경 70 에서 자탄 한 발이 7틱 동안 7 을 넣는다. 한 발 = 1 로 소모한다.
+func _shots_vs_boss(tick: int) -> void:
+	if boss.done:
+		return
+	var r := Boss.R_CORE_HIT + Tune.SHOT_R
+	var r2 := r * r
+	var i := 0
+	while i < shot_n:
+		var dx := shot_x[i] - Boss.CX
+		var dy := shot_y[i] - Boss.CY
+		if dx * dx + dy * dy <= r2:
+			boss.damage(Tune.SHOT_DMG, tick)
+			shot_n -= 1
+			shot_x[i] = shot_x[shot_n]
+			shot_y[i] = shot_y[shot_n]
+			continue
+		i += 1
 
 # ── 웨이브 ──────────────────────────────────────────────────────────────
 func _spawn_waves(tick: int) -> void:

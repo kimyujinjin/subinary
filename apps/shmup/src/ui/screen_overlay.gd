@@ -14,6 +14,7 @@ func _draw() -> void:
 		return
 	_draw_gutter_mask()
 	_draw_death_feedback()
+	_draw_clear_feedback()
 	_draw_restart_prompt()
 	_draw_deck()
 	_draw_touch_debug()
@@ -92,6 +93,20 @@ func _draw_death_feedback() -> void:
 		draw_arc(c, r, 0.0, TAU, 48, Color(1.0, 0.42, 0.45, alpha), 4.0, true)
 		draw_arc(c, r * 0.72, 0.0, TAU, 48, Color(1.0, 0.75, 0.72, alpha * 0.5), 2.0, true)
 
+## 보스 P1 격파 — 청록 플래시 + 코어에서 퍼지는 링. 사망 피드백과 색·방향이 반대다.
+func _draw_clear_feedback() -> void:
+	var a: int = main.clear_anim
+	if a < 0:
+		return
+	if a < 14:
+		var f := 1.0 - float(a) / 14.0
+		draw_rect(Rect2(0.0, 0.0, view_w, vh), Color(Tune.COL_GRID, 0.28 * f * f), true)
+	if a < 70:
+		var t := float(a) / 70.0
+		var r := 900.0 * (1.0 - (1.0 - t) * (1.0 - t))
+		var c := Vector2(Boss.CX + main.field_dx, Boss.CY)
+		draw_arc(c, r, 0.0, TAU, 64, Color(Tune.COL_GRID, (1.0 - t) * 0.8), 5.0, true)
+
 ## 재시작 어포던스. 텍스트 0줄 방침이므로 도형으로만 알린다.
 ##
 ## 무엇을 해야 하는지 알려주는 것이 없으면 사용자는 "멈췄다/고장났다" 로 읽는다 —
@@ -158,6 +173,12 @@ func _draw_hud() -> void:
 		Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0,
 		int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
 		m.fairness.gap_w]
+	# 보스 HP · 경과 · 현재 페이즈/창 — 요구된 디버그 항목(보스 HP · 현재 패턴 이름)
+	if m.boss != null:
+		var b: Boss = m.boss
+		var w := b.window(SimClock.sim_tick)
+		l1 += "  B%.0f%% %.1fs P1 %s" % [b.hp_frac() * 100.0,
+				float(b.elapsed(SimClock.sim_tick)) / 60.0, "압력" if w.x == 1 else "호흡"]
 	var l2 := "k%.2f %s  C%+.2f  gz%d  rg%d  fpp%.3f  %.0fmm%s  %dx%d  run%d  d%d" % [
 		TouchRouter.k, "FOCUS" if TouchRouter.focus else "     ",
 		BulletField.flow_c(SimClock.sim_tick), BulletField.graze_events,
@@ -171,8 +192,8 @@ func _draw_hud() -> void:
 			Color(0.75, 0.90, 0.90, 0.85))
 	draw_string(f, Vector2(10.0, y + float(fs) + 3.0), l2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
 			Color(0.75, 0.90, 0.90, 0.85))
-	# 최소 통과 폭 위반 경고 — MIN_GAP_UNITS 하드 하한
-	if m.fairness.gap_w < Tune.MIN_GAP_UNITS and BulletField.n > 0:
+	# Normal 최소 통과 폭 미달 경고. 스캔은 자유 폭 F 를 재므로 D(= F + 32)로 환산해 보인다.
+	if m.fairness.in_band > 0 and m.fairness.gap_w < Tune.FREE_NORMAL:
 		draw_string(f, Vector2(10.0, y + float(fs) * 2.0 + 6.0),
-				"GAP %d < MIN %d" % [m.fairness.gap_w, Tune.MIN_GAP_UNITS],
+				"GAP D%d < %d" % [m.fairness.gap_w + int(Tune.SPORE_CLEAR), int(Tune.GAP_NORMAL)],
 				HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1.0, 0.35, 0.35, 0.95))

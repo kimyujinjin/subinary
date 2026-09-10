@@ -78,9 +78,9 @@ func scan(bf: Node, player_x: float, player_y: float) -> void:
 			if run > best:
 				best = run
 				best_x0 = c - run + 1
-		elif run >= Tune.MIN_GAP_UNITS:
+		elif run >= Tune.SLIVER_FREE:
 			# 구간 [c-run, c-1] 이 닫혔다 — 플레이어와의 거리를 잰다.
-			# MIN_GAP_UNITS 미만은 통로로 세지 않는다: 그것이 기하학적 하한의 정의이고,
+			# 자유 폭 SLIVER_FREE(D 64, Lunatic 미만) 미만은 통로로 세지 않는다 —
 			# 세면 탄 옆의 1유닛 슬라이버가 "플레이어의 통로"로 잡힌다.
 			var a := c - run
 			var b := c - 1
