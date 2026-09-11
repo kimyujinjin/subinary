@@ -99,6 +99,7 @@ func _draw_ship(p: Vector2, a: float) -> void:
 		draw_arc(p, Tune.GRAZE_R + 6.0, -PI * 0.5, -PI * 0.5 + TAU * clampf(w, 0.0, 1.0), 32,
 				Color(0.9, 0.98, 1.0, 0.55 * a), 2.0, true)
 
+## 적 7종 — 절차적 도형. 실루엣이 "무엇을 강요하는 적인가" 를 말해야 한다.
 func _draw_enemies() -> void:
 	var ef: EnemyField = main.enemies
 	for i in ef.n:
@@ -106,17 +107,52 @@ func _draw_enemies() -> void:
 		var k: int = ef.etype[i]
 		var r: float = EnemyField.R_VIS[k]
 		var frac: float = clampf(ef.hp[i] / float(EnemyField.HP[k]), 0.0, 1.0)
-		if k == EnemyField.Type.SPORANGIUM:
-			draw_circle(p, r, Color(Tune.COL_ENEMY, 0.9))
-			draw_arc(p, r + 4.0, -PI * 0.5, -PI * 0.5 + TAU * frac, 24,
-					Color(Tune.COL_TIDE, 0.75), 2.5, true)
-			draw_circle(p, r * 0.42, Color(Tune.COL_TIDE, 0.55))
-		else:
-			var poly := PackedVector2Array([
-				p + Vector2(r * signf(ef.dirx[i]), 0.0),
-				p + Vector2(-r * 0.5 * signf(ef.dirx[i]), -r * 0.55),
-				p + Vector2(-r * 0.5 * signf(ef.dirx[i]), r * 0.55)])
-			draw_colored_polygon(poly, Color(Tune.COL_NEEDLE, 0.35 + 0.55 * frac))
+		match k:
+			EnemyField.Type.DRIFTER:
+				draw_circle(p, r, Color(Tune.COL_ENEMY, 0.9))
+				draw_arc(p, r + 4.0, -PI * 0.5, -PI * 0.5 + TAU * frac, 24,
+						Color(Tune.COL_TIDE, 0.75), 2.5, true)
+				draw_circle(p, r * 0.42, Color(Tune.COL_TIDE, 0.55))
+			EnemyField.Type.NEEDLEFISH:
+				var d := signf(ef.dirx[i])
+				draw_colored_polygon(PackedVector2Array([
+					p + Vector2(r * d, 0.0),
+					p + Vector2(-r * 0.5 * d, -r * 0.55),
+					p + Vector2(-r * 0.5 * d, r * 0.55)]),
+					Color(Tune.COL_NEEDLE, 0.35 + 0.55 * frac))
+			EnemyField.Type.MEDUSA:
+				# 종 모양 + 촉수 — "두 번 온다" 를 몸으로 예고한다
+				draw_circle(p, r, Color(Tune.COL_ENEMY, 0.85))
+				draw_arc(p, r + 5.0, PI, TAU, 20, Color(Tune.COL_BUBBLE, 0.6 * frac + 0.2), 2.5, true)
+				for t in 4:
+					var tx := p.x - r * 0.6 + r * 0.4 * float(t)
+					draw_line(Vector2(tx, p.y + r * 0.3), Vector2(tx, p.y + r * 1.5),
+							Color(Tune.COL_BUBBLE, 0.35), 2.0)
+			EnemyField.Type.TUBE:
+				# 착생 관 — 세로로 길다. 고정 x 라는 것이 실루엣에 있어야 한다
+				draw_rect(Rect2(p.x - r * 0.5, p.y - r, r, r * 2.2), Color(Tune.COL_ENEMY, 0.85), true)
+				draw_rect(Rect2(p.x - r * 0.5, p.y - r, r, r * 2.2 * frac),
+						Color(Tune.COL_GRID, 0.5), true)
+			EnemyField.Type.PODWORM:
+				# 포낭을 품은 몸통 — 남은 포낭 수가 보인다(DPS 체크의 카운터)
+				draw_circle(p, r, Color(Tune.COL_ENEMY, 0.9))
+				var pods := int(ceil(float(ef.hold_left[i]) / float(EnemyField.PW_EVERY)))
+				for q in mini(pods, 3):
+					draw_circle(p + Vector2(-14.0 + 14.0 * float(q), r * 0.1), 5.0,
+							Color(Tune.COL_POD, 0.95))
+			EnemyField.Type.COLONY_CORE:
+				draw_arc(p, r, 0.0, TAU, 28, Color(Tune.COL_ENEMY, 0.8), 3.0, true)
+				draw_arc(p, r * 0.55, -PI * 0.5, -PI * 0.5 + TAU * frac, 20,
+						Color(Tune.COL_GRID, 0.7), 3.0, true)
+			EnemyField.Type.COLONY_BODY:
+				draw_circle(p, r, Color(Tune.COL_ENEMY, 0.55 + 0.4 * frac))
+				draw_circle(p, r * 0.4, Color(Tune.COL_GRID, 0.5 * frac))
+			EnemyField.Type.EEL:
+				# 위로 향한 쐐기 — 올라온다는 것이 실루엣에 있다
+				draw_colored_polygon(PackedVector2Array([
+					p + Vector2(0.0, -r * 1.4), p + Vector2(r * 0.8, r * 0.6),
+					p + Vector2(-r * 0.8, r * 0.6)]),
+					Color(Tune.COL_BUBBLE, 0.4 + 0.5 * frac))
 
 func _draw_pshots() -> void:
 	var m := main

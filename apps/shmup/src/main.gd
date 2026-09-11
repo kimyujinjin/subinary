@@ -12,8 +12,6 @@ extends Node2D
 
 const SCENE_STAGE := "res://scenes/main.tscn"
 const SCENE_BOSS := "res://scenes/boss_rush.tscn"
-## 격파 시 광립 수 — 적 종류별. 보스 P1 은 아래 _step_boss_clear 에서 따로 뿌린다.
-const MOTES_ON_KILL := [6, 3, 10]
 const CLEAR_TICKS := 120            # 보스 P1 격파 후 재시작까지 2초
 const DEATH_HITSTOP := 8
 const LESSON_HOLD_TICKS := 12       # 정지 프레임
@@ -365,6 +363,11 @@ func _physics_process(_delta: float) -> void:
 	else:
 		_shots_vs_enemies()
 
+	# 4a. 격파 보상 — 적이 종류별 광립 수를 값으로 남긴다(인덱스는 이미 재배정됐다)
+	for kill in enemies.kills:
+		_drop_motes(kill[0].x, kill[0].y, int(kill[1]))
+	enemies.kills.clear()
+
 	# 4b. 광립 — 조류를 타고 부상하다 2초 뒤 기체로 온다. 회수 판정은 graze 링.
 	motes.step(tick, player)
 	if motes.collected > 0:
@@ -612,8 +615,7 @@ func _shots_vs_enemies() -> void:
 	while j < enemies.n:
 		var ex := enemies.px[j]
 		var ey := enemies.py[j]
-		var etype: int = enemies.etype[j]
-		var r: float = EnemyField.R_HIT[etype] + Tune.SHOT_R
+		var r: float = EnemyField.R_HIT[enemies.etype[j]] + Tune.SHOT_R
 		var r2 := r * r
 		var dmg := 0.0
 		for i in shot_n:
@@ -622,7 +624,6 @@ func _shots_vs_enemies() -> void:
 			if dx * dx + dy * dy <= r2:
 				dmg += _shot_dmg()
 		if dmg > 0.0 and enemies.damage(j, dmg):
-			_drop_motes(ex, ey, MOTES_ON_KILL[etype])
 			continue
 		j += 1
 

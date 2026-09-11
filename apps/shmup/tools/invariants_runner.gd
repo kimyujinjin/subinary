@@ -58,7 +58,7 @@ func _flow_phase_sign(slow: bool) -> void:
 func _needle_first_shot() -> void:
 	BulletField.clear()
 	var ef := EnemyField.new()
-	ef.spawn(0, EnemyField.Type.NEEDLEFISH, -60.0, 380.0, 380.0, 0, 0, 1.0)
+	ef.spawn(0, EnemyField.Type.NEEDLEFISH, -60.0, 380.0, 380.0, 24, EnemyField.NF_HOLD, 1.0)
 	var p := Vector2(360.0, 1000.0)
 	var first_spawn := -1
 	var survived := false
