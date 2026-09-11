@@ -13,9 +13,11 @@ class_name Patterns
 enum Id {
 	P01_TIDEFALL, P03_NEEDLE, P07_FLOWGRID, P05_HALO_RING, P09_LOW_RIPPLE, P02_BACKBUBBLE,
 	P04_AIMED_SPREAD, P08_POD_BURST, P10_TURBULENT, P15_EXTINCTION,
+	P06_TWIN_SPIRAL, P11_CANYON, P12_UPWELLING, P13_CONTRACT, P14_FINALE, P16_CONDENSE,
 }
 const NAMES := ["P01 적조 낙하", "P03 직침", "P07 조류 격자", "P05 회광륜", "P09 저광 파문",
-		"P02 역기포", "P04 삼중 조준 확산", "P08 포낭 산개", "P10 난류 포자", "P15 발광 소멸"]
+		"P02 역기포", "P04 삼중 조준 확산", "P08 포낭 산개", "P10 난류 포자", "P15 발광 소멸",
+		"P06 쌍와", "P11 협곡", "P12 역류 상승", "P13 광막 수축", "P14 종조", "P16 심층 응결"]
 
 ## 패턴 레지스트리 — 도구가 6종을 **빠짐없이** 훑기 위한 표다.
 ##
@@ -37,6 +39,12 @@ const BOOK := [
 	{"id": &"P08", "tier": 2, "solo_period": 240, "aimed": false, "origin": Vector2(360.0, 200.0)},
 	{"id": &"P10", "tier": 3, "solo_period": 96,  "aimed": false, "origin": Vector2(360.0, 230.0)},
 	{"id": &"P15", "tier": 1, "solo_period": 300, "aimed": true,  "origin": Vector2(360.0, 300.0)},
+	{"id": &"P06", "tier": 2, "solo_period": 8,   "aimed": false, "origin": Vector2(360.0, 250.0)},
+	{"id": &"P11", "tier": 2, "solo_period": 54,  "aimed": false, "origin": Vector2(360.0, 200.0)},
+	{"id": &"P12", "tier": 3, "solo_period": 168, "aimed": true,  "origin": Vector2(360.0, 1150.0)},
+	{"id": &"P13", "tier": 3, "solo_period": 240, "aimed": true,  "origin": Vector2(360.0, 250.0)},
+	{"id": &"P14", "tier": 4, "solo_period": 384, "aimed": true,  "origin": Vector2(360.0, 250.0)},
+	{"id": &"P16", "tier": 3, "solo_period": 96,  "aimed": false, "origin": Vector2(360.0, 230.0)},
 ]
 
 ## 단독 관측 — 도구 전용. 게임이 쓰는 것과 **같은 함수**를 부른다(별도 하네스를 만들면
@@ -73,6 +81,18 @@ static func emit_solo(idx: int, local: int, tick: int, target: Vector2) -> void:
 		Id.P15_EXTINCTION:
 			if local % int(BOOK[idx]["solo_period"]) == 0:
 				p15(o.x, o.y, target.x, target.y)
+		Id.P06_TWIN_SPIRAL:
+			p06(local, o.x, o.y)
+		Id.P11_CANYON:
+			p11(local, tick, o.y)
+		Id.P12_UPWELLING:
+			p12(local, o.x, o.y, target.x, target.y)
+		Id.P13_CONTRACT:
+			p13(local, o.x, o.y, target.x, target.y)
+		Id.P14_FINALE:
+			p14(local, tick, o.x, o.y, target.x, target.y)
+		Id.P16_CONDENSE:
+			p16(local, tick, o.x, o.y)
 
 # ── P01 적조 낙하 · Fan 초광각 160° · 조류 100% ─────────────────────────
 # 독해 단서: 줄의 기울기 = 조류 방향. 회피 답이 좌/우 이진 선택이다.
@@ -310,3 +330,135 @@ static func p15(cx: float, cy: float, px: float, py: float) -> void:
 		if absf(angle_difference(a, safe)) < half:
 			continue
 		BulletField.spawn(cx, cy, cos(a) * P15_SPEED, sin(a) * P15_SPEED, Tune.Kind.SPORE_GRID)
+
+# ── P06 쌍와 · Spiral ×2 역회전 · 조류 100% ─────────────────────────────
+# 독해 단서: 두 나선이 만드는 **마름모 격자 셀의 변을 따라 걷는다.**
+# 두 나선은 색(적조/발광)과 반경차로 구분한다 — 색만으로 구분하게 두면 색각 이상에서 무너진다.
+# 위상은 base + (tick − spawn) × step 으로 재계산한다(float 누산은 수 분 뒤 어긋난다).
+const P06_ARMS := 3
+const P06_SPEED := 215.0
+const P06_STEP_DEG := 7.0
+const P06_EVERY := 8
+
+static func p06(local: int, ex: float, ey: float) -> void:
+	if local < 0 or local % P06_EVERY != 0:
+		return
+	var k := local / P06_EVERY
+	for s2 in 2:
+		var sign := 1.0 if s2 == 0 else -1.0
+		var kind := Tune.Kind.SPORE_TIDE if s2 == 0 else Tune.Kind.SPORE_GRID
+		var r := 12.0 if s2 == 0 else 28.0
+		for a in P06_ARMS:
+			var deg := sign * P06_STEP_DEG * float(k) + 360.0 * float(a) / float(P06_ARMS) \
+					+ (0.0 if s2 == 0 else 60.0)
+			var rad := deg_to_rad(deg)
+			BulletField.spawn(ex + cos(rad) * r, ey + sin(rad) * r,
+					cos(rad) * P06_SPEED, sin(rad) * P06_SPEED, kind)
+
+# ── P11 협곡 · Layered · Fan ×2 · 조류 100% ─────────────────────────────
+# 독해 단서: 좌우 두 부채가 만드는 **중앙 이음선이 조류로 ±90 이동한다.**
+# 벽이 아니라 이음선을 보는 패턴이다 — 조류 적분이 곧 안전선의 위치다.
+const P11_PER_SIDE := 6
+const P11_SPEED := 200.0
+const P11_PITCH := 58.0
+const P11_SEAM := 90.0
+const P11_EVERY := 18
+
+static func p11(local: int, tick: int, ey: float) -> void:
+	if local < 0 or local % P11_EVERY != 0:
+		return
+	var seam := Tune.PF_W * 0.5 + BulletField.flow_c(tick) * P11_SEAM
+	var u0 := BulletField.flow_u(ey, tick)
+	for side in 2:
+		var dir := -1.0 if side == 0 else 1.0
+		for i in P11_PER_SIDE:
+			var x := seam + dir * (70.0 + P11_PITCH * float(i))
+			if x < -20.0 or x > Tune.PF_W + 20.0:
+				continue
+			BulletField.spawn(x, ey, u0, P11_SPEED, Tune.Kind.SPORE_TIDE)
+
+# ── P12 역류 상승 · Circle + 기포 + Aimed · 조류 35%/0% ─────────────────
+# 독해 단서: **기포 반전 프레임 = 바늘 발사 프레임.**
+# 화면 아래를 존중하게 만드는 패턴이다 — 아래에 캠핑하면 상승하는 기포와 바늘을 동시에 받는다.
+# 두 사건을 같은 틱에 묶어야 그 인과가 배워진다.
+const P12_BUBBLES := 9
+const P12_SPEED := 250.0
+const P12_STOP_SEC := 1.4
+const P12_NEEDLES := 2
+const P12_EVERY := 168
+
+static func p12(local: int, ex: float, ey: float, px: float, py: float) -> void:
+	if local < 0:
+		return
+	var phase := local % P12_EVERY
+	if phase == 0:
+		p02_ex(ex, ey, P12_BUBBLES, P12_SPEED, P12_STOP_SEC, 0.31)
+	elif phase == int(P12_STOP_SEC * 60.0):
+		# 기포가 멈추고 상승으로 돌아서는 바로 그 틱에 조준 바늘이 나간다
+		var base := atan2(py - ey, px - ex)
+		for i in P12_NEEDLES:
+			var a := base + deg_to_rad(-9.0 + 18.0 * float(i))
+			BulletField.spawn(ex, ey, cos(a) * P03_SPEED, sin(a) * P03_SPEED, Tune.Kind.NEEDLE)
+
+# ── P13 광막 수축 · RotatingRing · 내향 · 조류 0% ───────────────────────
+# 독해 단서: **흰 대형탄 2발 = 게이트.** 게임 전체에서 이 패턴 하나에만 예약된 표식이다.
+# 원안은 각속도 정합(링과 같은 속도로 계속 도는 것)을 요구했는데, 그것은 설계서가
+# 금지한 "지속 2D 곡선 추적" 이다. 여기서는 **단일 축 커밋**으로 재저작한다 —
+# 가까운 게이트를 골라 한 번 들어가면 끝이고, 링이 수축하는 동안 안쪽이 주머니가 된다.
+const P13_COUNT := 26
+const P13_RADIUS := 560.0
+const P13_SPEED := -150.0      # 음수 = 내향
+const P13_GATES := 2
+
+static func p13(local: int, cx: float, cy: float, px: float, py: float) -> void:
+	if local != 0:
+		return
+	# 게이트는 플레이어에 가장 가까운 각과 그 반대편 — 항상 250유닛 이내에 하나가 있다
+	# 게이트는 **인덱스로** 고른다. 각도 창으로 고르면 창 폭이 탄 간격보다 넓으면 2발씩
+	# 잡히고(4발), 좁으면 가장 가까운 탄이 창 밖이라 0발이 된다 — 둘 다 겪었다.
+	# 가장 가까운 인덱스를 반올림으로 집으면 항상 정확히 1발이고, 반대편은 +COUNT/2 다.
+	var toward := atan2(py - cy, px - cx)
+	var g0 := wrapi(int(round(fposmod(toward, TAU) / (TAU / float(P13_COUNT)))), 0, P13_COUNT)
+	var g1 := wrapi(g0 + P13_COUNT / 2, 0, P13_COUNT)
+	for i in P13_COUNT:
+		var a := TAU * float(i) / float(P13_COUNT)
+		var is_gate := i == g0 or i == g1
+		var k := Tune.Kind.GATE if is_gate else Tune.Kind.SPORE_GRID
+		var sp := P13_SPEED * (0.55 if is_gate else 1.0)
+		BulletField.spawn(cx + cos(a) * P13_RADIUS, cy + sin(a) * P13_RADIUS,
+				cos(a) * sp, sin(a) * sp, k)
+
+# ── P14 종조 · Layered 복합 3중 · 보스 P3 최종 ──────────────────────────
+# **새 어휘 0개.** 이미 배운 세 문법(낙하벽 · 조류 격자 · 조준침)을 동시에 적용한다.
+# 마지막 패턴이 새 규칙을 들고 나오면 그때까지의 학습이 무의미해진다.
+const P14_CYCLE := 384
+
+static func p14(local: int, tick: int, ex: float, ey: float, px: float, py: float) -> void:
+	if local < 0:
+		return
+	var ph := local % P14_CYCLE
+	p01(ph, ex, ey)                                   # 층 1 — 낙하벽
+	p07(ph - 96, tick, ex, ey + 40.0)                 # 층 2 — 조류 격자
+	if ph >= 192:
+		p03((ph - 192) % 84, ex, ey, px, py)          # 층 3 — 조준침
+
+# ── P16 심층 응결 · Layered · 규칙 반전 · 조류 100% ─────────────────────
+# **조류를 따르면 틀린다.** 다른 15종은 "물을 읽고 타면 통로가 유지된다" 를 가르치는데,
+# 이 하나가 그 규칙을 뒤집는다 — 조류가 흘러간 자리에 탄이 응결한다.
+# 심사의 재미 렌즈가 지목한 "8초 주기의 완전 예고된 함수는 두 런에 학습되어 콘텐츠 생산을
+# 멈춘다" 의 직접 해답이다. 이것이 없으면 조류가 일방적 이득이 되어 게임이 스스로 무너진다.
+const P16_COUNT := 9
+const P16_SPEED := 175.0
+const P16_LEAD := 150.0        # 조류 방향으로 이만큼 앞선 자리에 응결한다
+const P16_EVERY := 96
+
+static func p16(local: int, tick: int, ex: float, ey: float) -> void:
+	if local < 0 or local % P16_EVERY != 0:
+		return
+	var c := BulletField.flow_c(tick)
+	var lead := c * P16_LEAD
+	var span := 300.0
+	for i in P16_COUNT:
+		var x := ex + lead - span * 0.5 + span * float(i) / float(P16_COUNT - 1)
+		# 응결이므로 초기 횡속도가 0 이다 — 조류에 실려 온 것이 아니라 거기서 생긴다.
+		BulletField.spawn(x, ey, 0.0, P16_SPEED, Tune.Kind.SPORE_GRID)

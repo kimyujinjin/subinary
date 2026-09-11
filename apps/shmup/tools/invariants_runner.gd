@@ -25,6 +25,7 @@ func _ready() -> void:
 	_glow_cases()
 	_bubble_cases()
 	_new_pattern_cases()
+	_boss_pattern_cases()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
 
@@ -382,4 +383,98 @@ func _new_pattern_cases() -> void:
 	_check(BulletField.n > 0 and worst >= deg_to_rad(Patterns.P15_GAP_DEG) * 0.5 - 0.01,
 		"P15 틈이 플레이어를 향한다 (탄 %d · 최근접 %.1f° ≥ %.1f°)" % [
 			BulletField.n, rad_to_deg(worst), Patterns.P15_GAP_DEG * 0.5])
+	BulletField.clear()
+
+# ── 보스·중간보스 패턴 ──────────────────────────────────────────────────
+func _boss_pattern_cases() -> void:
+	# P13 게이트는 게임 전체에서 이 패턴 하나에만 예약된 표식이다.
+	# 흰 대형탄이 정확히 2발이어야 하고, 그중 하나는 플레이어에게서 250유닛 안이어야 한다
+	# (설계서 §6: "흰 게이트 2개 중 가까운 쪽(항상 250유닛 이내)").
+	BulletField.clear()
+	var c := Vector2(360.0, 250.0)
+	var pl := Vector2(520.0, 900.0)
+	Patterns.p13(0, c.x, c.y, pl.x, pl.y)
+	var gates := 0
+	var near := 99999.0
+	for i in BulletField.n:
+		if BulletField.kind[i] == Tune.Kind.GATE:
+			gates += 1
+			# 게이트가 수축해 플레이어 y 선에 닿았을 때의 x 를 본다
+			var a := atan2(BulletField.vel_y[i], BulletField.vel_x[i])
+			near = minf(near, absf(angle_difference(a + PI,
+					atan2(pl.y - c.y, pl.x - c.x))))
+	_check(gates == Patterns.P13_GATES,
+		"P13 흰 게이트가 정확히 %d 발 (%d)" % [Patterns.P13_GATES, gates])
+	_check(near < deg_to_rad(360.0 / float(Patterns.P13_COUNT)),
+		"P13 게이트 하나가 플레이어 방향 (%.1f°)" % rad_to_deg(near))
+	# 게이트 외에 흰 대형탄이 다른 패턴에 새지 않는다
+	BulletField.clear()
+	var leak := 0
+	for idx in Patterns.BOOK.size():
+		if idx == Patterns.Id.P13_CONTRACT:
+			continue
+		BulletField.clear()
+		for t in 200:
+			Patterns.emit_solo(idx, t, t, Vector2(360.0, 1000.0))
+		for i in BulletField.n:
+			if BulletField.kind[i] == Tune.Kind.GATE:
+				leak += 1
+	_check(leak == 0, "흰 게이트탄이 P13 외에 안 쓰인다 (누출 %d)" % leak)
+
+	# P16 은 조류를 따르면 틀리는 유일한 패턴이다 — 응결 위치가 조류 방향으로 앞서야 한다.
+	BulletField.clear()
+	var t_right := -1
+	var t_left := -1
+	for t in Tune.FLOW_PERIOD:
+		if t_right < 0 and BulletField.flow_c(t) > 0.99:
+			t_right = t
+		if t_left < 0 and BulletField.flow_c(t) < -0.99:
+			t_left = t
+	var xr := 0.0
+	var xl := 0.0
+	BulletField.clear(); Patterns.p16(0, t_right, 360.0, 230.0)
+	for i in BulletField.n:
+		xr += BulletField.pos_x[i]
+	xr /= float(maxi(BulletField.n, 1))
+	BulletField.clear(); Patterns.p16(0, t_left, 360.0, 230.0)
+	for i in BulletField.n:
+		xl += BulletField.pos_x[i]
+	xl /= float(maxi(BulletField.n, 1))
+	_check(xr > 360.0 + Patterns.P16_LEAD * 0.8 and xl < 360.0 - Patterns.P16_LEAD * 0.8,
+		"P16 이 조류 방향 앞에 응결한다 (우 %.0f · 좌 %.0f · 중심 360)" % [xr, xl])
+
+	# P12 는 기포 반전 프레임과 바늘 발사 프레임이 **같은 틱**이어야 인과가 배워진다.
+	# 반전은 "아래로 가던 기포가 위로 돌아서는 것" 이다 — 처음부터 위로 나간 기포를 세면
+	# t=0 이 반전으로 잡힌다(첫 시도에서 그렇게 틀렸다).
+	BulletField.clear()
+	var needle_tick := -1
+	var reverse_tick := -1
+	for t in Patterns.P12_EVERY:
+		Patterns.p12(t, 360.0, 1150.0, 360.0, 1000.0)
+		BulletField.step_and_collide(t, Vector2(-999, -999), Vector2(-999, -999), true)
+		var max_vy := -99999.0
+		for i in BulletField.n:
+			if BulletField.kind[i] == Tune.Kind.NEEDLE and needle_tick < 0:
+				needle_tick = t
+			if BulletField.kind[i] == Tune.Kind.BUBBLE:
+				max_vy = maxf(max_vy, BulletField.vel_y[i])
+		# 가장 아래로 가던 기포조차 위로 돌아선 순간
+		if reverse_tick < 0 and max_vy < 0.0 and BulletField.n > 0:
+			reverse_tick = t
+	_check(needle_tick >= 0 and reverse_tick >= 0 and absi(needle_tick - reverse_tick) <= 2,
+		"P12 기포 반전 = 바늘 발사 (반전 t%d · 바늘 t%d)" % [reverse_tick, needle_tick])
+
+	# P14 는 새 어휘 0개 — 이미 배운 세 문법의 합이다. 탄종이 기존 것만 나와야 한다.
+	BulletField.clear()
+	var kinds := {}
+	for t in Patterns.P14_CYCLE:
+		Patterns.p14(t, t, 360.0, 250.0, 360.0, 1000.0)
+		for i in BulletField.n:
+			kinds[BulletField.kind[i]] = true
+	var novel := 0
+	for k in kinds:
+		if k == Tune.Kind.GATE or k == Tune.Kind.POD:
+			novel += 1
+	_check(kinds.size() >= 2 and novel == 0,
+		"P14 에 새 어휘 0개 (탄종 %d 종 · 신규 표식 %d)" % [kinds.size(), novel])
 	BulletField.clear()
