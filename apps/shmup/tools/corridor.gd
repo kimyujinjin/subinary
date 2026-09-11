@@ -170,6 +170,10 @@ func hold_times(pass_w: int) -> Array:
 	var shortest: Array = spans[0]
 	return [int(shortest[0]), int(mid[0]), spans.size(), int(shortest[1])]
 
+## 아무 것도 하지 않는다 — 호출부가 실수로 update() 를 두 번 부르지 않게 하는 표식용.
+func update_noop() -> void:
+	pass
+
 func min_width() -> int:
 	var m := Tune.SCAN_CELLS
 	for w in width_hist:

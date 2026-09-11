@@ -11,12 +11,13 @@ extends Node
 ## 모든 폭은 **자유 폭 F**(판정 반경만큼 부풀린 뒤 남는 폭)다. 설계서 값은 중심간 D 이고
 ## 포자 사이에서 F = D − 32 다(Tune 의 통과 폭 단위 주석). 출력은 F 로 하고 필요한 곳에 D 를 병기한다.
 ##
-##   FAIL  자유 칸 0 (절대 벽)                          — 기하학적 하한 D 32. 어떤 조작으로도 불가능
-##   FAIL  틈 < 88유닛인데 정지 창이 없음               — 직전 0.35초간 틈 중심 이동 ≤16유닛 규칙
-##   WARN  F < 64 (D < 96)                              — Normal 하한 미달
-##   FAIL  강제 전환 — 통로가 겹침 없이 사라져 점프를 강요                — 재앵커 불가
-##   FAIL  통로 유지 시간 < 24틱(400ms) — 반응 시간 밑이라 인간이 통과할 수 없다
-##   WARN  절대 벽 (자유 구간 0)
+##   FAIL  자유 칸 0 (절대 벽)          — 기하학적 하한 D 32. 어떤 조작으로도 불가능
+##   FAIL  Reach1D 도달 불가            — 횡속도 300 u/s 로도 살 경로가 없다
+##   FAIL  도달 폭 < 52                 — 경로는 있으나 엄지 스윕 종점 오차(±26)보다 좁다
+##   WARN  F < 64 (D < 96)              — Normal 하한 미달
+##
+## 정지 창·전환·유지 시간은 **진단 정보**로만 출력한다. 회전 격자·이동하는 벽에서는
+## "지금 통로가 오래 열려 있는가" 가 기준이 아니기 때문이다(두 도구가 엇갈린 원인).
 ##
 ## 요구 이동량은 상한값으로만 출력하고 판정에 쓰지 않는다 — tools/corridor.gd 주석 참조.
 ##
@@ -30,6 +31,12 @@ const STILL_WIN := 21       # 0.35초
 const STILL_MOVE := 16.0
 const MOVE_WIN := 36        # 0.6초
 const MOVE_CAP := 250.0
+## 1D 도달 판정 — 보스 러너와 **같은 기준**이다.
+## 통로 유지 시간은 벽-틈(P01·P07)에는 맞지만 회전 격자(P05)·이동하는 벽(P09)에서는
+## 플레이어가 옆 통로로 옮겨 가는 것이 정상이라 기준이 맞지 않는다. 실제로 두 도구가
+## 같은 패턴을 두고 엇갈렸다(여기선 실패, 보스 러너에선 OK).
+const V_BUDGET := 5          # 300 u/s — 전 구간 지속 횡속도 예산
+const COMP_MIN := 52         # 도달 집합의 최소 연속 폭. 엄지 스윕 종점 오차 ±26 → 52
 ## 통로 최소 유지 시간. 반응 250~300ms + 엄지 전이 60~100ms → 24틱(400ms) 을 하한으로 둔다.
 const HOLD_MIN := 24
 
@@ -44,15 +51,13 @@ func _ready() -> void:
 		Tune.FREE_FLOOR, Tune.FREE_NORMAL, STILL_GAP, int(STILL_MOVE), int(MOVE_CAP)])
 
 	print("\n-- A) 패턴 단독 --")
-	_scan("P01 적조 낙하", func(t: int, p: Vector2) -> void:
-		Patterns.p01(t, 360.0, 220.0),
-		Patterns.P01_VOLLEY_TICKS * Patterns.P01_VOLLEYS + 420)
-	_scan("P03 직침", func(t: int, p: Vector2) -> void:
-		Patterns.p03(t % EnemyField.NF_BURST_GAP,
-			-60.0 + EnemyField.NF_SPEED * Tune.DT * float(t), 380.0, p.x, p.y),
-		EnemyField.NF_BURST_GAP * 4)
-	_scan("P07 조류 격자", func(t: int, p: Vector2) -> void:
-		Patterns.p07(t, t, 360.0, 220.0), 900)
+	# Patterns.BOOK 을 훑는다. 손으로 적으면 패턴을 추가할 때 빠뜨린다 —
+	# 실제로 6종 중 3종만 검사되고 있었다(P05·P09·P02 는 보스·합성 안에서만).
+	for idx in Patterns.BOOK.size():
+		var b: Dictionary = Patterns.BOOK[idx]
+		var ticks := int(b["solo_period"]) * 4 + 420
+		_scan("%s %s" % [b["id"], Patterns.NAMES[idx]],
+			func(t: int, p: Vector2) -> void: Patterns.emit_solo(idx, t, t, p), ticks)
 
 	print("\n-- B) 웨이브 합성 (실제 판정) --")
 	var ef := EnemyField.new()
@@ -84,6 +89,8 @@ func _scan(label: String, emit: Callable, ticks: int, ef: EnemyField = null) -> 
 			ef.clear()
 		var p := Vector2(Tune.PF_W * 0.5, band)
 		var gaps := PackedInt32Array()
+		var rch := Reach1D.new()
+		var comp_min := Tune.SCAN_CELLS
 		var flow_x := PackedFloat32Array()
 		var flow_acc := 0.0
 		var cor := Corridor.new()
@@ -95,6 +102,9 @@ func _scan(label: String, emit: Callable, ticks: int, ef: EnemyField = null) -> 
 			# 밴드에 탄이 없는 틱도 반드시 기록한다 — 건너뛰면 히스토리 인덱스가
 			# 시간과 어긋나고 0.35초/0.6초 창 계산이 통째로 틀린다.
 			cor.update(_fair, p.x)
+			rch.step_mask(rch.from_fairness(_fair), V_BUDGET, t)
+			if rch.alive:
+				comp_min = mini(comp_min, rch.min_comp)
 			flow_x.append(flow_acc)
 			flow_acc += BulletField.flow_u(p.y, t) * Tune.DT
 
@@ -129,30 +139,28 @@ func _scan(label: String, emit: Callable, ticks: int, ef: EnemyField = null) -> 
 
 		var flags := PackedStringArray()
 		if min_gap < Tune.FREE_FLOOR:
-			flags.append("FAIL:하한%d" % min_gap); _fail += 1
+			flags.append("FAIL:절대벽"); _fail += 1
+		if not rch.alive:
+			flags.append("FAIL:도달불가@t%d" % rch.died_at); _fail += 1
+		elif comp_min < COMP_MIN:
+			flags.append("FAIL:정밀%d" % comp_min); _fail += 1
 		if still_viol > 0:
-			flags.append("FAIL:정지창%d@%s" % [still_viol,
-				",".join(Array(cor.viol_ticks).slice(0, 6).map(func(x): return str(x)))])
-			_fail += 1
-		# 반응 시간 하한: 단순 시각 자극 반응 중앙값 250~300ms + 엄지 전이 60~100ms.
-		# 통로가 그보다 짧게 열리면 폭이 충분해도 인간이 통과할 수 없다 —
-		# 실기에서 모든 런이 8초에 끝났는데 사망 순간 최장 구간은 144~352유닛이었다.
-		# 폭만 보는 지표는 그 상황을 통과시킨다.
+			flags.append("정지창%d" % still_viol)
+		# 유지 시간은 **진단 정보**다. 회전 격자·이동하는 벽에서는 플레이어가 옆 통로로
+		# 옮겨 가는 것이 정상이라 "지금 통로가 오래 열려 있는가" 가 기준이 아니다 —
+		# 판정은 Reach1D 가 한다(두 도구가 같은 패턴을 두고 엇갈린 원인).
 		if int(hold[2]) > 0 and int(hold[0]) < HOLD_MIN:
-			flags.append("FAIL:유지%d틱@t%d" % [int(hold[0]), int(hold[3])]); _fail += 1
-		# 통로 간 이동 자체는 탄막의 정상 동작이다. 불공정한 것은 엄지 스윕이 낼 수 없는
-		# 거리를 강요하는 것 — 그래서 점프 거리가 요구 이동 상한(250유닛)을 넘을 때만 실패다.
+			flags.append("유지%d틱@t%d" % [int(hold[0]), int(hold[3])])
+		# 통로 간 이동은 탄막의 정상 동작이다. 엄지가 낼 수 없는 거리를 강요하는지는
+		# Reach1D 의 도달폭이 이미 잡는다.
 		if cor.forced > 0:
-			if cor.forced_jump > MOVE_CAP:
-				flags.append("FAIL:강제점프%.0fu" % cor.forced_jump); _fail += 1
-			else:
-				flags.append("전환%d(%.0fu)" % [cor.forced, cor.forced_jump])
+			flags.append("전환%d(%.0fu)" % [cor.forced, cor.forced_jump])
 		if walls > 0:
 			flags.append("WARN:절대벽%d" % walls); _warn += 1
 		if min_gap < Tune.FREE_NORMAL and min_gap >= Tune.FREE_FLOOR:
 			flags.append("WARN:F<64"); _warn += 1
 		if flags.is_empty():
 			flags.append("OK")
-		print("  %-14s y%4d : 최장min=%3d avg=%3d <64:%3d/%-4d 통로min=%3d 유지min=%2d@t%-4d p50=%3d(n%d) peak=%3d  %s" % [
-			label, int(band), min_gap, sum / samples, below_normal, samples,
-			min_track, int(hold[0]), int(hold[3]), int(hold[1]), int(hold[2]), peak, " ".join(flags)])
+		print("  %-16s y%4d : 최장min=%3d avg=%3d 도달폭=%3d 통로min=%3d 유지min=%3d peak=%3d  %s" % [
+			label, int(band), min_gap, sum / samples,
+			comp_min if rch.alive else 0, min_track, int(hold[0]), peak, " ".join(flags)])

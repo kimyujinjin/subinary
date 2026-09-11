@@ -14,6 +14,50 @@ enum Id { P01_TIDEFALL, P03_NEEDLE, P07_FLOWGRID, P05_HALO_RING, P09_LOW_RIPPLE,
 const NAMES := ["P01 적조 낙하", "P03 직침", "P07 조류 격자", "P05 회광륜", "P09 저광 파문",
 		"P02 역기포"]
 
+## 패턴 레지스트리 — 도구가 6종을 **빠짐없이** 훑기 위한 표다.
+##
+## 공정성 러너가 손으로 적은 3종만 검사하고 있었다(P05·P09·P02 는 보스·합성 안에서만).
+## 패턴을 추가할 때 러너를 같이 고치는 것을 잊으면 검사되지 않는 패턴이 조용히 생긴다.
+## 여기 한 줄을 추가하면 러너·갤러리가 함께 따라온다.
+##
+## `tier` 는 난이도 레이어 드롭용이다(설계서 §7: tier > max_tier 인 이미터는 베이크 시 제거).
+## `solo_period` 는 **단독 관측용 주기**다 — 게임의 실제 스케줄은 적·보스가 들고 있고,
+## 단독 검사는 "패턴 한 겹의 최소 통과 폭" 이라는 패턴 고유 성질만 본다.
+const BOOK := [
+	{"id": &"P01", "tier": 1, "solo_period": 420, "aimed": false, "origin": Vector2(360.0, 220.0)},
+	{"id": &"P03", "tier": 2, "solo_period": 66,  "aimed": true,  "origin": Vector2(360.0, 380.0)},
+	{"id": &"P07", "tier": 1, "solo_period": 900, "aimed": false, "origin": Vector2(360.0, 220.0)},
+	{"id": &"P05", "tier": 1, "solo_period": 30,  "aimed": false, "origin": Vector2(360.0, 250.0)},
+	{"id": &"P09", "tier": 2, "solo_period": 72,  "aimed": false, "origin": Vector2(360.0, 460.0)},
+	{"id": &"P02", "tier": 1, "solo_period": 180, "aimed": false, "origin": Vector2(360.0, 440.0)},
+]
+
+## 단독 관측 — 도구 전용. 게임이 쓰는 것과 **같은 함수**를 부른다(별도 하네스를 만들면
+## 게임과 갈라져서 틀린 숫자를 자신 있게 보고한다).
+static func emit_solo(idx: int, local: int, tick: int, target: Vector2) -> void:
+	var o: Vector2 = BOOK[idx]["origin"]
+	match idx:
+		Id.P01_TIDEFALL:
+			p01(local, o.x, o.y)                       # 포자낭 mode 0 과 같다
+		Id.P03_NEEDLE:
+			# 직침어는 횡단하며 쏜다 — 최악 각도를 만들기 위해 그 이동을 재현한다
+			var ex := -60.0 + EnemyField.NF_SPEED * Tune.DT * float(local)
+			p03(local % EnemyField.NF_BURST_GAP, ex, o.y, target.x, target.y)
+		Id.P07_FLOWGRID:
+			p07(local, tick, o.x, o.y)                 # 포자낭 mode 1 과 같다
+		Id.P05_HALO_RING:
+			# 보스 외륜. 링 각도는 조류 적분에서 나온다 — 보스와 같은 식이다.
+			if local % int(BOOK[idx]["solo_period"]) == 0:
+				p05_ex(o.x, o.y, Boss.R_OUTER,
+						Boss.OMEGA * BulletField.flow_phase(tick) * Tune.DT,
+						P05_SPEED, P05_COUNT, Tune.Kind.SPORE_GRID)
+		Id.P09_LOW_RIPPLE:
+			if local % int(BOOK[idx]["solo_period"]) == 0:
+				p09_ex(o.y, PI if (local / int(BOOK[idx]["solo_period"])) % 2 == 1 else 0.0,
+						tick, P09_SPEED, Tune.Kind.SPORE_TIDE)
+		Id.P02_BACKBUBBLE:
+			p02(local, o.x, o.y)                       # 관 해파리와 같다
+
 # ── P01 적조 낙하 · Fan 초광각 160° · 조류 100% ─────────────────────────
 # 독해 단서: 줄의 기울기 = 조류 방향. 회피 답이 좌/우 이진 선택이다.
 # 초기 vx 가 갈린 탄들이 항력 이완으로 서로 다른 비율로 끌려와 부채가 실제로 기운다.
