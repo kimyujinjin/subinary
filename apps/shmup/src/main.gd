@@ -485,6 +485,7 @@ func _on_hit() -> void:
 	lesson_bid = BulletField.hit_bid
 	lesson_death_pos = player
 	SimClock.rescue(Tune.RESCUE_TICKS)
+	TouchRouter.rescue_watch_begin()
 	RunLog.write("hit", [SimClock.run_index, SimClock.sim_tick, SimClock.run_seed,
 			player.x, player.y, ["spore_tide", "spore_grid", "needle", "bubble"][BulletField.hit_kind],
 			lesson_bid, fairness.gap_x0, fairness.gap_w,
@@ -508,8 +509,10 @@ func _on_death() -> void:
 			BulletField.flow_c(SimClock.sim_tick),
 			BulletField.flow_u(player.y, SimClock.sim_tick),
 			BulletField.n, int(Engine.get_frames_per_second()), "", 0.0, 0.0,
-			"relay=%d;lives=%d;bombs=%d;score=%d" % [
-				TouchRouter.relay_count, lives, bombs, score]])
+			"relay=%d;lives=%d;bombs=%d;score=%d;rpress=%d;rfirst=%d;rzone=%d" % [
+				TouchRouter.relay_count, lives, bombs, score,
+				TouchRouter.rescue_presses, TouchRouter.rescue_first_tick,
+				1 if TouchRouter.rescue_first_zone else 0]])
 	_death_wall_tick = SimClock.wall_tick
 	# 히트스톱 — 정지 프레임으로 상황을 읽을 시간. 연출은 _process 에서 계속 돈다.
 	SimClock.hitstop(DEATH_HITSTOP)

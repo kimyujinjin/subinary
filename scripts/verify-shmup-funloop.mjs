@@ -157,7 +157,25 @@ if (hits.length || bombs.length) {
     + ` · 사망 ${deaths.length}`)
   if (hits.length) {
     const pct = (rescued / hits.length) * 100
-    console.log(`  구제 성공률 ${pct.toFixed(0)}% — 0%% 면 창이 열린 것을 모르거나 반응 시간이 모자란다`)
+    console.log(`  구제 성공률 ${pct.toFixed(0)}%`)
+    // 실패 원인을 가른다 — 안 눌렀다 / 늦었다 / 엉뚱한 데 눌렀다.
+    // 0% 만 보고는 창 표시를 고칠지 창 길이를 늘릴지 정할 수 없다.
+    const det = deaths.map(r => Object.fromEntries(
+      String(of(r, 'detail') || '').split(';').filter(Boolean).map(kv => kv.split('='))))
+      .filter(d => d.rpress !== undefined)
+    if (det.length) {
+      const none = det.filter(d => +d.rpress === 0).length
+      const wrong = det.filter(d => +d.rpress > 0 && d.rzone === '0').length
+      const late = det.filter(d => +d.rpress > 0 && d.rzone === '1').length
+      const ms = det.filter(d => +d.rfirst >= 0).map(d => (+d.rfirst / 60) * 1000)
+      console.log(`  창 안 입력 없음 ${none} · 영역 밖 ${wrong} · 영역 안인데 실패 ${late}`
+        + (ms.length ? ` · 첫 입력 p50 ${p(ms, 0.5).toFixed(0)}ms (창 ${(20 / 60 * 1000).toFixed(0)}ms)` : ''))
+      if (none === det.length && det.length) {
+        console.log('  → 전부 "안 눌렀다". 창이 열린 것을 알리는 채널을 먼저 고친다(길이가 아니라)')
+      } else if (ms.length && p(ms, 0.5) > 333) {
+        console.log('  → 반응이 창보다 늦다. 창 길이(RESCUE_TICKS)를 재검토한다')
+      }
+    }
   }
   const last = deaths.length ? Object.fromEntries(
     String(of(deaths[deaths.length - 1], 'detail') || '').split(';').filter(Boolean).map(kv => kv.split('='))) : null

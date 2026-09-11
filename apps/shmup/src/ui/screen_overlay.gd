@@ -94,12 +94,17 @@ func _draw_bomb_button() -> void:
 	var n: int = main.bombs
 	var live := SimClock.state == SimClock.State.RESCUE
 	var a := 0.30 if n > 0 else 0.10
+	# 설계서 §3: "폭탄 원 확대로 창이 열린 것을 명시". 밝기만 바꾸면 회피 중에 안 보인다 —
+	# 크기 변화는 주변시로도 읽힌다.
+	var r := Tune.BOMB_R
 	if live:
-		a = 0.85
-	draw_arc(c, Tune.BOMB_R, 0.0, TAU, 40, Color(0.86, 0.97, 1.0, a), 2.5, true)
+		a = 0.9
+		r *= 1.0 + 0.55 * (float(SimClock.rescue_left) / float(Tune.RESCUE_TICKS))
+		draw_arc(c, r + 10.0, 0.0, TAU, 44, Color(1.0, 0.85, 0.45, 0.8), 5.0, true)
+	draw_arc(c, r, 0.0, TAU, 40, Color(0.86, 0.97, 1.0, a), 2.5, true)
 	for i in Tune.BOMBS:
 		var ang := -PI * 0.5 + TAU * float(i) / float(Tune.BOMBS)
-		var p := c + Vector2(cos(ang), sin(ang)) * (Tune.BOMB_R * 0.52)
+		var p := c + Vector2(cos(ang), sin(ang)) * (r * 0.52)
 		if i < n:
 			draw_circle(p, 9.0, Color(0.86, 0.97, 1.0, 0.75 if not live else 0.95))
 		else:

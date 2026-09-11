@@ -31,6 +31,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 	await _boss_clear_case()
 	await _system_cases()
+	await _bomb_input_cases()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
 
@@ -205,3 +206,33 @@ func _system_cases() -> void:
 		"광립 회수 → 점수 (%d → %d · 남은 광립 %d)" % [sc0, m.score, m.motes.n])
 	m.queue_free()
 	await get_tree().process_frame
+
+## 폭탄 입력을 **실제 입력 경로로** 확인한다.
+## _system_cases 는 TouchRouter.bomb_pressed 를 직접 세워 우회하므로,
+## "덱을 눌렀는데 폭탄이 안 나간다" 를 잡지 못한다 — 실기에서 구제 성공률 0% 였던 결함이
+## 정확히 그 사각지대였다(손가락이 없을 때 press 가 드래그 배정으로 흘렀다).
+func _bomb_input_cases() -> void:
+	var deck_y := 1560.0 - Tune.DECK_H * 0.5     # 덱 한가운데
+	for case in [["드래그 손가락 있음", true], ["드래그 손가락 없음", false]]:
+		var m := await _mk_stage()
+		var bombs0: int = m.bombs
+		if case[1]:
+			_touch(0, Vector2(300.0, 1100.0), true)
+			await get_tree().physics_frame
+		await _force_hit(m)
+		if SimClock.state != SimClock.State.RESCUE:
+			_check(false, "폭탄 입력 — %s : 구제 창이 안 열렸다" % case[0])
+			m.queue_free(); await get_tree().process_frame
+			continue
+		_touch(7, Vector2(420.0, deck_y), true)
+		await get_tree().physics_frame
+		_check(m.bombs == bombs0 - 1 and SimClock.state == SimClock.State.RUN
+				and m.lives == Tune.LIVES,
+			"폭탄 입력 — %s (폭탄 %d→%d · state %d · 라이프 %d)" % [
+				case[0], bombs0, m.bombs, SimClock.state, m.lives])
+		# 구제 직후 조작이 끊기지 않아야 한다
+		_check(TouchRouter.drag_idx >= 0,
+			"구제 직후 조작 유지 — %s (drag %d)" % [case[0], TouchRouter.drag_idx])
+		m.queue_free()
+		await get_tree().process_frame
+	TouchRouter.clear_touches()

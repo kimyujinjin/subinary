@@ -55,6 +55,20 @@ var relay_count: int = 0
 ## 설계서 §3: 집중과 폭탄이 같은 엄지를 요구하면 위기 중 폭탄 입력이 감도 점프를 유발한다.
 ## 그래서 집중은 드래그 손가락 이중탭, 폭탄은 두 번째 손가락으로 채널을 나눴다.
 var bomb_pressed: bool = false
+
+## 구제 창 계측 — "안 눌렀다 / 늦었다 / 엉뚱한 데 눌렀다" 를 가른다.
+## 실기 1차에서 구제 성공률이 0% 였는데 로그로는 셋을 구별할 수 없었다.
+## 창이 열릴 때 Main 이 rescue_watch_begin() 을 부르고, 사망 시 이 값을 남긴다.
+var rescue_presses: int = 0
+var rescue_first_tick: int = -1     ## 창이 열린 뒤 첫 press 까지의 벽시계 틱
+var rescue_first_zone: bool = false ## 그 press 가 폭탄 히트영역 안이었는가
+var _rescue_open_tick: int = -1
+
+func rescue_watch_begin() -> void:
+	rescue_presses = 0
+	rescue_first_tick = -1
+	rescue_first_zone = false
+	_rescue_open_tick = SimClock.wall_tick
 ## 재파지 원인 기록. 실기에서 3회/분(목표 0.1)이 나왔는데 로그로는 원인을 가를 수 없었다 —
 ## 도달 여유가 바닥났는지, 제외 영역에 걸렸는지, 그냥 습관인지. 떼는 순간의 손가락 위치·
 ## 누른 시간·축별 도달 여유를 남긴다. Main 이 틱마다 비워 RunLog 에 쓴다.
@@ -117,6 +131,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		var t := event as InputEventScreenTouch
 		if t.pressed:
+			if SimClock.state == SimClock.State.RESCUE:
+				rescue_presses += 1
+				if rescue_first_tick < 0:
+					rescue_first_tick = SimClock.wall_tick - _rescue_open_tick
+					rescue_first_zone = _bomb_zone(t.position)
 			_touch[t.index] = t.position
 			_touch_delta[t.index] = Vector2.ZERO
 			_on_press(t.index, t.position)
@@ -160,6 +179,26 @@ func _bomb_zone(p: Vector2) -> bool:
 func _on_press(idx: int, p: Vector2) -> void:
 	if _touch.size() >= 3:
 		return                                   # 동시 터치 3개 이상이면 역할 배정 전면 중단
+
+	# 구제 창 동안에는 덱 전역이 폭탄이다 — **몇 번째 손가락인지 묻지 않는다.**
+	# 처음엔 "두 번째 손가락" 조건을 붙였는데, 엄지를 떼고 있던 순간에 맞으면
+	# 그 press 가 드래그 배정으로 흘러가 폭탄이 나가지 않았다. 실기 3회 피격 모두
+	# 구제 실패(bombs=2 그대로)였고 로그로는 "안 눌렀다" 와 구별되지 않았다.
+	# 창은 333ms 다 — 이 순간 입력을 조건부로 만들면 그 기능은 없는 것과 같다.
+	if SimClock.state == SimClock.State.RESCUE and _bomb_zone(p):
+		bomb_pressed = true
+		if drag_idx >= 0:
+			return
+		# 화면에 드래그 손가락이 없었다면 이 손가락이 이어받는다 — 구제 직후
+		# 조작이 끊기면 살려 준 의미가 없다.
+		drag_idx = idx
+		drag_pos = p
+		_press_tick = SimClock.wall_tick
+		_press_pos = p
+		_press_live = true
+		_pending_px = Vector2.ZERO
+		return
+
 	if drag_idx >= 0:
 		# 두 번째 손가락 — 폭탄 채널. 드래그 역할은 넘어가지 않는다(릴레이는 릴리스 때만).
 		if _bomb_zone(p):
