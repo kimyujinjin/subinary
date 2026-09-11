@@ -16,6 +16,12 @@ var vel_y := PackedFloat32Array()
 ## 이것은 발사 방향을 따라 선형으로 감속해 부호를 뒤집는다.
 var acc_x := PackedFloat32Array()
 var acc_y := PackedFloat32Array()
+## 남은 퓨즈 틱. 0 이 되면 그 탄이 사라지면서 원형 산개를 낳는다(포낭).
+## 단일 순회 안에서 spawn 하면 새 탄이 같은 틱에 한 번 더 적분되므로,
+## 위치만 모아 두고 순회가 끝난 뒤 터뜨린다.
+var fuse := PackedInt32Array()
+var _burst := PackedVector2Array()
+var _burst_n: int = 0
 var kind := PackedInt32Array()
 var bid := PackedInt32Array()
 var flags := PackedByteArray()
@@ -49,6 +55,8 @@ func _ready() -> void:
 	vel_y.resize(Tune.MAX_BULLETS)
 	acc_x.resize(Tune.MAX_BULLETS)
 	acc_y.resize(Tune.MAX_BULLETS)
+	fuse.resize(Tune.MAX_BULLETS)
+	_burst.resize(64)
 	kind.resize(Tune.MAX_BULLETS)
 	bid.resize(Tune.MAX_BULLETS)
 	flags.resize(Tune.MAX_BULLETS)
@@ -65,6 +73,7 @@ func _ready() -> void:
 func clear() -> void:
 	n = 0
 	_swept_n = 0
+	_burst_n = 0
 	peak_n = 0
 	graze_events = 0
 	_spawn_overflow = 0
@@ -72,10 +81,12 @@ func clear() -> void:
 func spawn(x: float, y: float, vx: float, vy: float, k: int) -> void:
 	spawn_acc(x, y, vx, vy, k, 0.0, 0.0)
 
-func spawn_acc(x: float, y: float, vx: float, vy: float, k: int, ax: float, ay: float) -> void:
+func spawn_acc(x: float, y: float, vx: float, vy: float, k: int, ax: float, ay: float,
+		fuse_ticks := -1) -> void:
 	if n >= Tune.MAX_BULLETS:
 		_spawn_overflow += 1
 		return
+	fuse[n] = fuse_ticks
 	pos_x[n] = x
 	pos_y[n] = y
 	vel_x[n] = vx
@@ -189,13 +200,26 @@ func step_and_collide(tick: int, p0: Vector2, p1: Vector2, invincible: bool) -> 
 		var ny := oy + vy * Tune.DT
 		pos_x[i] = nx
 		pos_y[i] = ny
+		# 퓨즈 — 위치 갱신 뒤에 본다. 터진 자리가 곧 산개 중심이다.
+		if Tune.KIND_FUSE[kd]:
+			fuse[i] -= 1
+			if fuse[i] <= 0:
+				if _burst_n < _burst.size():
+					_burst[_burst_n] = Vector2(nx, ny)
+					_burst_n += 1
+				n -= 1
+				pos_x[i] = pos_x[n]; pos_y[i] = pos_y[n]
+				vel_x[i] = vel_x[n]; vel_y[i] = vel_y[n]
+				acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]; fuse[i] = fuse[n]
+				kind[i] = kind[n]; bid[i] = bid[n]; flags[i] = flags[n]
+				continue
 
 		# ── 화면밖 컬링 (swap-with-last)
 		if nx < -48.0 or nx > Tune.PF_W + 48.0 or ny < -72.0 or ny > Tune.PF_H + 72.0:
 			n -= 1
 			pos_x[i] = pos_x[n]; pos_y[i] = pos_y[n]
 			vel_x[i] = vel_x[n]; vel_y[i] = vel_y[n]
-			acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]
+			acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]; fuse[i] = fuse[n]
 			kind[i] = kind[n]; bid[i] = bid[n]; flags[i] = flags[n]
 			continue
 
@@ -242,6 +266,14 @@ func step_and_collide(tick: int, p0: Vector2, p1: Vector2, invincible: bool) -> 
 		i += 1
 
 	_swept_n = swept_n
+	# 순회가 끝난 뒤 터뜨린다 — 루프 안에서 spawn 하면 같은 틱에 한 번 더 적분된다.
+	for b in _burst_n:
+		var bc := _burst[b]
+		for j in Tune.POD_BURST_COUNT:
+			var ba := TAU * float(j) / float(Tune.POD_BURST_COUNT) + 0.2
+			spawn(bc.x, bc.y, cos(ba) * Tune.POD_BURST_SPEED, sin(ba) * Tune.POD_BURST_SPEED,
+					Tune.Kind.SPORE_TIDE)
+	_burst_n = 0
 	if n > peak_n:
 		peak_n = n
 
@@ -268,7 +300,7 @@ func clear_column(cx: float, half_w: float, y_max: float) -> void:
 			n -= 1
 			pos_x[i] = pos_x[n]; pos_y[i] = pos_y[n]
 			vel_x[i] = vel_x[n]; vel_y[i] = vel_y[n]
-			acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]
+			acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]; fuse[i] = fuse[n]
 			kind[i] = kind[n]; bid[i] = bid[n]; flags[i] = flags[n]
 		else:
 			i += 1
@@ -284,7 +316,7 @@ func clear_radius(cx: float, cy: float, r: float) -> void:
 			n -= 1
 			pos_x[i] = pos_x[n]; pos_y[i] = pos_y[n]
 			vel_x[i] = vel_x[n]; vel_y[i] = vel_y[n]
-			acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]
+			acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]; fuse[i] = fuse[n]
 			kind[i] = kind[n]; bid[i] = bid[n]; flags[i] = flags[n]
 		else:
 			i += 1

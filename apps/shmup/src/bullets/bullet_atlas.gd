@@ -71,7 +71,8 @@ static func _shade(c: Color, d: float, halo: float, rim: float, aa: float) -> Co
 static func build() -> Array:
 	var texs: Array[ImageTexture] = []
 	var sizes: Array[Vector2] = []
-	var cols := [Tune.COL_TIDE, Tune.COL_GRID, Tune.COL_NEEDLE, Tune.COL_BUBBLE]
+	var cols := [Tune.COL_TIDE, Tune.COL_GRID, Tune.COL_NEEDLE, Tune.COL_BUBBLE,
+			Tune.COL_POD, Tune.COL_GATE]
 	for k in Tune.KIND_N:
 		# 시각 반폭으로 굽는다. 판정 반폭(KIND_W)과 분리되어 있다.
 		var w: float = Tune.KIND_VIS_W[k]

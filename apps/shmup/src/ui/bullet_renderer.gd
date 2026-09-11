@@ -53,7 +53,8 @@ func _draw_set(px: PackedFloat32Array, py: PackedFloat32Array,
 	var seg_n := cnt * 2
 	_trail.resize(seg_n * 2)
 	_trail_col.resize(seg_n)
-	var cols := [Tune.COL_TIDE, Tune.COL_GRID, Tune.COL_NEEDLE, Tune.COL_BUBBLE]
+	var cols := [Tune.COL_TIDE, Tune.COL_GRID, Tune.COL_NEEDLE, Tune.COL_BUBBLE,
+			Tune.COL_POD, Tune.COL_GATE]
 	var c_t := bf.flow_c(tick)
 	var u_max: float = Tune.FLOW_SLOW_U_MAX if bf.flow_slow else Tune.FLOW_U_MAX
 	for i in cnt:
@@ -103,7 +104,16 @@ func _draw_set(px: PackedFloat32Array, py: PackedFloat32Array,
 			continue
 		var sz: Vector2 = _size[kd2]
 		var r := Rect2(Vector2(px[j2], py[j2]) - sz * 0.5, sz)
-		if Tune.KIND_ACCEL[kd2]:
+		if Tune.KIND_FUSE[kd2]:
+			# 포낭 — 맥동 3회가 파열 카운트다운이다. 남은 퓨즈로 맥동 위상을 만든다.
+			# 예고 없이 터지면 "1.2초의 계획 시간" 이라는 이 패턴의 전부가 사라진다.
+			var fz: int = bf.fuse[j2] if base == 0 else Tune.POD_FUSE
+			var seg := float(Tune.POD_FUSE) / float(Tune.POD_PULSES)
+			var ph := 1.0 - fposmod(float(fz), seg) / seg
+			var near := 1.0 - clampf(float(fz) / float(Tune.POD_FUSE), 0.0, 1.0)
+			var mp := 1.0 + (0.35 + 1.25 * near) * ph * ph
+			draw_texture_rect(_tex[kd2], r, false, Color(mp, mp, mp, 1.0))
+		elif Tune.KIND_ACCEL[kd2]:
 			# 기포 — 정지가 가까울수록 테두리가 밝아진다. "곧 되돌아온다" 예고이고,
 			# 이 경고가 없으면 역행이 기습이 되어 "두 번 온다" 를 배울 방법이 없다.
 			# modulate 는 성분별이므로 rgb 만 올린다(알파를 올리면 사전곱셈이 깨진다).

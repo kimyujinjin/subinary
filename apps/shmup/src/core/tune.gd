@@ -67,24 +67,27 @@ const SHOT_DMG := 1.0
 
 # ── 탄종 ────────────────────────────────────────────────────────────────
 # 실루엣이 거동을 예약한다. 게이트 1 은 2문법만 — 휘는 것(포자)과 안 휘는 것(바늘).
-enum Kind { SPORE_TIDE, SPORE_GRID, NEEDLE, BUBBLE }
-const KIND_N := 4
-const KIND_W    := [12.0, 12.0, 1.5, 13.0]    # **판정** 반폭 — 판정은 (w + PLAYER_R)
+enum Kind { SPORE_TIDE, SPORE_GRID, NEEDLE, BUBBLE, POD, GATE }
+const KIND_N := 6
+const KIND_W    := [12.0, 12.0, 1.5, 13.0, 34.0, 20.0]    # **판정** 반폭 — 판정은 (w + PLAYER_R)
 # **시각** 반폭. 판정과 분리한다(설계 원칙: 히트박스를 스프라이트와 분리).
 # 바늘은 판정 1.5 유닛 = 2.25px 라 그대로 그리면 실기에서 보이지 않는다.
 # 게다가 림 두께(2.2) + AA(0.9) = 3.1 유닛이 1.5 보다 커서 흰 코어가 아예
 # 생성되지 않았다 — 검은 림만 남아 어두운 배경에서 완전히 투명했다(실측).
-const KIND_VIS_W := [12.0, 12.0, 3.2, 13.0]
+const KIND_VIS_W := [12.0, 12.0, 3.2, 13.0, 34.0, 20.0]
 ## 속 빈 링의 테두리 두께(유닛). 0 = 채움. 기포만 링이다 —
 ## "속 빈 링 = 두 번 온다" 가 실루엣 문법이므로 채우면 그 약속이 사라진다.
-const KIND_RING := [0.0, 0.0, 0.0, 3.4]
+const KIND_RING := [0.0, 0.0, 0.0, 3.4, 0.0, 0.0]
 ## 감속·역행하는가. 기포만 가속 항을 적분한다(다른 탄은 2 곱셈을 건너뛴다).
-const KIND_ACCEL := [false, false, false, true]
-const KIND_H    := [ 0.0,  0.0, 11.0,  0.0]   # 반길이 — 캡슐 축 방향
-const KIND_TAU  := [0.45, 0.45,  0.0,  1.3]   # 0.0 = 조류 면역 (τ = ∞). 기포는 35% 만 탄다
-const KIND_QUAD := [20.0, 20.0, 14.0, 22.0]   # 쿼드 반경 ≤ 히트 반경 × 2.0. fill rate 가 병목이다
-const KIND_HALO := [ 8.0,  8.0,  0.0,  5.0]   # 바늘은 헤일로 없음
-const KIND_TRAIL := [0.17, 0.17, 0.11, 0.13]  # 잔광 궤적선 길이(초). 포자는 곡률이 보여야 하므로 길다
+const KIND_ACCEL := [false, false, false, true, false, false]
+## 퓨즈를 든 탄. 남은 틱이 0 이 되면 사라지면서 원형 산개를 낳는다(포낭).
+## 맥동 3회가 그 카운트다운의 시각 표현이다 — 예고 없이 터지면 계획할 시간이 없다.
+const KIND_FUSE := [false, false, false, false, true, false]
+const KIND_H    := [ 0.0,  0.0, 11.0,  0.0,  0.0,  0.0]   # 반길이 — 캡슐 축 방향
+const KIND_TAU  := [0.45, 0.45,  0.0,  1.3, 0.45,  0.0]   # 0.0 = 조류 면역 (τ = ∞). 기포는 35% 만 탄다
+const KIND_QUAD := [20.0, 20.0, 14.0, 22.0, 44.0, 30.0]   # 쿼드 반경 ≤ 히트 반경 × 2.0. fill rate 가 병목이다
+const KIND_HALO := [ 8.0,  8.0,  0.0,  5.0,  6.0, 12.0]   # 바늘은 헤일로 없음
+const KIND_TRAIL := [0.17, 0.17, 0.11, 0.13, 0.10, 0.14]  # 잔광 궤적선 길이(초). 포자는 곡률이 보여야 하므로 길다
 
 # ── 조류장 (항력 이완 모델) ──────────────────────────────────────────────
 # v_x' = (u(y,t) − v_x) / τ. 원안의 전역 가속 모델은 a_x 에 x 의존성이 없어
@@ -203,6 +206,14 @@ const COL_BUBBLE := Color(0.549, 0.780, 0.918)   # 기포 — 창백한 청색 �
 ## 정지 0.15초 전부터 테두리가 밝아진다 = "곧 되돌아온다" 예고. 1.0 → 2.4 램프.
 const BUBBLE_WARN_SEC := 0.15
 const BUBBLE_WARN_MULT := 2.4
+## 포낭 — 어두운 대형 원. 맥동 3회 뒤 파열한다.
+const COL_POD := Color(0.243, 0.192, 0.310)
+## 흰 게이트탄 — 게임 전체에서 P13 하나에만 예약된 표식. 다른 곳에 쓰면 약속이 깨진다.
+const COL_GATE := Color(0.980, 0.992, 0.988)
+const POD_FUSE := 150            # 2.5초. 맥동 3회 = 50틱마다 한 번
+const POD_PULSES := 3
+const POD_BURST_COUNT := 16
+const POD_BURST_SPEED := 190.0
 const COL_PSHOT := Color(0.549, 0.902, 1.000)
 const COL_SHIP := Color(0.855, 0.949, 0.945)
 const COL_ENEMY := Color(0.427, 0.318, 0.475)

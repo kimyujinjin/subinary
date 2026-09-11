@@ -24,6 +24,7 @@ func _ready() -> void:
 	_reach_cases()
 	_glow_cases()
 	_bubble_cases()
+	_new_pattern_cases()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
 
@@ -321,4 +322,64 @@ func _bubble_cases() -> void:
 		"P02 하강 깊이 y%.0f (계산 %.0f · 최심각 sin %.3f)" % [deepest, want_depth, sin_max])
 	_check(crossings >= 4,
 		"P02 상승 — 같은 자리를 두 번 지난다 (복귀 %d발)" % crossings)
+	BulletField.clear()
+
+# ── 신규 패턴 ───────────────────────────────────────────────────────────
+func _new_pattern_cases() -> void:
+	# P10 은 "매번 똑같다" 를 3~4번째에 알아차리는 것이 학습이다 — 재현되지 않으면
+	# 그 학습이 불가능하다. 해시 기반이므로 호출 순서·표현용 난수 소비와 무관해야 한다.
+	BulletField.clear()
+	var first := PackedFloat32Array()
+	for t in 200:
+		Patterns.p10(t, 360.0, 230.0)
+		BulletField.step_and_collide(t, Vector2(-999, -999), Vector2(-999, -999), true)
+	for i in BulletField.n:
+		first.append(BulletField.pos_x[i])
+	BulletField.clear()
+	var _junk := randf()                       # 표현용 난수 소비 — 스트림 오염 재현
+	var same := true
+	var idx2 := 0
+	for t in 200:
+		Patterns.p10(t, 360.0, 230.0)
+		BulletField.step_and_collide(t, Vector2(-999, -999), Vector2(-999, -999), true)
+	if BulletField.n != first.size():
+		same = false
+	else:
+		for i in BulletField.n:
+			if absf(BulletField.pos_x[i] - first[i]) > 0.001:
+				same = false
+	_check(same and first.size() > 0,
+		"P10 난류가 매번 똑같다 (탄 %d · 재현 %s)" % [first.size(), same])
+
+	# P08 포낭은 퓨즈로 터진다 — 퓨즈 전에는 포낭만, 후에는 산개탄만 있어야 한다.
+	BulletField.clear()
+	Patterns.p08(0, 360.0, 200.0)
+	var pods := BulletField.n
+	for t in Tune.POD_FUSE - 2:
+		BulletField.step_and_collide(t, Vector2(-999, -999), Vector2(-999, -999), true)
+	var before := BulletField.n
+	for t in 4:
+		BulletField.step_and_collide(Tune.POD_FUSE + t, Vector2(-999, -999), Vector2(-999, -999), true)
+	var after := BulletField.n
+	var pods_left := 0
+	for i in BulletField.n:
+		if BulletField.kind[i] == Tune.Kind.POD:
+			pods_left += 1
+	_check(pods == 2 and before == 2 and pods_left == 0
+			and after == 2 * Tune.POD_BURST_COUNT,
+		"P08 포낭 파열 (포낭 %d → 퓨즈 직전 %d → 산개 %d · 잔존 포낭 %d)" % [
+			pods, before, after, pods_left])
+
+	# P15 는 플레이어 방향에 틈을 연다 — 전환 순간에 벌을 주지 않는다는 약속이다.
+	BulletField.clear()
+	var pl := Vector2(200.0, 900.0)
+	Patterns.p15(360.0, 300.0, pl.x, pl.y)
+	var safe := atan2(pl.y - 300.0, pl.x - 360.0)
+	var worst := PI
+	for i in BulletField.n:
+		var a := atan2(BulletField.vel_y[i], BulletField.vel_x[i])
+		worst = minf(worst, absf(angle_difference(a, safe)))
+	_check(BulletField.n > 0 and worst >= deg_to_rad(Patterns.P15_GAP_DEG) * 0.5 - 0.01,
+		"P15 틈이 플레이어를 향한다 (탄 %d · 최근접 %.1f° ≥ %.1f°)" % [
+			BulletField.n, rad_to_deg(worst), Patterns.P15_GAP_DEG * 0.5])
 	BulletField.clear()

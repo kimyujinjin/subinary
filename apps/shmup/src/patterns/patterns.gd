@@ -10,9 +10,12 @@ class_name Patterns
 ## process_in_physics 기본값이 false 라 가변 delta 기준이 되어
 ## 탄막 타이밍이 기기 성능에 좌우된다. 그건 공정성 문제다.
 
-enum Id { P01_TIDEFALL, P03_NEEDLE, P07_FLOWGRID, P05_HALO_RING, P09_LOW_RIPPLE, P02_BACKBUBBLE }
+enum Id {
+	P01_TIDEFALL, P03_NEEDLE, P07_FLOWGRID, P05_HALO_RING, P09_LOW_RIPPLE, P02_BACKBUBBLE,
+	P04_AIMED_SPREAD, P08_POD_BURST, P10_TURBULENT, P15_EXTINCTION,
+}
 const NAMES := ["P01 적조 낙하", "P03 직침", "P07 조류 격자", "P05 회광륜", "P09 저광 파문",
-		"P02 역기포"]
+		"P02 역기포", "P04 삼중 조준 확산", "P08 포낭 산개", "P10 난류 포자", "P15 발광 소멸"]
 
 ## 패턴 레지스트리 — 도구가 6종을 **빠짐없이** 훑기 위한 표다.
 ##
@@ -30,6 +33,10 @@ const BOOK := [
 	{"id": &"P05", "tier": 1, "solo_period": 30,  "aimed": false, "origin": Vector2(360.0, 250.0)},
 	{"id": &"P09", "tier": 2, "solo_period": 72,  "aimed": false, "origin": Vector2(360.0, 460.0)},
 	{"id": &"P02", "tier": 1, "solo_period": 180, "aimed": false, "origin": Vector2(360.0, 440.0)},
+	{"id": &"P04", "tier": 2, "solo_period": 120, "aimed": true,  "origin": Vector2(360.0, 260.0)},
+	{"id": &"P08", "tier": 2, "solo_period": 240, "aimed": false, "origin": Vector2(360.0, 200.0)},
+	{"id": &"P10", "tier": 3, "solo_period": 96,  "aimed": false, "origin": Vector2(360.0, 230.0)},
+	{"id": &"P15", "tier": 1, "solo_period": 300, "aimed": true,  "origin": Vector2(360.0, 300.0)},
 ]
 
 ## 단독 관측 — 도구 전용. 게임이 쓰는 것과 **같은 함수**를 부른다(별도 하네스를 만들면
@@ -57,6 +64,15 @@ static func emit_solo(idx: int, local: int, tick: int, target: Vector2) -> void:
 						tick, P09_SPEED, Tune.Kind.SPORE_TIDE)
 		Id.P02_BACKBUBBLE:
 			p02(local, o.x, o.y)                       # 관 해파리와 같다
+		Id.P04_AIMED_SPREAD:
+			p04(local, o.x, o.y, target.x, target.y)
+		Id.P08_POD_BURST:
+			p08(local, o.x, o.y)
+		Id.P10_TURBULENT:
+			p10(local, o.x, o.y)
+		Id.P15_EXTINCTION:
+			if local % int(BOOK[idx]["solo_period"]) == 0:
+				p15(o.x, o.y, target.x, target.y)
 
 # ── P01 적조 낙하 · Fan 초광각 160° · 조류 100% ─────────────────────────
 # 독해 단서: 줄의 기울기 = 조류 방향. 회피 답이 좌/우 이진 선택이다.
@@ -219,3 +235,78 @@ static func p02_ex(cx: float, cy: float, count: int, speed: float,
 		var dy := sin(ang)
 		BulletField.spawn_acc(cx + dx * 26.0, cy + dy * 26.0,
 				dx * speed, dy * speed, Tune.Kind.BUBBLE, 0.0, -rise)
+
+# ── P04 삼중 조준 확산 · AimedSpread · 조류 100% ────────────────────────
+# 독해 단서: 3연발의 **중앙만** 이동 예측 사격이다. 양옆 둘은 고정 확산이므로
+# "가운데를 피해 옆으로" 가 아니라 "가운데가 나를 따라온다" 를 읽어야 한다.
+# 조준 빈도는 난이도 축이다(설계서 §7 Aimed 빈도 0.3~1.0).
+const P04_SPREAD := 26.0       # 좌우 확산각(도)
+const P04_SPEED := 320.0
+const P04_BURST := 3
+const P04_GAP := 12
+
+static func p04(local: int, ex: float, ey: float, px: float, py: float) -> void:
+	if local < 0 or local >= P04_BURST * P04_GAP or local % P04_GAP != 0:
+		return
+	var base := atan2(py - ey, px - ex)
+	for d in [-P04_SPREAD, 0.0, P04_SPREAD]:
+		var a := base + deg_to_rad(d)
+		BulletField.spawn(ex, ey, cos(a) * P04_SPEED, sin(a) * P04_SPEED, Tune.Kind.SPORE_TIDE)
+
+# ── P08 포낭 산개 · Layered · 지연 Circle · 조류 100% ───────────────────
+# 독해 단서: 맥동 3회 = 파열 카운트다운. 1.2초의 **계획 시간**을 준다.
+# 위협이 지금 있는 곳이 아니라 2.5초 뒤 있을 곳을 보고 위치를 잡는 패턴이다.
+# 파열은 BulletField 의 퓨즈가 처리한다 — 포낭이 조류에 실려 흐른 자리에서 터진다.
+const P08_SPEED := 62.0
+const P08_SPREAD := 150.0
+
+static func p08(local: int, ex: float, ey: float) -> void:
+	if local < 0 or local % 240 != 0:
+		return
+	var v := local / 240
+	for i in 2:
+		var x := ex + (float(i) - 0.5) * P08_SPREAD + (30.0 if (v & 1) == 1 else -30.0)
+		BulletField.spawn_acc(x, ey, 0.0, P08_SPEED, Tune.Kind.POD, 0.0, 0.0, Tune.POD_FUSE)
+
+# ── P10 난류 포자 · RandomSpread · 고정 시드 · 조류 100% ────────────────
+# 독해 단서: **첫 조우에서는 읽히지 않는다 — 그것이 의도다.**
+# 3~4번째 조우에서 "매번 똑같다" 를 알아차리는 것이 이 패턴의 학습이다.
+# 그래서 난수는 상태가 아니라 (틱, 인덱스)의 해시여야 한다 — RNG 인스턴스를 들면
+# 발사 순서나 표현용 소비에 따라 스트림이 밀려 "매번 똑같다" 가 깨진다.
+const P10_COUNT := 7
+const P10_SPEED_LO := 170.0
+const P10_SPEED_HI := 300.0
+const P10_ARC := 150.0
+const P10_EVERY := 24
+
+## 정수 해시 → [0,1). 결정론적이고 무상태다.
+static func hash01(a: int, b: int) -> float:
+	var h := (a * 73856093) ^ (b * 19349663) ^ 0x5f3759df
+	h = (h ^ (h >> 13)) * 1274126177
+	return float((h ^ (h >> 16)) & 0xFFFFFF) / 16777216.0
+
+static func p10(local: int, ex: float, ey: float) -> void:
+	if local < 0 or local % P10_EVERY != 0:
+		return
+	var v := local / P10_EVERY
+	for i in P10_COUNT:
+		var deg := 90.0 - P10_ARC * 0.5 + P10_ARC * hash01(v, i)
+		var sp := lerpf(P10_SPEED_LO, P10_SPEED_HI, hash01(v, i + 977))
+		var a := deg_to_rad(deg)
+		BulletField.spawn(ex, ey, cos(a) * sp, sin(a) * sp, Tune.Kind.SPORE_TIDE)
+
+# ── P15 발광 소멸 · Circle · 1회성 · 조류 100% ──────────────────────────
+# 페이즈 전환 연출이자 보상이다. 내 **현재 위치를 향해** 40° 틈이 열린다 —
+# 화면이 가득 차 보이지만 정답은 이미 내가 서 있는 곳이므로, 전환 순간에 벌을 주지 않는다.
+const P15_COUNT := 30
+const P15_SPEED := 240.0
+const P15_GAP_DEG := 40.0
+
+static func p15(cx: float, cy: float, px: float, py: float) -> void:
+	var safe := atan2(py - cy, px - cx)
+	var half := deg_to_rad(P15_GAP_DEG) * 0.5
+	for i in P15_COUNT:
+		var a := TAU * float(i) / float(P15_COUNT)
+		if absf(angle_difference(a, safe)) < half:
+			continue
+		BulletField.spawn(cx, cy, cos(a) * P15_SPEED, sin(a) * P15_SPEED, Tune.Kind.SPORE_GRID)
