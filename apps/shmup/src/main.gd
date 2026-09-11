@@ -76,6 +76,7 @@ var _cap_tick: int = 0
 var _cap_path: String = ""
 var _cap_invincible: bool = false
 var _cap_wall: bool = false
+var _cap_rescue: bool = false
 
 func _ready() -> void:
 	shot_x.resize(Tune.MAX_PSHOTS)
@@ -129,6 +130,9 @@ func _parse_capture() -> void:
 		if a.begins_with("--screen-mm="):
 			# 실측 물리 폭 주입. 엔진의 screen_get_dpi() 는 Android 에서 논리 density 다.
 			TouchRouter.screen_mm_override = maxf(0.0, a.substr(12).to_float())
+		if a == "--cap-rescue":
+			# 구제 창을 캡처하려면 실제로 맞아야 한다. 무적을 끄고 첫 피격을 기다린다.
+			_cap_rescue = true
 		if a.begins_with("--capture="):
 			var v := a.substr(10).split(":")
 			if v.size() == 2:
@@ -296,9 +300,25 @@ func _physics_process(_delta: float) -> void:
 		else:
 			_screen_ui.queue_redraw()   # 재시작 어포던스 깜빡임
 		return
+	if _cap_rescue and SimClock.state == SimClock.State.RESCUE \
+			and SimClock.rescue_left <= Tune.RESCUE_TICKS - 6:
+		_cap_rescue = false
+		_redraw_all(SimClock.sim_tick)
+		_capture.call_deferred()
+		return
 	if SimClock.state == SimClock.State.RESCUE:
+		# 창은 전체가 히트스톱이므로 sim_tick 이 전진하지 않는다 — 즉 지금 sim_tick 이
+		# 가리키는 틱은 **피격 프레임에서 이미 끝까지 실행된 틱**이다. 구제에 성공했다고
+		# 아래 본체로 떨어지면 그 틱을 통째로 한 번 더 돌린다: 보스 P05·P09 가 이중 발사되고
+		# _p09_flip 이 되돌아가 이 런의 남은 파문이 영구히 반대 방향이 되며, 스테이지에서는
+		# 볼리·자탄·웨이브가 중복되고 전 탄이 한 스텝 더 적분된다.
+		# 다음 프레임의 begin_tick 이 RUN 으로 sim_tick 을 +1 하고 정상 실행한다.
+		# 폭탄의 소거·무적은 _try_bomb 안에서 이미 적용됐으므로 지연되지 않는다.
+		var frozen := SimClock.hitstop_left > 0
 		if _try_bomb():
-			pass                       # 구제 성공 — 아래 본체를 그대로 이어서 돈다
+			if frozen:
+				_redraw_all(SimClock.sim_tick)
+				return
 		elif SimClock.rescue_left <= 0:
 			_on_death()
 			return
@@ -470,6 +490,7 @@ func _try_bomb() -> bool:
 		SimClock.state = SimClock.State.RUN
 		SimClock.rescue_left = 0
 		SimClock.hitstop_left = 0
+		TouchRouter.drop_pending()
 	RunLog.write("bomb", [SimClock.run_index, SimClock.sim_tick, SimClock.run_seed,
 			player.x, player.y, "", 0, 0, 0,
 			TouchRouter.k, TouchRouter.focus, TouchRouter.regrip_count, 0,

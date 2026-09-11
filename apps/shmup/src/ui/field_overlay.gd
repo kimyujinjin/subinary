@@ -28,6 +28,7 @@ func _draw_live() -> void:
 	_draw_pshots()
 	_draw_motes()
 	_draw_bomb()
+	_draw_rescue_ring()
 	# 이번 틱에 실제로 판정된 탄의 스윕 캡슐 (판정 오버레이)
 	var sc: int = BulletField.swept_count()
 	if sc >= 2:
@@ -49,6 +50,22 @@ func _draw_motes() -> void:
 		var homing := t - mf.born[i] >= Tune.MOTE_HOME_DELAY
 		draw_circle(p, Tune.MOTE_R + 3.0, Color(Tune.COL_PSHOT, 0.18))
 		draw_circle(p, Tune.MOTE_R, Color(0.86, 0.97, 1.0, 0.95 if homing else 0.7))
+
+## 구제 창 — **기체 위에** 수축하는 링. 눈이 있는 곳에 신호를 둔다.
+##
+## 실기에서 창 안 입력이 3/3 으로 0건이었다. 그때 신호는 화면 테두리 플래시와
+## 우하단 폭탄 원뿐이었는데, 회피 중 시선은 기체에 있으므로 둘 다 주변시다.
+## 시선이 있는 자리에서 시간이 줄어드는 것이 보여야 "지금" 이라는 것을 안다.
+func _draw_rescue_ring() -> void:
+	if SimClock.state != SimClock.State.RESCUE:
+		return
+	var f := float(SimClock.rescue_left) / float(Tune.RESCUE_TICKS)
+	var p: Vector2 = main.lesson_death_pos
+	var r := Tune.GRAZE_R + 130.0 * f
+	var col := Color(1.0, 0.85, 0.45, 0.35 + 0.5 * (1.0 - f))
+	draw_arc(p, r, 0.0, TAU, 48, col, 5.0, true)
+	draw_arc(p, Tune.GRAZE_R + 4.0, -PI * 0.5, -PI * 0.5 + TAU * f, 32,
+			Color(1.0, 0.85, 0.45, 0.9), 3.0, true)
 
 ## 소광침 — 위로 뻗는 기둥 + 주변. 기둥 밖이 남는다는 것이 폭탄의 대가이므로
 ## 연출도 정확히 그 모양이어야 한다(넓게 번쩍이면 전탄 소거로 오해된다).

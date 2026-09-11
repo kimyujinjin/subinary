@@ -213,26 +213,43 @@ func _system_cases() -> void:
 ## 정확히 그 사각지대였다(손가락이 없을 때 press 가 드래그 배정으로 흘렀다).
 func _bomb_input_cases() -> void:
 	var deck_y := 1560.0 - Tune.DECK_H * 0.5     # 덱 한가운데
-	for case in [["드래그 손가락 있음", true], ["드래그 손가락 없음", false]]:
+	for case in [["드래그 손가락 있음", 1], ["드래그 손가락 없음", 0], ["팜 포함 3접촉", 2]]:
 		var m := await _mk_stage()
 		var bombs0: int = m.bombs
-		if case[1]:
+		if int(case[1]) >= 1:
 			_touch(0, Vector2(300.0, 1100.0), true)
+			await get_tree().physics_frame
+		if int(case[1]) == 2:
+			_touch(1, Vector2(150.0, 1500.0), true)    # 덱에 얹힌 팜
 			await get_tree().physics_frame
 		await _force_hit(m)
 		if SimClock.state != SimClock.State.RESCUE:
 			_check(false, "폭탄 입력 — %s : 구제 창이 안 열렸다" % case[0])
 			m.queue_free(); await get_tree().process_frame
 			continue
+		# 창 동안 쌓인 드래그 델타가 부활 첫 틱에 터지지 않아야 한다
+		var p0: Vector2 = m.player
+		if int(case[1]) >= 1:
+			for i in 12:
+				_drag(0, Vector2(300.0, 1100.0 + float(i) * 19.0), Vector2(0.0, 19.0))
+		var tick0: int = SimClock.sim_tick
 		_touch(7, Vector2(420.0, deck_y), true)
 		await get_tree().physics_frame
 		_check(m.bombs == bombs0 - 1 and SimClock.state == SimClock.State.RUN
 				and m.lives == Tune.LIVES,
 			"폭탄 입력 — %s (폭탄 %d→%d · state %d · 라이프 %d)" % [
 				case[0], bombs0, m.bombs, SimClock.state, m.lives])
-		# 구제 직후 조작이 끊기지 않아야 한다
-		_check(TouchRouter.drag_idx >= 0,
-			"구제 직후 조작 유지 — %s (drag %d)" % [case[0], TouchRouter.drag_idx])
+		# 구제 성공 프레임은 이미 실행이 끝난 틱이다 — 다시 돌리면 안 된다
+		_check(SimClock.sim_tick == tick0,
+			"구제 프레임에 틱 재실행 없음 — %s (tick %d → %d)" % [
+				case[0], tick0, SimClock.sim_tick])
+		await get_tree().physics_frame
+		await get_tree().physics_frame
+		_check(m.player.distance_to(p0) <= Tune.MAX_STEP_PER_TICK * 2.0,
+			"구제 직후 기체 점프 없음 — %s (%.0f유닛)" % [case[0], m.player.distance_to(p0)])
+		if int(case[1]) >= 1:
+			_check(TouchRouter.drag_idx >= 0,
+				"구제 직후 조작 유지 — %s (drag %d)" % [case[0], TouchRouter.drag_idx])
 		m.queue_free()
 		await get_tree().process_frame
 	TouchRouter.clear_touches()

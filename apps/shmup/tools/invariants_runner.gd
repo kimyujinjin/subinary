@@ -138,6 +138,50 @@ func _touch_cases() -> void:
 	TouchRouter.reset_run()
 	_check(TouchRouter.drag_idx == 2, "reset_run 뒤에도 올려 둔 손가락이 역할 유지 (drag=%d)" % TouchRouter.drag_idx)
 
+	# 엣지 푸시 — 정지한 손가락에서 무한 지속되면 안 된다.
+	# 밴드가 27 → 340 으로 넓어지면서 "끝에 닿은 손가락은 drag 이벤트가 안 온다" 는
+	# 지속의 전제가 깨졌다. 이제 화면 물리 끝(EDGE_PIN) 안에서만 유지한다.
+	#
+	# 좌표는 뷰포트 높이에서 유도한다 — 헤드리스는 1280, 실기는 1560 이다.
+	# 하드코딩하면 "여유 충분" 케이스가 헤드리스에서만 여유 부족이 되어 헛 실패한다.
+	var ext := TouchRouter.view_phys.y
+	var stop_y := ext - 100.0      # 여유 부족 · 제외영역 밖 · 아직 끝은 아니다
+	var plenty_y := ext - 400.0    # 여유 충분 (reach = 480 > 320)
+	var pin_y := ext - 10.0        # EDGE_PIN 안. 제외영역이라 press 로는 못 가고 drag 로만 간다
+
+	_fresh(SimClock.State.RUN)
+	_press(0, Vector2(360.0, stop_y))
+	for i in 6:
+		_drag(0, Vector2(360.0, stop_y), Vector2(0.0, 6.0))
+		TouchRouter.consume(i)
+	var on := TouchRouter.edge_push.y
+	var drift := 0.0
+	for i in 60:
+		drift += TouchRouter.consume(100 + i).y     # 델타 0 — 손가락이 멈췄다
+	_check(on > 0.0 and absf(drift) < 0.01,
+		"정지한 손가락에서 엣지 푸시 해제 (켜짐 %.0f u/s · 이후 표류 %.2f유닛)" % [on, drift])
+
+	# 화면 물리 끝까지 끌고 가면 유지된다 — 거기서는 원래 drag 이벤트가 오지 않는다
+	_fresh(SimClock.State.RUN)
+	_press(0, Vector2(360.0, stop_y))
+	for i in 6:
+		_drag(0, Vector2(360.0, pin_y), Vector2(0.0, 15.0))
+		TouchRouter.consume(i)
+	var pin_drift := 0.0
+	for i in 30:
+		pin_drift += TouchRouter.consume(200 + i).y
+	_check(pin_drift > 10.0,
+		"화면 끝에 박힌 손가락은 푸시 유지 (%.0f유닛/30틱)" % pin_drift)
+
+	# 도달 여유가 충분하면 보조하지 않는다
+	_fresh(SimClock.State.RUN)
+	_press(0, Vector2(360.0, plenty_y))
+	for i in 6:
+		_drag(0, Vector2(360.0, plenty_y), Vector2(0.0, 6.0))
+		TouchRouter.consume(i)
+	_check(absf(TouchRouter.edge_push.y) < 0.01,
+		"여유 충분하면 보조 없음 (y%.0f · push %.1f)" % [plenty_y, TouchRouter.edge_push.y])
+
 	# 초과분 이월: 한 틱에 200px 가 와도 다음 틱들에 걸쳐 전부 반영된다
 	_fresh(SimClock.State.RUN)
 	_press(0, a)

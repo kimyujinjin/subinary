@@ -16,6 +16,11 @@ extends Node
 ## 그래서 720/창폭 으로 계산하면 태블릿에서 23% 어긋난다(0.878 대 실제 1.084).
 var field_per_px: float = 1.0
 var view_size: Vector2 = Vector2(Tune.PF_W, Tune.PF_H)
+## 오버라이드가 적용되지 않은 실제 가시영역. 엣지 푸시와 도달 여유는 "손가락이 **물리**
+## 화면 끝에 닿는가" 를 다루므로 가상 16:9 높이를 쓰면 안 된다 —
+## --force-16x9 로 돌리면 하단 밴드가 420유닛 전역 최대 세기로 뒤집혔다.
+## 덱·폭탄존·제외영역은 화면에 그려지는 것과 같아야 하므로 view_size(오버라이드 적용)를 쓴다.
+var view_phys: Vector2 = Vector2(Tune.PF_W, Tune.PF_H)
 ## 0 이 아니면 뷰포트 높이를 이 값으로 간주한다(--force-16x9). _refresh_metrics 가
 ## 크기 변경마다 view_size 를 다시 쓰므로 외부에서 view_size 를 대입하면 덮여 버린다.
 var view_h_override: float = 0.0
@@ -84,10 +89,11 @@ func _ready() -> void:
 func _refresh_metrics() -> void:
 	var win := DisplayServer.window_get_size()
 	view_size = get_viewport().get_visible_rect().size
+	view_phys = view_size                        # 덮기 전에 보관
 	if win.x > 0:
 		field_per_px = view_size.x / float(win.x)
 	if view_h_override > 0.0:
-		view_size.y = view_h_override
+		view_size.y = view_h_override            # 존(_excluded·_bomb_zone)에만 적용
 
 ## 물리 화면 폭(mm) — **추정치다. 판정에 그대로 쓰지 말 것.**
 ##
@@ -177,9 +183,9 @@ func _bomb_zone(p: Vector2) -> bool:
 	return p.distance_to(c) <= Tune.BOMB_R
 
 func _on_press(idx: int, p: Vector2) -> void:
-	if _touch.size() >= 3:
-		return                                   # 동시 터치 3개 이상이면 역할 배정 전면 중단
-
+	# 구제 창의 폭탄은 **동시 터치 가드보다 앞이다.** 가드 뒤에 두면 덱에 팜이나 릴레이
+	# 대기 손가락이 얹혀 있을 때 창 안 폭탄 press 가 조용히 버려진다 —
+	# "창 동안 팜 오접촉은 공짜 구제" 라는 확정사항이 정확히 반대로 뒤집힌다.
 	# 구제 창 동안에는 덱 전역이 폭탄이다 — **몇 번째 손가락인지 묻지 않는다.**
 	# 처음엔 "두 번째 손가락" 조건을 붙였는데, 엄지를 떼고 있던 순간에 맞으면
 	# 그 press 가 드래그 배정으로 흘러가 폭탄이 나가지 않았다. 실기 3회 피격 모두
@@ -187,7 +193,7 @@ func _on_press(idx: int, p: Vector2) -> void:
 	# 창은 333ms 다 — 이 순간 입력을 조건부로 만들면 그 기능은 없는 것과 같다.
 	if SimClock.state == SimClock.State.RESCUE and _bomb_zone(p):
 		bomb_pressed = true
-		if drag_idx >= 0:
+		if drag_idx >= 0 or _touch.size() >= 3:
 			return
 		# 화면에 드래그 손가락이 없었다면 이 손가락이 이어받는다 — 구제 직후
 		# 조작이 끊기면 살려 준 의미가 없다.
@@ -199,6 +205,8 @@ func _on_press(idx: int, p: Vector2) -> void:
 		_pending_px = Vector2.ZERO
 		return
 
+	if _touch.size() >= 3:
+		return                                   # 동시 터치 3개 이상이면 역할 배정 전면 중단
 	if drag_idx >= 0:
 		# 두 번째 손가락 — 폭탄 채널. 드래그 역할은 넘어가지 않는다(릴레이는 릴리스 때만).
 		if _bomb_zone(p):
@@ -302,8 +310,8 @@ func consume(tick: int) -> Vector2:
 	# 엣지 푸시 — 손가락이 밴드 안에 있고 바깥 방향 델타면 그 축에 속도를 더한다.
 	# 안쪽 델타 1개로 즉시 해제.
 	if drag_idx >= 0:
-		_edge_axis(0, drag_pos.x, d_units.x, view_size.x)
-		_edge_axis(1, drag_pos.y, d_units.y, view_size.y)
+		_edge_axis(0, drag_pos.x, d_units.x, view_phys.x)
+		_edge_axis(1, drag_pos.y, d_units.y, view_phys.y)
 	else:
 		edge_push = Vector2.ZERO
 		_edge_ramp = Vector2.ZERO
@@ -321,19 +329,34 @@ func consume(tick: int) -> Vector2:
 			_pending_px += d_units * (1.0 - keep) / field_per_px
 	return step
 
+## 세기를 밴드 깊이에 비례시킨다 — 밴드 가장자리 0, 화면 끝 최대.
+## 넓은 밴드에 고정 세기를 쓰면 아래로 조금만 끌어도 기체가 튀어 나간다.
 func _edge_axis(axis: int, pos: float, delta: float, extent: float) -> void:
 	var dir := 0.0
+	var reach := 0.0
 	if pos <= Tune.EDGE_BAND and delta < 0.0:
 		dir = -1.0
+		reach = pos * k
 	elif pos >= extent - Tune.EDGE_BAND and delta > 0.0:
 		dir = 1.0
+		reach = (extent - pos) * k
+	# 여유가 충분하면 보조하지 않는다 — 밴드는 조대 게이트일 뿐이다.
+	if dir != 0.0 and reach >= Tune.EDGE_REACH_FLOOR:
+		dir = 0.0
 	var cur := _edge_ramp[axis]
 	if dir != 0.0:
+		var depth := clampf(1.0 - reach / Tune.EDGE_REACH_FLOOR, 0.0, 1.0)
 		cur = minf(1.0, cur + 1.0 / float(Tune.EDGE_RAMP_TICKS))
 		_edge_ramp[axis] = cur
-		edge_push[axis] = dir * Tune.EDGE_PUSH * cur
+		edge_push[axis] = dir * Tune.EDGE_PUSH * cur * lerpf(Tune.EDGE_PUSH_MIN, 1.0, depth)
 	elif delta != 0.0:
 		_edge_ramp[axis] = 0.0                   # 안쪽 델타 1개로 해제
+		edge_push[axis] = 0.0
+	elif pos > Tune.EDGE_PIN and pos < extent - Tune.EDGE_PIN:
+		# 델타 0 = 이 틱에 drag 이벤트가 없었다. 손가락이 화면 물리 끝에 박힌 경우에만
+		# 유지한다(거기서는 원래 이벤트가 오지 않는다). 아직 움직일 수 있는 위치에서
+		# 멈춘 것은 멈추겠다는 의사이므로 푸시를 끈다 — 안 끄면 기체가 혼자 벽으로 흐른다.
+		_edge_ramp[axis] = 0.0
 		edge_push[axis] = 0.0
 
 ## 화면에 찍을 터치 상태. 프레임당 델타는 표시 후 비운다.
@@ -358,13 +381,22 @@ func reach_margin() -> Vector4:
 	var g := k
 	return Vector4(
 		drag_pos.x * g,
-		(view_size.x - drag_pos.x) * g,
+		(view_phys.x - drag_pos.x) * g,
 		drag_pos.y * g,
-		(view_size.y - drag_pos.y) * g)
+		(view_phys.y - drag_pos.y) * g)
 
 ## 런 재시작. 터치 맵과 드래그 역할은 **지우지 않는다** — 화면에 올려 둔 손가락으로
 ## 곧바로 조작을 이어가야 한다. 대신 사망 화면 동안 쌓인 델타·엣지 푸시·탭 이력만 비운다
 ## (그대로 두면 재시작 첫 틱에 기체가 사망 화면 동안의 손가락 이동만큼 튄다).
+## 구제 성공 직후. 창(30틱 = 500ms) 동안 시뮬이 멈춘 채 쌓인 델타를 버린다 —
+## 남기면 부활 첫 틱에 기체가 한꺼번에 튄다(사망 경로는 reset_run 이 이미 막고 있다).
+## reset_run 을 부르지 않는 이유: 그것은 k·집중·재파지 계측·릴레이 수까지 되돌리므로
+## 구제 성공이 집중 래치와 지표 ⑤ 카운터를 조용히 날린다.
+func drop_pending() -> void:
+	_pending_px = Vector2.ZERO
+	edge_push = Vector2.ZERO
+	_edge_ramp = Vector2.ZERO
+
 func reset_run() -> void:
 	_pending_px = Vector2.ZERO
 	edge_push = Vector2.ZERO
