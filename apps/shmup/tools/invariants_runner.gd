@@ -29,6 +29,7 @@ func _ready() -> void:
 	_boss_phase_cases()
 	_stage_cases()
 	_midboss_cases()
+	_runlog_cases()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
 
@@ -732,3 +733,25 @@ func _midboss_cases() -> void:
 					int(w[0]), slot, int(Stage.ZONES[3][0])])
 	_check(slot > 0 and need <= slot,
 		"중간보스 시간 상한 합 %d ≤ 배정 %d" % [need, slot])
+
+
+## RunLog 의 Android 경로. 패키지명이 export 프리셋과 갈라지면 로그가 **다른 앱의 자리에**
+## 쓰이거나(권한 거부) 조용히 내부 저장소로 되돌아간다. 되돌아가면 release 에서 로그를
+## 꺼낼 방법이 없어지고, 그때 남는 선택지는 "에디터에서 판정" 뿐이다 — 그게 틀린 판정이다.
+func _runlog_cases() -> void:
+	var f := FileAccess.open("res://export_presets.cfg", FileAccess.READ)
+	if f == null:
+		_check(false, "export_presets.cfg 를 읽을 수 없다")
+		return
+	var pkg := ""
+	while not f.eof_reached():
+		var line := f.get_line().strip_edges()
+		if line.begins_with("package/unique_name="):
+			pkg = line.split("=", true, 1)[1].strip_edges().trim_prefix("\"").trim_suffix("\"")
+			break
+	f.close()
+	_check(pkg != "", "export 프리셋에서 package/unique_name 을 찾았다 (%s)" % pkg)
+	_check(pkg == RunLog.ANDROID_PKG,
+		"RunLog.ANDROID_PKG 가 export 프리셋과 같다 (%s / %s)" % [RunLog.ANDROID_PKG, pkg])
+	_check(RunLog.ANDROID_DIR.ends_with("/files") and RunLog.ANDROID_DIR.contains(pkg),
+		"RunLog 외부 경로가 앱 소유 디렉터리다 (%s)" % RunLog.ANDROID_DIR)

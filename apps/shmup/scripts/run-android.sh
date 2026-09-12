@@ -13,6 +13,24 @@ MODE="${1:-debug}"
 APK="builds/android/lumen_drift.apk"
 cd "$(dirname "$0")/.."
 
+# release 서명 정보. **저장소에 두지 않는다** — export_presets.cfg 는 git 이 추적하고,
+# 거기에 비밀번호를 적으면 커밋으로 새어 나간다. Godot 은 이 환경변수들을 직접 읽는다.
+SIGN_ENV="$HOME/.config/lumendrift/android-release.env"
+if [ "$MODE" = "release" ]; then
+  if [ ! -f "$SIGN_ENV" ]; then
+    cat <<EOF
+release 서명 정보가 없다: $SIGN_ENV
+키스토어를 만들고 그 파일에 아래 3줄을 넣어라(권한 600).
+  export GODOT_ANDROID_KEYSTORE_RELEASE_PATH=...
+  export GODOT_ANDROID_KEYSTORE_RELEASE_USER=...
+  export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD=...
+EOF
+    exit 1
+  fi
+  # shellcheck disable=SC1090
+  . "$SIGN_ENV"
+fi
+
 "$ADB" start-server >/dev/null 2>&1 || true
 STATE=$("$ADB" devices | awk 'NR>1 && NF>1 {print $2; exit}')
 case "${STATE:-none}" in
@@ -31,7 +49,17 @@ esac
 
 echo "== export ($MODE) =="
 mkdir -p builds/android
-"$GODOT" --headless --path . --language en "--export-$MODE" "Android" "$APK" 2>&1 | tail -3
+# `| tail` 은 실패를 삼킨다(pipefail 이 있어도 마지막 3줄만 보면 원인 줄이 사라진다).
+# release 키스토어가 없을 때 실제 원인은 "Could not find release keystore" 한 줄이었는데
+# tail -3 이 그걸 잘라내서 "failed" 만 남았다 — iOS 때와 같은 함정이다.
+LOG="builds/android/export-$MODE.log"
+if ! "$GODOT" --headless --path . --language en "--export-$MODE" "Android" "$APK" > "$LOG" 2>&1; then
+  echo "export 실패. 원인 줄:"
+  grep -iE "error|warning|could not|unable" "$LOG" | grep -v "^ADDING" | tail -8
+  echo "전체 로그: $LOG"
+  exit 1
+fi
+grep -iE "warning|could not|unable" "$LOG" | tail -3 || true
 
 echo "== 설치 =="
 # -r 재설치, -d 다운그레이드 허용(개발 중 versionCode 가 고정이라 필요하다)

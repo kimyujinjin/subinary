@@ -41,7 +41,14 @@ case "$SRC" in
     # adb 는 exec-out 을 쓴다. shell 경유는 CRLF 변환으로 CSV 를 망친다.
     # exec-out 을 쓴다. shell 경유는 CRLF 변환으로 CSV 를 망친다.
     # run-as 는 앱이 debuggable 이어야 동작한다(debug export 는 그렇다).
-    "$ADB" exec-out run-as "$BUNDLE" cat files/runlog.csv > "$TMP_OUT"
+    # release 는 debuggable 이 아니라 run-as 가 막힌다("package not debuggable").
+    # 앱이 외부 앱 디렉터리에도 쓰므로 거기서 먼저 가져오고, 없으면 run-as 로 되돌아간다.
+    EXT="/sdcard/Android/data/$BUNDLE/files/runlog.csv"
+    if "$ADB" shell "test -f $EXT" >/dev/null 2>&1; then
+      "$ADB" exec-out "cat $EXT" > "$TMP_OUT"
+    else
+      "$ADB" exec-out run-as "$BUNDLE" cat files/runlog.csv > "$TMP_OUT"
+    fi
     finish
     ;;
   ios)
