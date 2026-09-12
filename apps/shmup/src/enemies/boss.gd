@@ -58,6 +58,8 @@ var done_reason: String = ""
 var done_tick: int = -1
 var omega: float = OMEGA                   # 스윕용
 var p05_speed: float = Patterns.P05_SPEED  # 스윕용
+var p05_every_ovr: int = 0                 # 스윕용 (0 = 기본)
+var p05_count_ovr: int = 0                 # 스윕용 (0 = 난이도 규칙)
 ## 발사원별 스위치 — 헤드리스 진단용(어느 성분이 통로를 막는지 가른다). 게임에서는 전부 켠다.
 var emit_p05: bool = true
 var emit_p09: bool = true
@@ -135,7 +137,8 @@ func _step_p1(tick: int, player: Vector2) -> void:
 	var l := w.y
 	if p05_fires(tick):
 		Patterns.p05_ex(CX, CY, R_OUTER, ring_angle(tick), p05_speed,
-				Patterns.P05_COUNT, Tune.Kind.SPORE_GRID)
+				p05_count_ovr if p05_count_ovr > 0 else Difficulty.count(Patterns.P05_COUNT),
+				Tune.Kind.SPORE_GRID)
 	if emit_p09 and l % Difficulty.every(P09_EVERY) == 0 and l <= P09_LAST:
 		Patterns.p09_ex(P09_Y, PI if _p09_flip else 0.0, tick, Patterns.P09_SPEED,
 				Tune.Kind.SPORE_TIDE)
@@ -239,11 +242,14 @@ func _finish(tick: int, reason: String) -> void:
 func p05_fires(tick: int) -> bool:
 	if done or not emit_p05:
 		return false
-	var el := tick - _t0
-	if el < WAKE_TICKS or el >= P1_MAX_TICKS:
+	# **페이즈로 막는다.** 경과 틱으로 막으면 HP 로 P1 이 일찍 끝났을 때
+	# P2·P3 내내 오지 않을 발사를 예고한다 — P05 는 P1 전용이다.
+	if phase != 1 or gap_left > 0:
+		return false
+	if tick - _t0 < WAKE_TICKS:
 		return false
 	var w := window(tick)
-	return w.x == 1 and w.y % Difficulty.every(P05_EVERY) == 0
+	return w.x == 1 and w.y % Difficulty.every_ring(p05_every_ovr if p05_every_ovr > 0 else P05_EVERY) == 0
 
 ## 다음 P05 발사까지의 근접도 0..1 — 발광 기관이 발사 직전 8틱 동안 밝아진다(예고).
 ##

@@ -405,6 +405,15 @@ func _physics_process(_delta: float) -> void:
 		_shots_vs_midboss(tick)
 	_shots_vs_enemies()
 
+	# 4-1. 중간보스 격파 처리는 **자탄 경로 밖**에 둔다.
+	# _shots_vs_midboss 안에서만 부르고 있었는데 그 함수는 첫 줄에서 done 이면 return 한다.
+	# 중간보스는 시간 상한으로도 죽고(P3 는 105 HP 를 8초에 깎아야 해서 그쪽이 기본 결말이다),
+	# 그때는 step 3 에서 done 이 켜지므로 step 4 가 즉시 return 해 보상이 통째로 유실됐다 —
+	# 폭탄 리필도 광립 60개도 40,000점도 안 나오고, 노드가 null 이 안 돼 남은 3분 동안
+	# HUD 에 죽은 중간보스가 계속 붙어 있었다. 보스는 _step_boss_clear 가 자탄 밖에서 본다.
+	if midboss != null and midboss.done:
+		_kill_midboss(tick)
+
 	# 4a. 격파 보상 — 적이 종류별 광립 수를 값으로 남긴다(인덱스는 이미 재배정됐다)
 	for kill in enemies.kills:
 		_drop_motes(kill[0].x, kill[0].y, int(kill[1]))
@@ -558,7 +567,7 @@ func _on_hit() -> void:
 	SimClock.rescue(Tune.RESCUE_TICKS)
 	TouchRouter.rescue_watch_begin()
 	RunLog.write("hit", [SimClock.run_index, SimClock.sim_tick, SimClock.run_seed,
-			player.x, player.y, ["spore_tide", "spore_grid", "needle", "bubble"][BulletField.hit_kind],
+			player.x, player.y, Tune.KIND_NAMES[clampi(BulletField.hit_kind, 0, Tune.KIND_N - 1)],
 			lesson_bid, fairness.gap_x0, fairness.gap_w,
 			TouchRouter.k, TouchRouter.focus, TouchRouter.regrip_count, 0,
 			BulletField.flow_c(SimClock.sim_tick), 0.0, BulletField.n,
@@ -574,7 +583,7 @@ func _on_death() -> void:
 	_restart_armed = false
 	var since := -1 if TouchRouter.last_regrip_tick < 0 else SimClock.wall_tick - TouchRouter.last_regrip_tick
 	RunLog.write("death", [SimClock.run_index, SimClock.sim_tick, SimClock.run_seed,
-			player.x, player.y, ["spore_tide", "spore_grid", "needle", "bubble"][BulletField.hit_kind],
+			player.x, player.y, Tune.KIND_NAMES[clampi(BulletField.hit_kind, 0, Tune.KIND_N - 1)],
 			lesson_bid, fairness.gap_x0, fairness.gap_w,
 			TouchRouter.k, TouchRouter.focus, TouchRouter.regrip_count, since,
 			BulletField.flow_c(SimClock.sim_tick),
@@ -624,6 +633,11 @@ func _step_lesson() -> void:
 		# (실측: T=500 에서 7.0° = 외륜 위 28유닛, 기관 간격 60유닛의 절반).
 		_boss_view.tick = replay.frame_tick(clampi(lesson_step, 0, maxi(replay.length() - 1, 0)))
 		_boss_view.queue_redraw()
+	if _mb_view != null:
+		# 중간보스 줄무늬도 같은 이유로 되돌린다. 사망 틱에 고정하면 교재의 탄은 0.5초 과거인데
+		# 줄무늬는 사망 시점 각도라, "물의 상태가 몸에 그려져 있다" 가 교재에서만 거짓이 된다.
+		_mb_view.tick = replay.frame_tick(clampi(lesson_step, 0, maxi(replay.length() - 1, 0)))
+		_mb_view.queue_redraw()
 	_overlay.queue_redraw()
 	_screen_ui.queue_redraw()
 
@@ -715,8 +729,6 @@ func _shots_vs_midboss(tick: int) -> void:
 			shot_y[i] = shot_y[shot_n]
 			continue
 		i += 1
-	if midboss.done:
-		_kill_midboss(tick)
 
 # ── 웨이브 ──────────────────────────────────────────────────────────────
 ## 보스 등장 전까지 플레이어가 올라갈 수 있는 y 하한. 보스 접근 구간에서 선형으로 내려온다.
@@ -778,9 +790,7 @@ func _spawn_waves(tick: int) -> void:
 		var w: Array = Stage.WAVES[_wave_cursor]
 		if int(w[0]) > loop_t:
 			break
-		var kind := int(w[1])
-		var y0: float = -50.0 if kind == 0 else float(w[3])
-		enemies.spawn(tick, kind, float(w[2]), y0, float(w[3]), int(w[4]), int(w[5]), float(w[6]))
+		enemies.spawn_wave(tick, w)
 		_wave_cursor += 1
 
 ## 5분 타임라인. 루프하지 않는다 — 커서는 리셋에서만 0 으로 돌아간다.
@@ -791,13 +801,11 @@ func _spawn_stage(tick: int) -> void:
 		var w: Array = Stage.STAGE_WAVES[_wave_cursor]
 		if int(w[0]) > tick:
 			break
-		var kind := int(w[1])
-		if kind == Stage.KIND_MIDBOSS:
+		if int(w[1]) == Stage.KIND_MIDBOSS:
 			_make_midboss(tick)
 			_wave_cursor += 1
 			continue
-		var y0: float = -50.0 if kind == 0 else float(w[3])
-		enemies.spawn(tick, kind, float(w[2]), y0, float(w[3]), int(w[4]), int(w[5]), float(w[6]))
+		enemies.spawn_wave(tick, w)
 		_wave_cursor += 1
 
 func _mode_tag() -> String:

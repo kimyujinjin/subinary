@@ -16,9 +16,7 @@ func _ready() -> void:
 				var w: Array = Stage.WAVES[cursor]
 				if int(w[0]) > i:
 					break
-				var kind := int(w[1])
-				ef.spawn(t, kind, float(w[2]), -50.0 if kind == 0 else float(w[3]),
-					float(w[3]), int(w[4]), int(w[5]), float(w[6]))
+				ef.spawn_wave(t, w)
 				cursor += 1
 			ef.step(t, p)
 			BulletField.step_and_collide(t, p, p, true)
@@ -57,14 +55,12 @@ func _full_stage() -> void:
 			var w: Array = Stage.STAGE_WAVES[cursor]
 			if int(w[0]) > t:
 				break
-			var kind := int(w[1])
 			cursor += 1
-			if kind == Stage.KIND_MIDBOSS:
+			if int(w[1]) == Stage.KIND_MIDBOSS:
 				mb = MidBoss.new()
 				mb.reset(t)
 				continue
-			ef.spawn(t, kind, float(w[2]), -50.0 if kind == 0 else float(w[3]),
-				float(w[3]), int(w[4]), int(w[5]), float(w[6]))
+			ef.spawn_wave(t, w)
 		if mb != null:
 			mb.step(t, p)
 			if mb.done:

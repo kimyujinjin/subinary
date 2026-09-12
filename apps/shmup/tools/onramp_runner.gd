@@ -41,9 +41,7 @@ func _run(hold: int, nf_tick: int) -> Array:
 	for t in 900:
 		while cursor < waves.size() and int(waves[cursor][0]) <= t:
 			var w: Array = waves[cursor]
-			var kind := int(w[1])
-			ef.spawn(t, kind, float(w[2]), -50.0 if kind == 0 else float(w[3]),
-				float(w[3]), int(w[4]), int(w[5]), float(w[6]))
+			ef.spawn_wave(t, w)
 			cursor += 1
 		var before := BulletField.n
 		ef.step(t, p)

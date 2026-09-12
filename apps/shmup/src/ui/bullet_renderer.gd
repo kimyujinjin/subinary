@@ -65,15 +65,17 @@ func _draw() -> void:
 		if rp.length() == 0:
 			return
 		var step := clampi(int(main.lesson_step), 0, rp.length() - 1)
-		_draw_set(rp.xs, rp.ys, rp.vxs, rp.vys, rp.kinds,
+		_draw_set(rp.xs, rp.ys, rp.vxs, rp.vys, rp.kinds, rp.axs, rp.ays, rp.fuses,
 				rp.base_of(step), rp.frame_count(step), rp.frame_tick(step))
 		return
 	var bf := BulletField
-	_draw_set(bf.pos_x, bf.pos_y, bf.vel_x, bf.vel_y, bf.kind, 0, bf.n, SimClock.sim_tick)
+	_draw_set(bf.pos_x, bf.pos_y, bf.vel_x, bf.vel_y, bf.kind,
+			bf.acc_x, bf.acc_y, bf.fuse, 0, bf.n, SimClock.sim_tick)
 
 ## 실시간과 교재가 공유하는 단일 드로우 경로. 두 경로가 갈라지면 외형이 갈라진다.
 func _draw_set(px: PackedFloat32Array, py: PackedFloat32Array,
 		pvx: PackedFloat32Array, pvy: PackedFloat32Array, pk: PackedInt32Array,
+		pax: PackedFloat32Array, pay: PackedFloat32Array, pfz: PackedInt32Array,
 		base: int, cnt: int, tick: int) -> void:
 	var bf := BulletField
 	# ── 잔광 궤적선. "휘어짐"이 조류 표시의 3번째 채널이다.
@@ -91,6 +93,12 @@ func _draw_set(px: PackedFloat32Array, py: PackedFloat32Array,
 			Tune.COL_POD, Tune.COL_GATE]
 	var c_t := bf.flow_c(tick)
 	var u_max: float = Difficulty.u_max
+	# 전단·소용돌이가 걸려 있으면 탄마다 다른 유속을 받는다. 하나로 퉁치면
+	# 보스 P2 전단 중 아래 밴드의 휘어짐 **부호가 뒤집혀** 보이고(조류의 유일한 교재가
+	# 거꾸로 가르친다), 중간보스 반경 400 안에서는 궤적선이 실제 진로와 다른 쪽을 가리킨다.
+	# 둘 다 꺼져 있으면 기존 고속 경로 그대로다.
+	var sheared: bool = bf.shear > 0.0
+	var swirling: bool = bf.vortex_w != 0.0
 	for i in cnt:
 		var j := base + i
 		var kd: int = pk[j]
@@ -102,7 +110,14 @@ func _draw_set(px: PackedFloat32Array, py: PackedFloat32Array,
 		var tau: float = Tune.KIND_TAU[kd]
 		var ax := 0.0
 		if tau > 0.0:
-			ax = (c_t * bf.flow_s(y) * u_max - vx) / tau
+			var cy: float = bf.flow_c_at(y, tick) if sheared else c_t
+			ax = (cy * bf.flow_s(y) * u_max - vx) / tau
+			# 매질이 돌고 있으면 그 성분은 탄의 vel 에 안 들어 있다(이류다).
+			# 역적분에서 빼 주지 않으면 궤적선이 소용돌이 반대쪽으로 뻗는다.
+			if swirling:
+				var wv: Vector2 = bf.vortex_at(x, y)
+				vx += wv.x
+				vy += wv.y
 		var h := span * 0.5
 		var mx := x - vx * h + 0.5 * ax * h * h
 		var my := y - vy * h
@@ -166,7 +181,7 @@ func _draw_set(px: PackedFloat32Array, py: PackedFloat32Array,
 		if Tune.KIND_FUSE[kd2]:
 			# 포낭 — 맥동 3회가 파열 카운트다운이다. 남은 퓨즈로 맥동 위상을 만든다.
 			# 예고 없이 터지면 "1.2초의 계획 시간" 이라는 이 패턴의 전부가 사라진다.
-			var fz: int = bf.fuse[j2] if base == 0 else Tune.POD_FUSE
+			var fz: int = pfz[j2]
 			var seg := float(Tune.POD_FUSE) / float(Tune.POD_PULSES)
 			var ph := 1.0 - fposmod(float(fz), seg) / seg
 			var near := 1.0 - clampf(float(fz) / float(Tune.POD_FUSE), 0.0, 1.0)
@@ -177,7 +192,7 @@ func _draw_set(px: PackedFloat32Array, py: PackedFloat32Array,
 			# 이 경고가 없으면 역행이 기습이 되어 "두 번 온다" 를 배울 방법이 없다.
 			# modulate 는 성분별이므로 rgb 만 올린다(알파를 올리면 사전곱셈이 깨진다).
 			var sp := sqrt(pvx[j2] * pvx[j2] + pvy[j2] * pvy[j2])
-			var a2 := sqrt(bf.acc_x[j2] * bf.acc_x[j2] + bf.acc_y[j2] * bf.acc_y[j2])
+			var a2 := sqrt(pax[j2] * pax[j2] + pay[j2] * pay[j2])
 			var warn := 0.0
 			if a2 > 0.001:
 				warn = clampf(1.0 - sp / (a2 * Tune.BUBBLE_WARN_SEC), 0.0, 1.0)

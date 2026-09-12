@@ -284,8 +284,11 @@ func _draw_hud() -> void:
 			Color(0.75, 0.90, 0.90, 0.85))
 	draw_string(f, Vector2(10.0, y + float(fs) + 3.0), l2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
 			Color(0.75, 0.90, 0.90, 0.85))
-	# Normal 최소 통과 폭 미달 경고. 스캔은 자유 폭 F 를 재므로 D(= F + 32)로 환산해 보인다.
-	if m.fairness.in_band > 0 and m.fairness.gap_w < Tune.FREE_NORMAL:
+	# 최소 통과 폭 미달 경고. 하한은 **현재 난이도의 것**이어야 한다 — Normal 행으로 고정하면
+	# Hard 에서 통과 가능한 틈을 계속 빨갛게 칠하고, Easy 에서는 못 지나는 틈을 안 칠한다.
+	# 스캔은 자유 폭 F 를 재므로 D(= F + 32)로 환산해 보인다.
+	if m.fairness.in_band > 0 and m.fairness.gap_w < Difficulty.free_floor():
 		draw_string(f, Vector2(10.0, y + float(fs) * 2.0 + 6.0),
-				"GAP D%d < %d" % [m.fairness.gap_w + int(Tune.SPORE_CLEAR), int(Tune.GAP_NORMAL)],
+				"GAP D%d < %d" % [m.fairness.gap_w + int(Tune.SPORE_CLEAR),
+						Difficulty.PASS_D[Difficulty.level]],
 				HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1.0, 0.35, 0.35, 0.95))

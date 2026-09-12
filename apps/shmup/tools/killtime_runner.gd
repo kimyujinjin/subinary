@@ -28,6 +28,7 @@ var _fair: Fairness = null
 var _free := PackedByteArray()
 
 func _ready() -> void:
+	Difficulty.apply_from_cmdline()
 	_fair = Fairness.new()
 	_free.resize(Tune.SCAN_CELLS)
 	print("== 킬타임 실측 (코어 정렬을 노리며 회피하는 경로) ==")

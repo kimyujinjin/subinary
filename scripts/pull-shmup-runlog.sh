@@ -11,7 +11,11 @@ set -euo pipefail
 BUNDLE="${BUNDLE:-dev.subinary.lumendrift}"
 # adb 는 PATH 에 없는 것이 정상이다 — Android Studio 가 넣어 주지 않는다.
 ADB="${ADB:-$(command -v adb || echo "$HOME/Library/Android/sdk/platform-tools/adb")}"
-OUT="${OUT:-apps/shmup/builds/runlog-$(date +%Y%m%d-%H%M%S).csv}"
+# 저장소 루트를 기준으로 삼는다. CLAUDE.md 는 이 스크립트를 apps/shmup 에서
+# `../../scripts/pull-shmup-runlog.sh` 로 부르라고 안내하는데, 상대 경로로 두면
+# 그때 apps/shmup/apps/shmup/builds/ 에 쓰려다 판정이 안 나온다.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT="${OUT:-$ROOT/apps/shmup/builds/runlog-$(date +%Y%m%d-%H%M%S).csv}"
 mkdir -p "$(dirname "$OUT")"
 # 리다이렉션은 명령이 실패해도 파일을 만든다 — 0바이트 로그가 남으면
 # 다음 판정이 "빌드 불명 · 사망 0회" 로 오염된다. 임시 파일에 받고 검증 후 옮긴다.

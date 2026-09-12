@@ -111,6 +111,36 @@ func spawn(t: int, kind: int, x: float, y: float, hold_y: float, m: int, hold: i
 	phase[n] = Phase.ENTER
 	n += 1
 
+## 웨이브 한 줄을 그대로 받아 스폰한다. **진입 y 규칙은 여기 한 곳에만 둔다.**
+##
+## main._spawn_waves / _spawn_stage · zone_runner · soak_runner 세 곳이 각자
+## `-50.0 if kind == 0 else w[3]` 로 해석하고 있었고, 그래서:
+##   · 관 해파리(2)·발광관(3)은 정지 위치에서 바로 시작해 하강 진입이 통째로 죽었다
+##     (_descend 가 첫 틱에 도달 판정을 통과한다) — 화면 한복판에서 무에서 튀어나온다
+##   · 역류 뱀장어(7)는 화면 **아래**에서 올라와야 하는데(y = PF_H + 60) 맨 위에서 나와
+##     1.7초 만에 위로 빠졌다. 경고 기포만 화면 아래에 뿌리고 본체는 사라진다
+##   · 군체(5)는 spawn_colony 를 타야 코어 + 몸통 5기가 나오는데 코어만 스폰돼
+##     탄을 한 발도 안 쐈다(발사는 몸통이 한다)
+## 같은 규칙을 세 벌로 두면 갈라진다는 것을 또 확인했다.
+func spawn_wave(t: int, w: Array) -> void:
+	var kind := int(w[1])
+	var x := float(w[2])
+	var hold_y := float(w[3])
+	if kind == Type.COLONY_CORE:
+		spawn_colony(t, x, hold_y, int(w[5]))
+		return
+	spawn(t, kind, x, entry_y(kind, hold_y), hold_y, int(w[4]), int(w[5]), float(w[6]))
+
+## 그 적이 어디서 화면에 들어오는가.
+static func entry_y(kind: int, hold_y: float) -> float:
+	match kind:
+		Type.NEEDLEFISH:
+			return hold_y            # 좌우에서 수평 진입한다
+		Type.EEL:
+			return Tune.PF_H + 60.0  # 아래에서 올라온다 — 이 개체의 교재가 "화면 아래" 다
+		_:
+			return -50.0             # 위에서 내려온다
+
 ## 군체 등해파리는 코어 + 몸통 5기로 스폰된다. 몸통은 각자 공전 위상을 든다.
 func spawn_colony(t: int, x: float, hold_y: float, hold: int) -> void:
 	spawn(t, Type.COLONY_CORE, x, -50.0, hold_y, 0, hold, 0.0)

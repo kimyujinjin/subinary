@@ -38,8 +38,11 @@ func _draw() -> void:
 	_ring(c, Boss.R_OUTER, COL_OUTER, true, lit, 96)
 	var ang := boss.ring_angle(tick)
 	var glow := boss.organ_glow(tick)
-	for i in Patterns.P05_COUNT:
-		var a := ang + TAU * float(i) / float(Patterns.P05_COUNT)
+	# 기관 개수 = 그 링이 실제로 내는 탄 수여야 한다. 상수로 두면 난이도에서
+	# "기관 24개인데 탄 29발" 이 되어 예고가 거짓이 된다.
+	var organs := Difficulty.count(Patterns.P05_COUNT)
+	for i in organs:
+		var a := ang + TAU * float(i) / float(organs)
 		var p := c + Vector2(cos(a), sin(a)) * Boss.R_OUTER
 		draw_circle(p, 5.0 + 3.0 * glow,
 				Color(COL_OUTER, (0.45 + 0.55 * glow) * (0.3 + 0.7 * lit)))

@@ -130,7 +130,9 @@ func still_violations(still_gap: int, win: int, move: float,
 		# 같은 틱에 Normal 통과 가능한 통로(≥96)가 따로 열려 있으면 그 슬라이버는
 		# 공정성 문제가 아니다 — 아무도 그리로 가지 않는다. 이 조건이 없으면
 		# 패턴의 희박한 꼬리와 이완 중인 탄 사이의 60유닛짜리 틈이 전부 위반으로 잡힌다.
-		if gap_hist[i] >= int(Tune.GAP_NORMAL):
+		# gap_hist 는 **자유 폭 F** 다. Tune.GAP_NORMAL 은 중심간 D(96)라 32유닛 차이가 나서
+		# 이 예외가 그만큼 덜 걸렸다 — 단위를 섞지 말라는 이 저장소의 규칙을 여기서 어기고 있었다.
+		if gap_hist[i] >= Difficulty.free_floor():
 			continue
 		var d := center_hist[i] - center_hist[i - win]
 		if use_flow:

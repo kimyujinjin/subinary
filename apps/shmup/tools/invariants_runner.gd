@@ -32,6 +32,8 @@ func _ready() -> void:
 	_runlog_cases()
 	_difficulty_cases()
 	_shear_window_cases()
+	_spin_cases()
+	_table_cases()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
 
@@ -852,3 +854,56 @@ func _shear_window_cases() -> void:
 		BulletField.clear()
 	_check(bad == 0, "보스 P2 전단 창이 난이도와 무관하게 주기당 2회·약 56틱 (%s)" % " · ".join(report))
 	Difficulty.apply(keep)
+
+
+## 중간보스 자전각은 **각속도의 적분**이어야 한다. w(t)·t 로 쓰면 P3 의 반전마다
+## 누적각이 통째로 점프해 몸통 줄무늬가 순간이동한다 — 그 줄무늬가 "지금 물이 어느 쪽으로
+## 도는가" 의 유일한 표시이므로, 순간이동하면 플레이어가 몸을 못 믿게 된다.
+func _spin_cases() -> void:
+	var keep := Difficulty.level
+	Difficulty.apply(Difficulty.Level.NORMAL)
+	var worst := 0.0
+	var worst_t := -1
+	for ph in [2, 3]:
+		var mb := MidBoss.new()
+		mb.reset(0)
+		mb.phase = ph
+		mb.phase_t0 = 0
+		var prev := mb.spin_angle(0)
+		for t in range(1, mb.phase_limit()):
+			var a := mb.spin_angle(t)
+			var d := absf(a - prev)
+			if d > worst:
+				worst = d
+				worst_t = t
+			prev = a
+	# 한 틱의 각 변화 상한: 자전 0.35 + 소용돌이 0.6 = 0.95 rad/s → 0.0159 rad/틱.
+	_check(worst < 0.02, "중간보스 자전각이 틱당 %.4f rad 이하로 연속이다 (최대 @t%d)" % [worst, worst_t])
+	Difficulty.apply(keep)
+
+
+## 탄종 개수만큼 길이를 가져야 하는 표들. 탄종이 4 → 6 으로 늘 때 main.gd 의
+## 로그 이름 배열만 안 늘어서, 포낭·게이트에 죽으면 배열 밖 접근으로 _on_death 가
+## 중단되고 게임이 영구 정지했다. 표 길이를 전부 여기서 묶는다.
+func _table_cases() -> void:
+	var tables := {
+		"KIND_NAMES": Tune.KIND_NAMES.size(), "KIND_W": Tune.KIND_W.size(),
+		"KIND_VIS_W": Tune.KIND_VIS_W.size(), "KIND_H": Tune.KIND_H.size(),
+		"KIND_TAU": Tune.KIND_TAU.size(), "KIND_RING": Tune.KIND_RING.size(),
+		"KIND_ACCEL": Tune.KIND_ACCEL.size(), "KIND_FUSE": Tune.KIND_FUSE.size(),
+		"KIND_TRAIL": Tune.KIND_TRAIL.size(),
+	}
+	var bad := PackedStringArray()
+	for k in tables:
+		if int(tables[k]) != Tune.KIND_N:
+			bad.append("%s=%d" % [k, int(tables[k])])
+	_check(bad.is_empty(), "탄종 표 길이가 전부 KIND_N(%d) 과 같다 %s" % [
+		Tune.KIND_N, "" if bad.is_empty() else "— 어긋남: " + ", ".join(bad)])
+
+	# 모든 탄종으로 실제 피격 로그 인덱싱을 돌려 본다. 러너는 대부분 무적이라
+	# 이 경로를 안 지나므로, 표 길이만 보지 말고 인덱싱 자체를 한 번 돌린다.
+	var names := 0
+	for k in Tune.KIND_N:
+		if Tune.KIND_NAMES[k] != "":
+			names += 1
+	_check(names == Tune.KIND_N, "탄종 이름이 전부 비어 있지 않다 (%d/%d)" % [names, Tune.KIND_N])

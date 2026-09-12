@@ -17,6 +17,10 @@ var _fair: Fairness = null
 func _ready() -> void:
 	Difficulty.apply_from_cmdline()
 	_fair = Fairness.new()
+	for a in OS.get_cmdline_user_args():
+		if a == "--p1-sweep":
+			_p1_sweep()
+			return
 	print("== 성분별 진단 (ω 0.30 · 탄속 170) ==")
 	print("  성분          | 최장min 통로min 유지min@t(창)        강제점프  peak  요구횡속 도달폭")
 	for c in [["P05", true, false, false], ["P09", false, true, false], ["P03", false, false, true],
@@ -48,7 +52,7 @@ func _ready() -> void:
 			var r := _run(om, sp)
 			var flags := PackedStringArray()
 			if int(r[0]) < Tune.FREE_FLOOR: flags.append("절대벽")
-			if int(r[0]) < Tune.FREE_NORMAL: flags.append("F<64")
+			if int(r[0]) < Difficulty.free_floor(): flags.append("F<64")
 			if int(r[8]) < 0 or int(r[8]) > V_BUDGET: flags.append("횡속")
 			if int(r[9]) < COMP_MIN: flags.append("정밀")
 			if int(r[5]) > 0: flags.append("호흡")
@@ -166,6 +170,8 @@ func _run_phase(ph: int) -> Array:
 		BulletField.reset_flow()
 		var b := Boss.new()
 		b.reset(0)
+		b.p05_count_ovr = _ovr_cnt
+		b.p05_every_ovr = _ovr_ev
 		b.phase = ph
 		b.phase_t0 = 0
 		var rch := Reach1D.new()
@@ -194,3 +200,29 @@ func _run_phase(ph: int) -> Array:
 	BulletField.reset_flow()
 	BulletField.clear()
 	return [min_gap, min_track, peak, alive, comp, shear_ticks / maxi(BANDS.size(), 1), died]
+
+
+## 외륜(P05)의 두 축이 곱해진다 — 탄 수 배율과 발사 간격 배율이 **같은 이미터**에 걸리고,
+## 링에서는 탄 수가 곧 틈의 각폭이라 통과 폭 게이트와 직접 충돌한다.
+## Hard 에서 어느 조합이 성립하는지 본다(판정은 P1·P2 둘 다).
+func _p1_sweep() -> void:
+	print("== 외륜 손잡이 스윕 (%s · 하한 %d) ==" % [Difficulty.name_of(), Difficulty.free_floor()])
+	print("  탄수 간격 | P1 최장 도달폭 peak | P2 최장 도달폭 peak")
+	for cnt in [24, 26, 29]:
+		for ev in [30, 38, 46]:
+			var a := _run_phase_ovr(1, cnt, ev)
+			var b := _run_phase_ovr(2, cnt, ev)
+			print("  %4d %4d | %7d %6d %4d | %7d %6d %4d" % [
+				cnt, ev, int(a[0]), int(a[4]), int(a[2]), int(b[0]), int(b[4]), int(b[2])])
+	get_tree().quit(0)
+
+var _ovr_cnt := 0
+var _ovr_ev := 0
+
+func _run_phase_ovr(ph: int, cnt: int, ev: int) -> Array:
+	_ovr_cnt = cnt
+	_ovr_ev = ev
+	var r := _run_phase(ph)
+	_ovr_cnt = 0
+	_ovr_ev = 0
+	return r

@@ -33,6 +33,9 @@ func _ready() -> void:
 		if a == "--axes":
 			_axes()
 			return
+		if a == "--z5-parts":
+			_z5_parts()
+			return
 	print("== 6구역 무피격 가능성 (횡속 예산 %d u/s · 자탄 없음 = 최악) ==" % (V_BUDGET * 60))
 	print("  구역                 구간      | 최장min 도달폭@%d 도달폭@%d peak  적수 | 판정" % [V_BUDGET * 60, V_TIGHT * 60])
 	var rows := _scan(Stage.STAGE_WAVES)
@@ -97,16 +100,16 @@ func _scan(waves: Array) -> Array:
 				var w: Array = waves[cursor]
 				if int(w[0]) > t:
 					break
-				var kind := int(w[1])
 				cursor += 1
 				spawned += 1
-				out[Stage.zone_of(int(w[0]))][6] = int(out[Stage.zone_of(int(w[0]))][6]) + 1
-				if kind == Stage.KIND_MIDBOSS:
+				# 밴드 루프 안이므로 첫 밴드에서만 센다. 안 그러면 정확히 밴드 수만큼 부풀려진다.
+				if band == BANDS[0]:
+					out[Stage.zone_of(int(w[0]))][6] = int(out[Stage.zone_of(int(w[0]))][6]) + 1
+				if int(w[1]) == Stage.KIND_MIDBOSS:
 					mb = MidBoss.new()
 					mb.reset(t)
 					continue
-				var y0: float = -50.0 if kind == 0 else float(w[3])
-				ef.spawn(t, kind, float(w[2]), y0, float(w[3]), int(w[4]), int(w[5]), float(w[6]))
+				ef.spawn_wave(t, w)
 			if mb != null:
 				# 자탄이 없으니 HP 로는 안 끝난다 — 시간 상한으로 3페이즈를 전부 지나간다.
 				mb.step(t, p)
@@ -221,4 +224,29 @@ func _axes() -> void:
 		print("  %-17s | %4d %4d %4d | %4d %4d %4d" % [c[0],
 			int(z3[2]), int(z3[7]), int(z3[1]), int(z5[2]), int(z5[7]), int(z5[1])])
 	Difficulty.apply(N)
+	get_tree().quit(0)
+
+
+## 구역 5 성분 분해. 진입 y 규칙을 고치자 군체와 뱀장어가 **처음으로 실제 발사**를 시작했고
+## 도달폭이 66 → 14 로 무너졌다(하한 52). 전에 통과하던 게이트는 적 두 종이 벙어리였던 것이다.
+## 어느 성분이 통로를 막는지 웨이브를 하나씩 빼서 본다.
+func _z5_parts() -> void:
+	print("== 구역 5 성분 분해 (해당 웨이브만 제거) ==")
+	print("  제거한 것        | 최장min 도달폭@300 @180 peak")
+	var labels := {
+		-1: "없음(현재)", 7800: "발광관 2기", 9000: "군체", 10200: "뱀장어 2기",
+	}
+	for drop in [-1, 7800, 9000, 10200]:
+		var waves: Array = []
+		for w in Stage.STAGE_WAVES:
+			var t := int(w[0])
+			if drop == 7800 and (t == 7800 or t == 7980):
+				continue
+			if drop == 9000 and t == 9000:
+				continue
+			if drop == 10200 and (t == 10200 or t == 10440):
+				continue
+			waves.append(w)
+		var r: Array = _scan(waves)[4]
+		print("  %-16s | %6d %10d %4d %4d" % [labels[drop], int(r[0]), int(r[2]), int(r[7]), int(r[1])])
 	get_tree().quit(0)

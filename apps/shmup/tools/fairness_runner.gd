@@ -77,9 +77,7 @@ func _waves(ef: EnemyField, tick: int, p: Vector2) -> void:
 		var w: Array = Stage.WAVES[_cursor]
 		if int(w[0]) > tick:
 			break
-		var kind := int(w[1])
-		var y0: float = -50.0 if kind == 0 else float(w[3])
-		ef.spawn(tick, kind, float(w[2]), y0, float(w[3]), int(w[4]), int(w[5]), float(w[6]))
+		ef.spawn_wave(tick, w)
 		_cursor += 1
 	ef.step(tick, p)
 

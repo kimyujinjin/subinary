@@ -59,6 +59,10 @@ var vortex_on: bool = true
 ## p11 18→27 실측: peak 156 → 107 (ON 71 · OFF 78). P3 가 세 페이즈 중 가장 좁다.
 var p05_every: int = 60
 var p11_every: int = 27
+## 성분 스위치 — 헤드리스 진단용(보스의 emit_p05/p09/p03 과 같은 용도). 게임은 전부 켠다.
+var emit_p05: bool = true
+var emit_p08: bool = true
+var emit_p16: bool = true
 var _t0: int = 0
 
 func reset(tick: int) -> void:
@@ -112,7 +116,21 @@ func spin_angle(tick: int) -> float:
 	var w := vortex_w(tick)
 	if w == 0.0:
 		return SPIN * BulletField.flow_phase(tick) * Tune.DT
-	return SPIN * float(elapsed(tick)) * Tune.DT + w * float(phase_elapsed(tick)) * Tune.DT
+	# **각도는 각속도의 적분이다.** w(t)·t 로 쓰면 P3 에서 2초마다 부호가 뒤집힐 때
+	# 누적각이 통째로 −2배로 점프해 줄무늬가 순간이동한다 — "물의 상태가 몸에 그려져 있다"
+	# 가 반전마다 거짓이 된다(Boss.flow_phase 가 같은 이유로 적분인 것과 같은 함정).
+	# 반전은 FLIP_EVERY 마다이고 부호는 짝/홀이므로 닫힌 형태로 더한다.
+	var pe := phase_elapsed(tick)
+	var base := SPIN * float(elapsed(tick)) * Tune.DT
+	if phase < 3:
+		return base + w * float(pe) * Tune.DT    # P2 는 각속도가 상수라 적분이 w·t 다
+	# P3 는 FLIP_EVERY 마다 부호가 뒤집힌다. 완료 블록은 쌍으로 상쇄되므로
+	# 남는 것은 블록 수가 홀수일 때의 한 블록 + 진행 중인 블록이다.
+	var k := pe / FLIP_EVERY
+	var rem := pe % FLIP_EVERY
+	var acc := float(FLIP_EVERY) if (k % 2) == 1 else 0.0
+	acc += float(rem) * (1.0 if (k % 2) == 0 else -1.0)
+	return base + W_P3 * acc * Tune.DT
 
 func step(tick: int, player: Vector2) -> void:
 	if done:
@@ -155,11 +173,21 @@ const P2_BEAT := 200
 func _step_p2(tick: int, player: Vector2) -> void:
 	var pe := phase_elapsed(tick)
 	var l := pe % P2_BEAT
-	if l % Difficulty.every(p05_every) == 0:
+	if emit_p05 and l % Difficulty.every_ring(p05_every) == 0:
 		Patterns.p05_ex(CX, CY, HALF_H - 30.0, spin_angle(tick),
-				Patterns.P05_SPEED, Patterns.P05_COUNT, Tune.Kind.SPORE_GRID)
-	Patterns.p08(l, CX, CY + 90.0)
-	Patterns.p16(l, tick, CX, CY + 60.0)
+				Patterns.P05_SPEED, Difficulty.count(Patterns.P05_COUNT), Tune.Kind.SPORE_GRID)
+	# 링은 계속 돈다 — S자 나선이 이 페이즈가 가르치는 것이다.
+	# 나머지 둘은 **비트로 번갈아** 깐다. 셋을 동시에 깔면 Hard·소용돌이 OFF 에서
+	# peak 348 에 도달 불가가 된다(성분 분해: 각각·둘씩은 전부 통과, 셋만 0).
+	# 보스 P2 도 네 패턴을 4비트 루프로 하나씩 돌린다 — 같은 규칙을 여기도 적용한다.
+	var beat := (pe / P2_BEAT) % 2
+	# 포낭은 **자기 비트 안에서 터져야 한다.** 퓨즈가 1.2초라 비트 끝에서 쏘면
+	# 다음 비트(P16 응결) 위에서 터지고, 그 겹침이 Hard·소용돌이 OFF 에서 통로를 0 으로 만든다
+	# (성분 분해: 링+P08 99 · 링+P16 113 인데 셋 번갈아가 0 이었다 — 밀도가 아니라 경계 문제다).
+	if emit_p08 and beat == 0 and l + Tune.POD_FUSE < P2_BEAT:
+		Patterns.p08(l, CX, CY + 90.0)
+	if emit_p16 and beat == 1:
+		Patterns.p16(l, tick, CX, CY + 60.0)
 
 # ── P3 「반전」 · 30 → 0% · 2.0초마다 방향 반전 ──────────────────────────
 ## 이 게임에서 가장 빠른 독해를 요구하는 구간이다(보스 P3 보다 짧다).
@@ -200,6 +228,7 @@ func damage(d: float, tick: int, player := Vector2(CX, Tune.PF_H * 0.8)) -> void
 ## 격파 — 발광 소멸(P15) → 몸통이 갈라진다. 광립 60개와 폭탄 리필은 main 이 준다.
 func _finish(tick: int, reason: String) -> void:
 	done = true
+	hp = 0.0                          # HUD 가 "M20%" 로 남지 않게 한다
 	done_reason = reason
 	done_tick = tick
 	BulletField.vortex_w = 0.0

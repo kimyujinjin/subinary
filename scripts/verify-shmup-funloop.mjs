@@ -141,18 +141,26 @@ if (sessionMode === 'boss') {
 // 경계표가 두 벌이 되면 갈라진 쪽이 틀린 판정을 자신 있게 낸다.
 if (sessionMode === 'full') {
   const ZN = ['표층', '중층', '혼합', '보상 회랑', '심층', '해구저']
-  const dz = deaths.map(d => +(String(of(d, 'detail') || '').match(/zone=(\d+)/) || [])[1] || 0)
-  const reached = new Map()
-  for (const [run, rs] of perRun) {
-    const mx = Math.max(0, ...rs.map(r => +(String(of(r, 'detail') || '').match(/zone=(\d+)/) || [])[1] || 0))
-    reached.set(run, mx)
-  }
+  // 정규식 앞에 경계를 둔다. `/zone=(\d+)/` 는 detail 의 `rzone=` 을 먼저 집는다 —
+  // 구제 창 진입 여부(0/1)가 구역 번호로 둔갑해 표 전체가 "구역 1" 로 몰린다.
+  const ZRE = /(?:^|;)zone=(\d+)/
+  const zoneOf = (r) => { const m = String(of(r, 'detail') || '').match(ZRE); return m ? +m[1] : 0 }
+  const dz = deaths.map(zoneOf)
   const clears = rows.filter(r => r[0] === 'clear')
+  // perRun 은 런 → 최대 재그립 수(숫자)다. 행 배열이 아니다 — rs.map 을 부르면
+  // TypeError 로 이 분기 전체가 죽는다(실제로 그랬다). 행을 직접 런별로 묶는다.
+  const reached = new Map()
+  const bump = (r, z) => {
+    const k = of(r, 'run')
+    reached.set(k, Math.max(reached.get(k) ?? 0, z))
+  }
+  for (const d of deaths) bump(d, zoneOf(d))
+  for (const c of clears) bump(c, ZN.length)     // 클리어했으면 마지막 구역까지 갔다
   console.log(`\n5분 타임라인 요약 — ${file}`)
   console.log(`빌드: ${[...builds].join(', ') || '불명'}${isRelease ? '' : '   ← release 아님. 이 판정은 무효다'}`)
   console.log(`런 ${perRun.size}개 · 사망 ${deaths.length}회 · 클리어 ${clears.length}회`)
   console.log('\n  구역        사망  최종 도달 런')
-  for (let z = 1; z <= 6; z++) {
+  for (let z = 1; z <= ZN.length; z++) {
     const d = dz.filter(v => v === z).length
     const r = [...reached.values()].filter(v => v === z).length
     console.log(`  ${z} ${ZN[z - 1].padEnd(10)} ${String(d).padStart(4)} ${String(r).padStart(11)}`)

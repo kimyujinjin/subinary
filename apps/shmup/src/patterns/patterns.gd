@@ -282,9 +282,15 @@ const P08_SPEED := 62.0
 const P08_SPREAD := 150.0
 
 static func p08(local: int, ex: float, ey: float) -> void:
-	if local < 0 or local % 240 != 0:
+	# 240 은 "조류 반전 주기" 를 상수로 박은 것이었다(Boss.BEAT 와 같은 부류).
+	# Hard 는 180틱마다 반전하므로 맥동이 조류와 어긋난다.
+	# 간격에 난이도 배율을 **걸지 않는다.** 이 패턴이 가르치는 것은 "맥동 3회 = 파열
+	# 카운트다운" 이고 그 간격 자체가 계획 시간이다. Hard 에서 ×0.85 를 걸었더니
+	# 퓨즈(150틱)보다 자주 나와 포낭이 겹쳐 쌓이고 보스 P2 도달폭이 53 → 28 이 됐다.
+	var every := maxi(Boss.beat_len(), Tune.POD_FUSE + 30)
+	if local < 0 or local % every != 0:
 		return
-	var v := local / 240
+	var v := local / every
 	for i in 2:
 		var x := ex + (float(i) - 0.5) * P08_SPREAD + (30.0 if (v & 1) == 1 else -30.0)
 		BulletField.spawn_acc(x, ey, 0.0, P08_SPEED, Tune.Kind.POD, 0.0, 0.0, Tune.POD_FUSE)

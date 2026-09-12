@@ -15,6 +15,15 @@ var xs := PackedFloat32Array()
 var ys := PackedFloat32Array()
 var vxs := PackedFloat32Array()
 var vys := PackedFloat32Array()
+## 가속도와 퓨즈까지 저장한다. 렌더러가 기포 정지 경고(|a|)와 포낭 맥동(fuse)을 그리는데,
+## 리플레이에는 이 둘이 없어서 **라이브 필드를 리플레이 인덱스로 읽고 있었다** —
+## 리플레이 인덱스는 슬롯×512 라 최대 15359 이고 필드 배열은 4096 이다. 슬롯 8 이후
+## 프레임에서 범위 밖 읽기로 _draw 가 그 문장에서 중단돼, 사망 교재에서 **바늘이 통째로
+## 안 그려졌다**(회전 패스가 뒤에 있다). "무엇에 죽었는지" 를 보여주는 화면에서 가장 흔한
+## 사인이 사라지는 결함이다. 특수 케이스를 없애는 쪽으로 고친다 — 교재도 같은 값을 든다.
+var axs := PackedFloat32Array()
+var ays := PackedFloat32Array()
+var fuses := PackedInt32Array()
 var kinds := PackedInt32Array()
 var bids := PackedInt32Array()
 var _cnt := PackedInt32Array()
@@ -29,6 +38,7 @@ var _filled: int = 0
 func _init() -> void:
 	var cap := Tune.REPLAY_TICKS * Tune.REPLAY_MAX
 	xs.resize(cap); ys.resize(cap); vxs.resize(cap); vys.resize(cap)
+	axs.resize(cap); ays.resize(cap); fuses.resize(cap)
 	kinds.resize(cap); bids.resize(cap)
 	_cnt.resize(Tune.REPLAY_TICKS); _tick.resize(Tune.REPLAY_TICKS)
 	_px.resize(Tune.REPLAY_TICKS); _py.resize(Tune.REPLAY_TICKS)
@@ -47,6 +57,9 @@ func record(bf: Node, player: Vector2, tick: int, near_x0: int, near_w: int) -> 
 		ys[base + i] = bf.pos_y[i]
 		vxs[base + i] = bf.vel_x[i]
 		vys[base + i] = bf.vel_y[i]
+		axs[base + i] = bf.acc_x[i]
+		ays[base + i] = bf.acc_y[i]
+		fuses[base + i] = bf.fuse[i]
 		kinds[base + i] = bf.kind[i]
 		bids[base + i] = bf.bid[i]
 	_cnt[slot] = m

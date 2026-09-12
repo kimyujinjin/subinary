@@ -21,6 +21,9 @@ func _ready() -> void:
 		if a == "--sweep":
 			_sweep()
 			return
+		if a == "--p2-parts":
+			_p2_parts()
+			return
 	print("== 중간보스 조류 방추체 ==")
 	print("  소용돌이 반경 %.0f · P2 %.1f rad/s · P3 %.1f rad/s 를 %.1f초마다 반전" % [
 		Tune.VORTEX_R, MidBoss.W_P2, MidBoss.W_P3, float(MidBoss.FLIP_EVERY) / 60.0])
@@ -80,6 +83,23 @@ func _sweep() -> void:
 		print("  %12d | %9d %4d | %10d %4d" % [e, int(a[2]), int(a[1]), int(b[2]), int(b[1])])
 	get_tree().quit(0)
 
+## P2 성분 분해. Hard·소용돌이 OFF 에서 간격을 어떻게 줘도 도달 불가가 나와서,
+## 손잡이가 간격이 아니라는 것을 먼저 확인한다.
+func _p2_parts() -> void:
+	print("== 중간보스 P2 성분 분해 (%s · 소용돌이 OFF 기준) ==" % Difficulty.name_of())
+	print("  성분            | ON 도달폭 peak | OFF 도달폭 peak")
+	for c in [["P05 링만", true, false, false], ["P08 만", false, true, false],
+			["P16 만", false, false, true], ["P05+P08", true, true, false],
+			["P05+P16", true, false, true], ["전부", true, true, true]]:
+		_only = [bool(c[1]), bool(c[2]), bool(c[3])]
+		var a := _run_phase(2, true)
+		var b := _run_phase(2, false)
+		print("  %-14s | %9d %4d | %10d %4d" % [c[0], int(a[2]), int(a[1]), int(b[2]), int(b[1])])
+	_only = []
+	get_tree().quit(0)
+
+var _only: Array = []
+
 func _run_phase(ph: int, vortex_on: bool, p05e: int = 0, p11e: int = 0) -> Array:
 	var min_gap := Tune.SCAN_CELLS
 	var peak := 0
@@ -98,6 +118,10 @@ func _run_phase(ph: int, vortex_on: bool, p05e: int = 0, p11e: int = 0) -> Array
 			mb.p05_every = p05e
 		if p11e > 0:
 			mb.p11_every = p11e
+		if _only.size() == 3:
+			mb.emit_p05 = bool(_only[0])
+			mb.emit_p08 = bool(_only[1])
+			mb.emit_p16 = bool(_only[2])
 		mb.phase = ph
 		mb.phase_t0 = 0
 		var rch := Reach1D.new()

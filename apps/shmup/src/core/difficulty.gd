@@ -91,6 +91,16 @@ static func every(base: int) -> int:
 static func count(base: int) -> int:
 	return maxi(1, int(round(float(base) * count_m)))
 
+## 링 이미터의 발사 간격. **발사 간격 축 대신 탄 수 축을 쓴다.**
+##
+## 링에서는 탄 수가 곧 틈의 각폭이라 통과 폭 게이트와 직접 충돌한다. 거기에 발사 간격
+## 축까지 걸면 두 축이 같은 이미터에서 곱해져 Hard 에서 세 번 좁아진다 —
+## 실측: 보스 P1 도달폭이 97(Normal) → 31(Hard, 하한 56)로 무너졌다.
+## 간격을 탄 수에 비례시키면 링의 **초당 탄 수**가 유지되고, 난이도는 "한 겹이 더 촘촘하다"
+## 로만 온다. 그게 설계서가 말한 "최적 전략이 바뀐다" 에 맞다 — 틈이 좁아지되 더 자주 오지는 않는다.
+static func every_ring(base: int) -> int:
+	return maxi(1, int(round(float(base) * count_m)))
+
 ## 짝수로 강제되는 탄 수. P13 은 게이트 2개가 **정반대**에 있어야 하고(g1 = g0 + N/2)
 ## 홀수면 그 성질이 깨진다 — 26 × 1.2 = 31.2 → 31 이 되어 게이트가 어긋난다.
 static func count_even(base: int) -> int:

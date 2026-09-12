@@ -48,7 +48,11 @@ func _ready() -> void:
 	if _f == null:
 		push_warning("RunLog: %s 를 열 수 없다 (err %d)" % [_path, FileAccess.get_open_error()])
 		return
-	if exists:
+	# 헤더 유무는 **존재 여부가 아니라 길이**로 판단한다. _pick_path 의 쓰기 탐침이
+	# 파일을 만들어 두기 때문에 Android 에서는 exists 가 항상 true 였고, 그래서
+	# 실기 첫 실행 CSV 에 헤더가 통째로 없었다 — 판정 스크립트가 칼럼을 못 찾고
+	# 다음 실행의 로테이션이 그 파일을 stale 로 치워 버린다.
+	if _f.get_length() > 0:
 		_f.seek_end()
 	else:
 		_f.store_line(HEADER)
