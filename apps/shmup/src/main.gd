@@ -1,3 +1,4 @@
+class_name Main
 extends Node2D
 ## 게이트 1 슬라이스. 답할 질문은 정확히 하나다 —
 ## "조류를 읽고 좁은 틈을 지나는 것이 재미있는가."
@@ -9,9 +10,16 @@ extends Node2D
 ## 사망 교재·계측을 전부 공유하고, 웨이브 대신 보스가 탄을 낸다 — 두 벌로 가르면
 ## 한쪽에서 고친 결함이 다른 쪽에 남는다(이 슬라이스에서 이미 여러 번 겪었다).
 @export var boss_mode: bool = false
+## 5분 6구역 타임라인(stage_full.tscn). 웨이브가 루프하지 않고 Stage.BOSS_AT 에서
+## 보스가 합류한다 — 보스 러시와 같은 Boss 인스턴스이므로 페이즈·전단이 그대로 온다.
+@export var stage_full: bool = false
 
 const SCENE_STAGE := "res://scenes/main.tscn"
 const SCENE_BOSS := "res://scenes/boss_rush.tscn"
+const SCENE_FULL := "res://scenes/stage_full.tscn"
+## 보스 접근 연출. 이 구간 동안 플레이어 하한이 내려온다 — 보스가 나타나는 순간
+## 활동 영역이 522유닛 잘려 기체가 순간이동하는 것을 막는다(하강 74 u/s, 이동 속도의 1/5).
+const BOSS_APPROACH := 420
 const CLEAR_TICKS := 120            # 보스 P1 격파 후 재시작까지 2초
 const DEATH_HITSTOP := 8
 const LESSON_HOLD_TICKS := 12       # 정지 프레임
@@ -96,10 +104,7 @@ func _ready() -> void:
 	_overlay.main = self
 	_field.add_child(_backdrop)
 	if boss_mode:
-		boss = Boss.new()
-		_boss_view = BossView.new()
-		_boss_view.boss = boss
-		_field.add_child(_boss_view)      # 탄 레이어 아래 — 탄이 몸통 위를 지나간다
+		_make_boss()
 	_field.add_child(_bullets)
 	_field.add_child(_overlay)
 	_screen_ui = ScreenOverlay.new()
@@ -113,7 +118,7 @@ func _ready() -> void:
 	RunLog.write("run", [SimClock.run_index, 0, SimClock.run_seed, 0, 0, "", 0, 0, 0,
 			0.0, false, 0, 0, 0.0, 0.0, 0, 0, _build_tag(),
 			TouchRouter.field_per_px, TouchRouter.screen_width_mm(),
-			"mode=%s" % ("boss" if boss_mode else "stage")])
+			"mode=%s" % _mode_tag()])
 
 ## --capture=<tick>:<경로> — 지정 틱의 프레임을 PNG 로 저장하고 종료한다.
 ## 게이트 1 지표 ④(조류 표시 대 배경의 Weber 콘트라스트 ≥ 0.25)는 스크린샷 픽셀값으로
@@ -208,6 +213,13 @@ func _reset(seed_value: int) -> void:
 	_restart_armed = false
 	_clear_left = -1
 	clear_anim = -1
+	if stage_full and boss != null:
+		# remove_child 를 먼저 한다. queue_free 는 다음 프레임이라 그 사이 한 번 더 그려지고,
+		# 그때 boss 는 이미 null 이다.
+		_field.remove_child(_boss_view)
+		_boss_view.queue_free()
+		_boss_view = null
+		boss = null
 	if boss != null:
 		boss.reset(SimClock.sim_tick)
 		if _force_phase > 1:
@@ -251,9 +263,15 @@ func _debug_toggle(event: InputEvent) -> bool:
 		return true
 	return false
 
+## 30초 루프 → 보스 러시 → 5분 풀 스테이지 → 30초 루프.
 func _switch_scene() -> void:
 	RunLog.flush()
-	get_tree().change_scene_to_file.call_deferred(SCENE_STAGE if boss_mode else SCENE_BOSS)
+	var next := SCENE_BOSS
+	if boss_mode:
+		next = SCENE_FULL
+	elif stage_full:
+		next = SCENE_STAGE
+	get_tree().change_scene_to_file.call_deferred(next)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if _debug_toggle(event):
@@ -351,8 +369,7 @@ func _physics_process(_delta: float) -> void:
 	player += step
 	# 매 틱 상태 클램프. 가상 위치를 저장하지 않는다.
 	player.x = clampf(player.x, Tune.MARGIN, Tune.PF_W - Tune.MARGIN)
-	var y_min: float = Boss.PLAYER_MIN_Y if boss != null else Tune.MARGIN + Backdrop.BAND_H
-	player.y = clampf(player.y, y_min, Tune.PF_H - Tune.MARGIN)
+	player.y = clampf(player.y, _player_min_y(tick), Tune.PF_H - Tune.MARGIN)
 	_log_regrips(tick)
 
 	# 2. 자탄 (자동 사격)
@@ -360,18 +377,17 @@ func _physics_process(_delta: float) -> void:
 		_fire()
 	_step_shots()
 
-	# 3. 웨이브 → 적 → 이미터 (보스 러시에서는 보스가 대신한다)
+	# 3. 웨이브 → 적 → 이미터. 보스가 합류해도 남은 적은 계속 움직인다 —
+	# 멈추면 화면 중간에 굳은 몸통이 남고, 그 몸통의 탄만 살아 움직인다.
+	_spawn_waves(tick)
 	if boss != null:
 		boss.step(tick, player)
-	else:
-		_spawn_waves(tick)
-		enemies.step(tick, player)
+	enemies.step(tick, player)
 
-	# 4. 자탄 대 적
+	# 4. 자탄 — 보스가 먼저 먹는다(관통 없음). 남은 자탄이 적을 관통한다.
 	if boss != null:
 		_shots_vs_boss(tick)
-	else:
-		_shots_vs_enemies()
+	_shots_vs_enemies()
 
 	# 4a. 격파 보상 — 적이 종류별 광립 수를 값으로 남긴다(인덱스는 이미 재배정됐다)
 	for kill in enemies.kills:
@@ -665,7 +681,34 @@ func _shots_vs_boss(tick: int) -> void:
 		i += 1
 
 # ── 웨이브 ──────────────────────────────────────────────────────────────
+## 보스 등장 전까지 플레이어가 올라갈 수 있는 y 하한. 보스 접근 구간에서 선형으로 내려온다.
+func _player_min_y(tick: int) -> float:
+	var base := Tune.MARGIN + Backdrop.BAND_H
+	if boss_mode:
+		return Boss.PLAYER_MIN_Y
+	if not stage_full:
+		return base
+	var d := Stage.BOSS_AT - tick
+	if d <= 0:
+		return Boss.PLAYER_MIN_Y
+	if d >= BOSS_APPROACH:
+		return base
+	return lerpf(Boss.PLAYER_MIN_Y, base, float(d) / float(BOSS_APPROACH))
+
+func _make_boss() -> void:
+	boss = Boss.new()
+	boss.reset(SimClock.sim_tick)
+	_boss_view = BossView.new()
+	_boss_view.boss = boss
+	_field.add_child(_boss_view)
+	_field.move_child(_boss_view, 1)   # 배경 바로 위 = 탄 레이어 아래. 탄이 몸통 위를 지나간다
+
 func _spawn_waves(tick: int) -> void:
+	if boss_mode:
+		return
+	if stage_full:
+		_spawn_stage(tick)
+		return
 	var loop_t := tick % Stage.LOOP_TICKS
 	if loop_t == 0:
 		_wave_cursor = 0
@@ -677,3 +720,21 @@ func _spawn_waves(tick: int) -> void:
 		var y0: float = -50.0 if kind == 0 else float(w[3])
 		enemies.spawn(tick, kind, float(w[2]), y0, float(w[3]), int(w[4]), int(w[5]), float(w[6]))
 		_wave_cursor += 1
+
+## 5분 타임라인. 루프하지 않는다 — 커서는 리셋에서만 0 으로 돌아간다.
+func _spawn_stage(tick: int) -> void:
+	if boss == null and tick >= Stage.BOSS_AT:
+		_make_boss()
+	while _wave_cursor < Stage.STAGE_WAVES.size():
+		var w: Array = Stage.STAGE_WAVES[_wave_cursor]
+		if int(w[0]) > tick:
+			break
+		var kind := int(w[1])
+		var y0: float = -50.0 if kind == 0 else float(w[3])
+		enemies.spawn(tick, kind, float(w[2]), y0, float(w[3]), int(w[4]), int(w[5]), float(w[6]))
+		_wave_cursor += 1
+
+func _mode_tag() -> String:
+	if boss_mode:
+		return "boss"
+	return "full" if stage_full else "stage"

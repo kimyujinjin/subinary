@@ -27,6 +27,7 @@ func _ready() -> void:
 	_new_pattern_cases()
 	_boss_pattern_cases()
 	_boss_phase_cases()
+	_stage_cases()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
 
@@ -546,3 +547,67 @@ func _boss_phase_cases() -> void:
 	_check(seen, "P2 에 전단 구간이 있다")
 	BulletField.reset_flow()
 	BulletField.clear()
+
+
+## 6구역 타임라인. 데이터가 틀리면 러너는 조용히 다른 스테이지를 재고,
+## 그 숫자를 보고 내린 판정은 전부 무효가 된다.
+func _stage_cases() -> void:
+	var zs: Array = Stage.ZONES
+	var sorted_z := true
+	for i in range(1, zs.size()):
+		if int(zs[i][0]) <= int(zs[i - 1][0]):
+			sorted_z = false
+	_check(int(zs[0][0]) == 0 and sorted_z, "구역 경계가 0 에서 시작해 증가한다")
+	_check(zs.size() == Stage.ZONE_NAMES.size(), "구역 경계 수 = 구역 이름 수 (%d/%d)" % [
+		zs.size(), Stage.ZONE_NAMES.size()])
+	_check(int(zs[zs.size() - 1][0]) == Stage.BOSS_AT,
+		"마지막 구역 시작 = 보스 진입 틱 (%d/%d)" % [int(zs[zs.size() - 1][0]), Stage.BOSS_AT])
+	_check(Stage.STAGE_TICKS > Stage.BOSS_AT, "스테이지 길이 > 보스 진입 틱")
+
+	var sorted_w := true
+	var after_boss := 0
+	var bad_kind := 0
+	for i in Stage.STAGE_WAVES.size():
+		var w: Array = Stage.STAGE_WAVES[i]
+		if i > 0 and int(w[0]) < int(Stage.STAGE_WAVES[i - 1][0]):
+			sorted_w = false
+		if int(w[0]) >= Stage.BOSS_AT:
+			after_boss += 1
+		if int(w[1]) < 0 or int(w[1]) > 7:
+			bad_kind += 1
+	_check(sorted_w, "웨이브가 틱 순으로 정렬돼 있다 — main 의 커서가 단조 전진이라 역순은 조용히 버려진다")
+	_check(after_boss == 0, "보스 진입 이후 웨이브 0 (%d)" % after_boss)
+	_check(bad_kind == 0, "적 타입이 전부 유효 범위 (%d 건 위반)" % bad_kind)
+
+	# zone_of 는 화면(HUD)·러너·보너스 판정이 공유한다. 경계 양쪽을 직접 확인한다.
+	var bad_zone := 0
+	for i in zs.size():
+		var t := int(zs[i][0])
+		if Stage.zone_of(t) != i:
+			bad_zone += 1
+		if t > 0 and Stage.zone_of(t - 1) != i - 1:
+			bad_zone += 1
+	_check(bad_zone == 0, "zone_of 가 경계 양쪽에서 맞다 (%d 건 위반)" % bad_zone)
+
+	# 보상 회랑(구역 4)은 신규 적 0 이어야 한다 — 5분 런의 유일한 완전 재앵커 창이다.
+	var rest := 0
+	for w in Stage.STAGE_WAVES:
+		if Stage.zone_of(int(w[0])) == 3:
+			rest += 1
+	_check(rest == 0, "보상 회랑에 신규 적 0 (%d)" % rest)
+
+	# 보스 접근 구간의 플레이어 하한. 순간이동 없이 내려와야 한다.
+	var main_s := Main.new()
+	main_s.stage_full = true
+	var prev := main_s._player_min_y(Stage.BOSS_AT - Main.BOSS_APPROACH - 1)
+	var mono := true
+	var max_step := 0.0
+	for t in range(Stage.BOSS_AT - Main.BOSS_APPROACH - 1, Stage.BOSS_AT + 2):
+		var y: float = main_s._player_min_y(t)
+		if y < prev - 0.001:
+			mono = false
+		max_step = maxf(max_step, y - prev)
+		prev = y
+	main_s.free()
+	_check(mono, "보스 접근 — 플레이어 하한이 단조 증가한다(되돌아가면 기체가 튄다)")
+	_check(max_step < 2.0, "보스 접근 — 하한 이동이 틱당 %.2f유닛 (순간이동 없음)" % max_step)

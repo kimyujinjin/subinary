@@ -233,6 +233,11 @@ func _draw_hud() -> void:
 		Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0,
 		int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
 		m.fairness.gap_w]
+	# 5분 타임라인에서는 현재 구역을 띄운다 — 무피격 보너스 단위이자 연습 진입 단위라
+	# "지금 몇 구역인가" 를 모르면 실기 판정에서 어느 구역이 문제였는지 적을 수 없다.
+	if m.stage_full:
+		var z := Stage.zone_of(SimClock.sim_tick)
+		l1 += "  Z%d %s" % [z + 1, Stage.ZONE_NAMES[z]]
 	# 보스 HP · 경과 · 현재 페이즈/창 — 요구된 디버그 항목(보스 HP · 현재 패턴 이름)
 	if m.boss != null:
 		var b: Boss = m.boss
