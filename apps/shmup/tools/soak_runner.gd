@@ -37,6 +37,7 @@ func _full_stage() -> void:
 	var p := Vector2(360.0, 1040.0)
 	var cursor := 0
 	var boss: Boss = null
+	var mb: MidBoss = null
 	var join_n := -1
 	print("\n5분 타임라인 — 구역  peak  탄  적")
 	var zone := -1
@@ -57,9 +58,17 @@ func _full_stage() -> void:
 			if int(w[0]) > t:
 				break
 			var kind := int(w[1])
+			cursor += 1
+			if kind == Stage.KIND_MIDBOSS:
+				mb = MidBoss.new()
+				mb.reset(t)
+				continue
 			ef.spawn(t, kind, float(w[2]), -50.0 if kind == 0 else float(w[3]),
 				float(w[3]), int(w[4]), int(w[5]), float(w[6]))
-			cursor += 1
+		if mb != null:
+			mb.step(t, p)
+			if mb.done:
+				mb = null
 		if boss != null:
 			boss.step(t, p)
 		ef.step(t, p)

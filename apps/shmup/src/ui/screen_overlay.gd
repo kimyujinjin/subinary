@@ -238,6 +238,13 @@ func _draw_hud() -> void:
 	if m.stage_full:
 		var z := Stage.zone_of(SimClock.sim_tick)
 		l1 += "  Z%d %s" % [z + 1, Stage.ZONE_NAMES[z]]
+	# 중간보스 — HP · 페이즈 · 소용돌이 각속도. 소용돌이는 몸통 줄무늬로도 읽히지만
+	# 실기 판정에서 "줄무늬가 실제 값과 맞는가" 를 눈으로 대조하려면 숫자가 있어야 한다.
+	if m.midboss != null:
+		var mb: MidBoss = m.midboss
+		var w := mb.vortex_w(SimClock.sim_tick)
+		l1 += "  M%.0f%% P%d %s" % [mb.hp_frac() * 100.0, mb.phase,
+				"전환" if mb.gap_left > 0 else ("와류%+.1f" % w if w != 0.0 else "조류만")]
 	# 보스 HP · 경과 · 현재 페이즈/창 — 요구된 디버그 항목(보스 HP · 현재 패턴 이름)
 	if m.boss != null:
 		var b: Boss = m.boss

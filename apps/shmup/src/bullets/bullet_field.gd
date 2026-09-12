@@ -49,6 +49,11 @@ var _swept_n: int = 0
 var flow_slow: bool = false
 ## 전단 — 0 이면 평소 조류, 1 이면 완전 전단. 보스 P2 가 매 틱 넣는다.
 ## 시뮬과 배경이 **같은 값**을 쓰므로 시각과 판정이 어긋날 방법이 없다(설계서 §6).
+## 국소 소용돌이(중간보스). 0 이면 고속 경로 그대로다.
+var vortex_w: float = 0.0
+var vortex_x: float = 0.0
+var vortex_y: float = 0.0
+
 var shear: float = 0.0
 var shear_c: float = 1.0         ## 전단 시 하단 밴드의 방향
 var shear_y: float = Tune.SHEAR_Y
@@ -76,6 +81,7 @@ func _ready() -> void:
 		_kh[k] = Tune.KIND_H[k]
 
 func reset_flow() -> void:
+	vortex_w = 0.0
 	shear = 0.0
 	shear_c = 1.0
 	shear_y = Tune.SHEAR_Y
@@ -180,6 +186,19 @@ func flow_phase(tick: int) -> float:
 ##
 ## 전단 중에는 경계에서 ±1 로 부드럽게 갈리므로 경계 자체는 세기가 0 이다 —
 ## 그래서 경계에 있는 탄은 밀리지 않고 위아래 탄만 쓸려 나가 **통로가 남는다.**
+## 그 지점의 소용돌이 속도(u/s). 적분 루프의 인라인 식과 **같은 식이어야 한다** —
+## 렌더러(바늘 방향)와 배경이 이걸 쓰고, 갈라지면 시각과 판정이 어긋난다.
+func vortex_at(x: float, y: float) -> Vector2:
+	if vortex_w == 0.0:
+		return Vector2.ZERO
+	var dx := x - vortex_x
+	var dy := y - vortex_y
+	var d2 := dx * dx + dy * dy
+	if d2 >= Tune.VORTEX_R2:
+		return Vector2.ZERO
+	var w := vortex_w * (1.0 - d2 * Tune.VORTEX_R2_INV)
+	return Vector2(-dy * w, dx * w)
+
 func flow_c_at(y: float, tick: int) -> float:
 	var c := flow_c(tick)
 	if shear <= 0.0:
@@ -221,6 +240,19 @@ func step_and_collide(tick: int, p0: Vector2, p1: Vector2, invincible: bool) -> 
 			vel_y[i] += acc_y[i] * Tune.DT
 		var vx := vel_x[i]
 		var vy := vel_y[i]
+		# ── 국소 소용돌이: 매질이 돈다. 탄의 자기 속도에 더하지 않고 이 틱의 이동에만 실린다
+		#    (vortex_at 과 같은 식이다 — 불변식이 둘이 일치하는지 확인한다).
+		#    **조류 면역(τ=∞) 탄은 소용돌이도 안 탄다.** 소용돌이는 매질의 성질이고,
+		#    물을 타지 않기로 한 탄이 물에 밀리면 "조류 0%" 라는 표시가 거짓말이 된다.
+		#    바늘은 생성 시 회전이 고정되므로, 태우면 그림과 실제 진로가 어긋나기도 한다.
+		if vortex_w != 0.0 and relax > 0.0:
+			var dxv := ox - vortex_x
+			var dyv := oy - vortex_y
+			var d2v := dxv * dxv + dyv * dyv
+			if d2v < Tune.VORTEX_R2:
+				var wv := vortex_w * (1.0 - d2v * Tune.VORTEX_R2_INV)
+				vx += -dyv * wv
+				vy += dxv * wv
 		var nx := ox + vx * Tune.DT
 		var ny := oy + vy * Tune.DT
 		pos_x[i] = nx

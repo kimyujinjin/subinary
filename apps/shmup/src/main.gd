@@ -45,6 +45,8 @@ var shot_n: int = 0
 
 var enemies: EnemyField = null
 var boss: Boss = null
+var midboss: MidBoss = null
+var _mb_view: MidBossView = null
 var clear_anim: int = -1            # 보스 P1 격파 연출 시계 (ScreenOverlay 가 읽는다)
 var _clear_left: int = -1
 var _boss_view: BossView = null
@@ -213,6 +215,12 @@ func _reset(seed_value: int) -> void:
 	_restart_armed = false
 	_clear_left = -1
 	clear_anim = -1
+	if midboss != null:
+		_field.remove_child(_mb_view)
+		_mb_view.queue_free()
+		_mb_view = null
+		midboss = null
+		BulletField.reset_flow()
 	if stage_full and boss != null:
 		# remove_child 를 먼저 한다. queue_free 는 다음 프레임이라 그 사이 한 번 더 그려지고,
 		# 그때 boss 는 이미 null 이다.
@@ -382,11 +390,15 @@ func _physics_process(_delta: float) -> void:
 	_spawn_waves(tick)
 	if boss != null:
 		boss.step(tick, player)
+	if midboss != null:
+		midboss.step(tick, player)
 	enemies.step(tick, player)
 
-	# 4. 자탄 — 보스가 먼저 먹는다(관통 없음). 남은 자탄이 적을 관통한다.
+	# 4. 자탄 — 보스·중간보스가 먼저 먹는다(관통 없음). 남은 자탄이 적을 관통한다.
 	if boss != null:
 		_shots_vs_boss(tick)
+	if midboss != null:
+		_shots_vs_midboss(tick)
 	_shots_vs_enemies()
 
 	# 4a. 격파 보상 — 적이 종류별 광립 수를 값으로 남긴다(인덱스는 이미 재배정됐다)
@@ -476,6 +488,9 @@ func _redraw_all(tick: int) -> void:
 	if _boss_view != null:
 		_boss_view.tick = tick
 		_boss_view.queue_redraw()
+	if _mb_view != null:
+		_mb_view.tick = tick
+		_mb_view.queue_redraw()
 	_bullets.queue_redraw()
 	_overlay.queue_redraw()
 	_screen_ui.queue_redraw()
@@ -680,6 +695,22 @@ func _shots_vs_boss(tick: int) -> void:
 			continue
 		i += 1
 
+## 자탄 대 중간보스 — 보스와 같은 규칙(관통 없음, 한 발 = 1). 판정만 축정렬 사각형이다.
+func _shots_vs_midboss(tick: int) -> void:
+	if midboss.done:
+		return
+	var i := 0
+	while i < shot_n:
+		if midboss.hit(shot_x[i], shot_y[i], Tune.SHOT_R):
+			midboss.damage(_shot_dmg(), tick, player)
+			shot_n -= 1
+			shot_x[i] = shot_x[shot_n]
+			shot_y[i] = shot_y[shot_n]
+			continue
+		i += 1
+	if midboss.done:
+		_kill_midboss(tick)
+
 # ── 웨이브 ──────────────────────────────────────────────────────────────
 ## 보스 등장 전까지 플레이어가 올라갈 수 있는 y 하한. 보스 접근 구간에서 선형으로 내려온다.
 func _player_min_y(tick: int) -> float:
@@ -702,6 +733,30 @@ func _make_boss() -> void:
 	_boss_view.boss = boss
 	_field.add_child(_boss_view)
 	_field.move_child(_boss_view, 1)   # 배경 바로 위 = 탄 레이어 아래. 탄이 몸통 위를 지나간다
+
+func _make_midboss(tick: int) -> void:
+	midboss = MidBoss.new()
+	midboss.reset(tick)
+	_mb_view = MidBossView.new()
+	_mb_view.mb = midboss
+	_field.add_child(_mb_view)
+	_field.move_child(_mb_view, 1)     # 배경 바로 위 = 탄 레이어 아래
+
+## 격파 보상 — 광립 60개 상승 + 폭탄 최대치 리필(설계서 §6).
+## 폭탄을 여기서 채우는 이유: 중간보스 직후가 보상 회랑이고, 그 뒤 구역 5·보스로
+## 들어가기 때문이다. 리필이 없으면 전반부에서 폭탄을 쓴 사람이 후반부를 맨손으로 간다.
+func _kill_midboss(tick: int) -> void:
+	_drop_motes_ring(MidBoss.CX, MidBoss.CY, 90.0, 60)
+	bombs = Tune.BOMBS
+	score += Tune.SCORE_MIDBOSS
+	RunLog.write("note", [SimClock.run_index, tick, SimClock.run_seed,
+			int(MidBoss.CX), int(MidBoss.CY), 0, 0, 0, 0, 0, false, 0, 0, 0.0, 0.0,
+			BulletField.n, 0, "", 0.0, 0.0,
+			"midboss=%s;t=%.2f" % [midboss.done_reason, float(midboss.elapsed(tick)) / 60.0]])
+	_field.remove_child(_mb_view)
+	_mb_view.queue_free()
+	_mb_view = null
+	midboss = null
 
 func _spawn_waves(tick: int) -> void:
 	if boss_mode:
@@ -730,6 +785,10 @@ func _spawn_stage(tick: int) -> void:
 		if int(w[0]) > tick:
 			break
 		var kind := int(w[1])
+		if kind == Stage.KIND_MIDBOSS:
+			_make_midboss(tick)
+			_wave_cursor += 1
+			continue
 		var y0: float = -50.0 if kind == 0 else float(w[3])
 		enemies.spawn(tick, kind, float(w[2]), y0, float(w[3]), int(w[4]), int(w[5]), float(w[6]))
 		_wave_cursor += 1

@@ -76,6 +76,7 @@ func _scan(waves: Array) -> Array:
 		var rch := Reach1D.new()
 		var zone := 0
 		var spawned := 0
+		var mb: MidBoss = null
 		for t in Stage.BOSS_AT:
 			var z := Stage.zone_of(t)
 			if z != zone:
@@ -87,11 +88,21 @@ func _scan(waves: Array) -> Array:
 				if int(w[0]) > t:
 					break
 				var kind := int(w[1])
-				var y0: float = -50.0 if kind == 0 else float(w[3])
-				ef.spawn(t, kind, float(w[2]), y0, float(w[3]), int(w[4]), int(w[5]), float(w[6]))
 				cursor += 1
 				spawned += 1
 				out[Stage.zone_of(int(w[0]))][6] = int(out[Stage.zone_of(int(w[0]))][6]) + 1
+				if kind == Stage.KIND_MIDBOSS:
+					mb = MidBoss.new()
+					mb.reset(t)
+					continue
+				var y0: float = -50.0 if kind == 0 else float(w[3])
+				ef.spawn(t, kind, float(w[2]), y0, float(w[3]), int(w[4]), int(w[5]), float(w[6]))
+			if mb != null:
+				# 자탄이 없으니 HP 로는 안 끝난다 — 시간 상한으로 3페이즈를 전부 지나간다.
+				mb.step(t, p)
+				if mb.done:
+					mb = null
+					BulletField.vortex_w = 0.0
 			ef.step(t, p)
 			ef.kills.clear()       # 자탄이 없으니 격파도 없다. 쌓이면 메모리만 먹는다
 			BulletField.step_and_collide(t, p, p, true)

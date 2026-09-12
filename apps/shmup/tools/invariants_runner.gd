@@ -28,6 +28,7 @@ func _ready() -> void:
 	_boss_pattern_cases()
 	_boss_phase_cases()
 	_stage_cases()
+	_midboss_cases()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
 
@@ -573,11 +574,12 @@ func _stage_cases() -> void:
 			sorted_w = false
 		if int(w[0]) >= Stage.BOSS_AT:
 			after_boss += 1
-		if int(w[1]) < 0 or int(w[1]) > 7:
+		if (int(w[1]) < 0 or int(w[1]) > 7) and int(w[1]) != Stage.KIND_MIDBOSS:
 			bad_kind += 1
 	_check(sorted_w, "웨이브가 틱 순으로 정렬돼 있다 — main 의 커서가 단조 전진이라 역순은 조용히 버려진다")
 	_check(after_boss == 0, "보스 진입 이후 웨이브 0 (%d)" % after_boss)
-	_check(bad_kind == 0, "적 타입이 전부 유효 범위 (%d 건 위반)" % bad_kind)
+	_check(bad_kind == 0, "적 타입이 전부 유효 범위(0~7 + 중간보스 %d) — %d 건 위반" % [
+		Stage.KIND_MIDBOSS, bad_kind])
 
 	# zone_of 는 화면(HUD)·러너·보너스 판정이 공유한다. 경계 양쪽을 직접 확인한다.
 	var bad_zone := 0
@@ -611,3 +613,122 @@ func _stage_cases() -> void:
 	main_s.free()
 	_check(mono, "보스 접근 — 플레이어 하한이 단조 증가한다(되돌아가면 기체가 튄다)")
 	_check(max_step < 2.0, "보스 접근 — 하한 이동이 틱당 %.2f유닛 (순간이동 없음)" % max_step)
+
+
+## 중간보스 · 국소 소용돌이. 소용돌이는 조류장의 2번째 축이고 컷 후보 1순위라,
+## "켜져 있는가" 보다 **"꺼지는가"** 를 더 많이 확인한다.
+func _midboss_cases() -> void:
+	# 1) 적분 루프의 인라인 식과 vortex_at 이 같은 값인가.
+	#    둘이 갈라지면 화면의 줄무늬·바늘 방향이 실제 물과 어긋난다 — 몸을 못 믿게 된다.
+	BulletField.clear()
+	BulletField.reset_flow()
+	BulletField.vortex_x = MidBoss.CX
+	BulletField.vortex_y = MidBoss.CY
+	BulletField.vortex_w = MidBoss.W_P2
+	# 소용돌이 ON/OFF 두 번 돌려 **차이**를 본다. 한 번만 돌리면 전역 조류 이완분이
+	# 섞여 들어와 0.055 의 오차로 나타난다 — 그건 소용돌이 오차가 아니다.
+	var worst := 0.0
+	for k in 8:
+		var ang := TAU * float(k) / 8.0
+		var r := 150.0 + 60.0 * float(k % 3)
+		var px := MidBoss.CX + cos(ang) * r
+		var py := MidBoss.CY + sin(ang) * r
+		var d := PackedVector2Array()
+		for w in [MidBoss.W_P2, 0.0]:
+			BulletField.vortex_w = w
+			BulletField.clear()
+			BulletField.spawn(px, py, 0.0, 0.0, Tune.Kind.SPORE_TIDE)
+			BulletField.step_and_collide(0, Vector2(360, 1200), Vector2(360, 1200), true)
+			if BulletField.n < 1:
+				worst = 9999.0
+				break
+			d.append(Vector2(BulletField.pos_x[0] - px, BulletField.pos_y[0] - py))
+		if d.size() < 2:
+			break
+		BulletField.vortex_w = MidBoss.W_P2
+		var want: Vector2 = BulletField.vortex_at(px, py) * Tune.DT
+		worst = maxf(worst, (d[0] - d[1] - want).length())
+	_check(worst < 0.001, "소용돌이 — 적분 루프와 vortex_at 이 같은 값 (최대 오차 %.4f)" % worst)
+
+	# 1b) 조류 면역 탄(τ=∞)은 소용돌이도 안 탄다. 태우면 "조류 0%%" 표시가 거짓말이 되고,
+	#     바늘은 생성 시 회전이 고정돼 있어 그림과 진로가 어긋난다.
+	var imm := 0.0
+	for kd in [Tune.Kind.NEEDLE, Tune.Kind.GATE]:
+		BulletField.clear()
+		var qx := MidBoss.CX + 150.0
+		var qy := MidBoss.CY + 80.0
+		BulletField.spawn(qx, qy, 0.0, 0.0, kd)
+		BulletField.step_and_collide(0, Vector2(360, 1200), Vector2(360, 1200), true)
+		if BulletField.n > 0:
+			imm = maxf(imm, absf(BulletField.pos_x[0] - qx) + absf(BulletField.pos_y[0] - qy))
+	_check(imm < 0.001, "조류 면역 탄은 소용돌이에 안 밀린다 (변위 %.4f)" % imm)
+
+	# 2) 반경 밖은 정확히 0 이어야 한다. 꼬리가 남으면 화면 전체가 미세하게 돈다.
+	var out := BulletField.vortex_at(MidBoss.CX + Tune.VORTEX_R + 0.5, MidBoss.CY)
+	var edge := BulletField.vortex_at(MidBoss.CX + Tune.VORTEX_R - 0.5, MidBoss.CY)
+	_check(out.length() < 0.0001 and edge.length() < 1.0,
+		"소용돌이 — 반경 밖 0, 경계에서 연속 (밖 %.4f · 안 %.4f)" % [out.length(), edge.length()])
+	BulletField.reset_flow()
+	_check(BulletField.vortex_w == 0.0, "reset_flow 가 소용돌이를 끈다")
+	BulletField.clear()
+
+	# 3) P1 은 소용돌이를 쓰지 않는다 — 컷해도 P1 이 통째로 남아야 한다.
+	var mb := MidBoss.new()
+	mb.reset(0)
+	var p1_any := false
+	for t in MidBoss.P1_MAX_TICKS:
+		if mb.vortex_w(t) != 0.0:
+			p1_any = true
+	_check(not p1_any, "중간보스 P1 은 전역 조류만 쓴다 (소용돌이 0)")
+
+	# 4) P3 는 FLIP_EVERY 마다 부호가 뒤집힌다.
+	mb.phase = 3
+	mb.phase_t0 = 0
+	var flips := 0
+	var prev := mb.vortex_w(0)
+	for t in range(1, MidBoss.P3_MAX_TICKS):
+		var w := mb.vortex_w(t)
+		if signf(w) != signf(prev):
+			flips += 1
+			_check(t % MidBoss.FLIP_EVERY == 0,
+				"P3 반전이 %d틱 경계에서 일어난다 (t=%d)" % [MidBoss.FLIP_EVERY, t])
+		prev = w
+	_check(flips == MidBoss.P3_MAX_TICKS / MidBoss.FLIP_EVERY - 1,
+		"P3 반전 횟수 %d (2.0초마다)" % flips)
+
+	# 5) 격파하면 소용돌이가 꺼진다. 남으면 죽은 적이 계속 물을 돌린다.
+	mb.reset(0)
+	mb.phase = 3
+	mb.phase_t0 = 0
+	mb.step(10, Vector2(360, 1000))
+	var spun: bool = BulletField.vortex_w != 0.0
+	mb.damage(MidBoss.HP_MAX, 20, Vector2(360, 1000))
+	_check(spun and mb.done and BulletField.vortex_w == 0.0,
+		"중간보스 격파 — 소용돌이가 즉시 꺼진다 (생전 %s)" % ("돌았다" if spun else "안 돌았다"))
+	BulletField.reset_flow()
+	BulletField.clear()
+
+	# 6) 전환 중 무적. 보스와 같은 규칙이다 — P15 가 화면을 비우는 동안 다음으로 넘어가면
+	#    전환이 보상이 아니라 공짜 대미지 창이 된다.
+	mb.reset(0)
+	mb.damage(MidBoss.HP_MAX * 0.40, 30, Vector2(360, 1000))
+	var ph2 := mb.phase
+	var hp_before := mb.hp
+	mb.damage(MidBoss.HP_MAX, 31, Vector2(360, 1000))
+	_check(ph2 == 2 and mb.phase == 2 and mb.hp == hp_before,
+		"중간보스 전환 중 무적 (페이즈 %d · HP %.0f→%.0f)" % [mb.phase, hp_before, mb.hp])
+
+	# 7) 배정 시간에 들어가는가. 상한 합 + 전환 2회가 슬롯을 넘으면
+	#    보상 회랑이 중간보스에게 먹힌다.
+	var need := MidBoss.P1_MAX_TICKS + MidBoss.P2_MAX_TICKS + MidBoss.P3_MAX_TICKS \
+			+ 2 * MidBoss.PHASE_GAP
+	var slot := -1
+	for w in Stage.STAGE_WAVES:
+		if int(w[1]) == Stage.KIND_MIDBOSS:
+			slot = int(w[5])
+			_check(Stage.zone_of(int(w[0])) == 2, "중간보스가 구역 3 안에 있다")
+			_check(int(w[0]) + slot <= int(Stage.ZONES[3][0]),
+				"중간보스가 보상 회랑 전에 끝난다 (%d + %d ≤ %d)" % [
+					int(w[0]), slot, int(Stage.ZONES[3][0])])
+	_check(slot > 0 and need <= slot,
+		"중간보스 시간 상한 합 %d ≤ 배정 %d" % [need, slot])
