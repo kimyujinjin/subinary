@@ -113,6 +113,9 @@ func _ready() -> void:
 	_screen_ui.main = self
 	_screen.add_child(_screen_ui)
 
+	# 파이프라인 예열 30프레임(0.5초). 첫 탄이 뜨는 프레임의 컴파일 힛치를 미리 치른다 —
+	# 첫 웨이브는 t=30 에 오므로 그 전에 끝난다.
+	_bullets.warm(30)
 	get_viewport().size_changed.connect(_on_resize)
 	_on_resize()
 	_parse_capture()

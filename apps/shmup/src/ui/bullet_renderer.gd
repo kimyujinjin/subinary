@@ -15,6 +15,10 @@ var _tex: Array[ImageTexture] = []
 var _size: Array[Vector2] = []
 var _trail := PackedVector2Array()
 var _trail_col := PackedColorArray()
+## 1패스 정렬 스크래치. 매 프레임 새로 만들지 않는다(규약: 프레임당 할당 0).
+var _order := PackedInt32Array()
+var _head := PackedInt32Array()
+var _pos := PackedInt32Array()
 
 func _ready() -> void:
 	var m := CanvasItemMaterial.new()
@@ -23,8 +27,38 @@ func _ready() -> void:
 	var built := BulletAtlas.build()
 	_tex = built[0]
 	_size = built[1]
+	_head.resize(Tune.KIND_N + 1)
+	_pos.resize(Tune.KIND_N + 1)
+
+## 파이프라인 예열. Godot 은 그 조합(재질 × 블렌드 × 드로우 종류)이 **처음 제출될 때**
+## 파이프라인을 만든다. 그래서 첫 탄이 화면에 뜨는 프레임에 힛치가 난다 —
+## 스트레스 러너에서 첫 레벨만 max 22.18ms 로 튀고 이후 레벨은 12~18ms 였다(예열 신호).
+## 실기는 컴파일이 더 느리므로 이 힛치가 첫 웨이브 위에 정확히 겹친다.
+##
+## 1×1 크기로 화면 최상단(HUD 띠 아래)에 그린다. 화면 밖 좌표로 밀면 래스터라이저가
+## 잘라내고, 그러면 파이프라인이 안 만들어져 예열이 아무 일도 하지 않는다.
+var warm_left: int = 0
+
+func warm(frames: int) -> void:
+	warm_left = frames
+
+func _warm_draw() -> void:
+	var r := Rect2(Vector2(0.0, 2.0), Vector2(1.0, 1.0))
+	for t in _tex:
+		draw_texture_rect(t, r, false)
+		draw_texture_rect(t, r, false, Color(1.2, 1.2, 1.2, 1.0))   # modulate 경로(기포 경고)
+	# 회전 경로(바늘)와 폴리라인 경로(잔광)는 별도 파이프라인이다.
+	draw_set_transform(Vector2(0.0, 2.0), 0.3, Vector2.ONE)
+	if not _tex.is_empty():
+		draw_texture_rect(_tex[0], Rect2(Vector2.ZERO, Vector2.ONE), false)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	draw_polyline_colors(PackedVector2Array([Vector2(0.0, 2.0), Vector2(1.0, 3.0)]),
+			PackedColorArray([Color(0, 0, 0, 0.02), Color(0, 0, 0, 0.02)]), 1.0, true)
 
 func _draw() -> void:
+	if warm_left > 0:
+		warm_left -= 1
+		_warm_draw()
 	var st: int = SimClock.state
 	if main != null and (st == SimClock.State.DEATH_REPLAY or st == SimClock.State.DEATH_FROZEN):
 		var rp: Replay = main.replay
@@ -95,13 +129,38 @@ func _draw_set(px: PackedFloat32Array, py: PackedFloat32Array,
 	#    순간이동한다" 로 보고된 증상의 원인이다. SoA 에서 바늘의 인덱스가 swap-remove 로
 	#    매 프레임 바뀌므로 어느 탄이 틀어지는지도 계속 변한다.
 	#
-	#    패스를 나누면 원천적으로 생기지 않고, 무회전 패스가 통째로 배칭되어 더 싸다.
-	#    ── 1패스: 무회전 탄 (transform 을 건드리지 않는다)
+	#    패스를 나누면 원천적으로 생기지 않는다.
+	#
+	#    ── 1패스: 무회전 탄. **탄종별로 모아서** 그린다.
+	#
+	#    필드 순서대로 그리면 탄종이 섞여 텍스처가 매 탄 바뀌고, 그때마다 배치가 끊긴다.
+	#    실측(scenes/stress.tscn): 3,000탄에서 드로우콜 1,161 — 탄당 0.39 다.
+	#    폰은 드로우콜에 데스크톱보다 훨씬 민감하므로 이게 실기에서 먼저 아프다.
+	#    계수 정렬 한 번(O(n))으로 같은 텍스처를 연속시키면 탄종 수만큼만 배치가 끊긴다.
+	#
+	#    탄종 간 겹침 순서가 바뀐다 — 그런데 그건 개선이다. 지금까지는 어느 탄이 위에
+	#    올라오는지가 SoA 인덱스(= swap-remove 순서)에 따라 매 프레임 달라졌다.
+	for k in Tune.KIND_N + 1:
+		_head[k] = 0
 	for i in cnt:
-		var j2 := base + i
+		var kc: int = pk[base + i]
+		if Tune.KIND_H[kc] <= 0.0:
+			_head[kc + 1] += 1
+	for k in Tune.KIND_N:
+		_head[k + 1] += _head[k]
+	var flat: int = _head[Tune.KIND_N]
+	if _order.size() < flat:
+		_order.resize(flat)
+	for k in Tune.KIND_N + 1:
+		_pos[k] = _head[k]
+	for i in cnt:
+		var kc2: int = pk[base + i]
+		if Tune.KIND_H[kc2] <= 0.0:
+			_order[_pos[kc2]] = base + i
+			_pos[kc2] += 1
+	for t in flat:
+		var j2: int = _order[t]
 		var kd2: int = pk[j2]
-		if Tune.KIND_H[kd2] > 0.0:
-			continue
 		var sz: Vector2 = _size[kd2]
 		var r := Rect2(Vector2(px[j2], py[j2]) - sz * 0.5, sz)
 		if Tune.KIND_FUSE[kd2]:
