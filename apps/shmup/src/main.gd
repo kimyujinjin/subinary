@@ -576,10 +576,13 @@ func _on_death() -> void:
 			BulletField.flow_c(SimClock.sim_tick),
 			BulletField.flow_u(player.y, SimClock.sim_tick),
 			BulletField.n, int(Engine.get_frames_per_second()), "", 0.0, 0.0,
-			"relay=%d;lives=%d;bombs=%d;score=%d;rpress=%d;rfirst=%d;rzone=%d" % [
+			"relay=%d;lives=%d;bombs=%d;score=%d;rpress=%d;rfirst=%d;rzone=%d;zone=%d" % [
 				TouchRouter.relay_count, lives, bombs, score,
 				TouchRouter.rescue_presses, TouchRouter.rescue_first_tick,
-				1 if TouchRouter.rescue_first_zone else 0]])
+				1 if TouchRouter.rescue_first_zone else 0,
+				# 구역 번호는 게임이 쓴다. 판정 스크립트가 틱으로 다시 계산하면
+				# 경계표가 두 벌이 되고, 갈라진 쪽이 틀린 판정을 자신 있게 낸다.
+				(Stage.zone_of(SimClock.sim_tick) + 1) if stage_full else 0]])
 	_death_wall_tick = SimClock.wall_tick
 	# 히트스톱 — 정지 프레임으로 상황을 읽을 시간. 연출은 _process 에서 계속 돈다.
 	SimClock.hitstop(DEATH_HITSTOP)

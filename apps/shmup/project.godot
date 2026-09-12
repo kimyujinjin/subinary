@@ -8,7 +8,7 @@ config_version=5
 
 config/name="LumenDrift"
 config/description="LUMEN DRIFT — 표류광. 심해 생물발광 세로 탄막 (게이트 1 재미 검증 슬라이스)."
-run/main_scene="res://scenes/main.tscn"
+run/main_scene="res://scenes/stage_full.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 ; 기본값 0 이면 120Hz 패널에서 120 을 목표로 잡아 발열·스로틀링으로 60 도 못 지킨다.
 ; Android Swappy 를 16.67ms 에 고정시키는 유일한 레버다.

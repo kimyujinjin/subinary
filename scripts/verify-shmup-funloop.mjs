@@ -134,6 +134,34 @@ if (sessionMode === 'boss') {
   process.exit(0)
 }
 
+// 5분 타임라인 세션. 게이트 1 지표(사망→입력·재그립)는 그대로 유효하므로 아래에서 같이 낸다.
+// 여기서 추가로 내는 것은 **구역별 도달과 사망 분포**다 — 구역이 무피격 보너스 단위이자
+// 연습 진입 단위이므로, 5분 런의 질문은 "어느 구역에서 멈추는가" 로 쪼개진다.
+// 구역 번호는 게임이 death 행에 zone= 로 써 준다. 여기서 틱으로 다시 계산하지 않는다 —
+// 경계표가 두 벌이 되면 갈라진 쪽이 틀린 판정을 자신 있게 낸다.
+if (sessionMode === 'full') {
+  const ZN = ['표층', '중층', '혼합', '보상 회랑', '심층', '해구저']
+  const dz = deaths.map(d => +(String(of(d, 'detail') || '').match(/zone=(\d+)/) || [])[1] || 0)
+  const reached = new Map()
+  for (const [run, rs] of perRun) {
+    const mx = Math.max(0, ...rs.map(r => +(String(of(r, 'detail') || '').match(/zone=(\d+)/) || [])[1] || 0))
+    reached.set(run, mx)
+  }
+  const clears = rows.filter(r => r[0] === 'clear')
+  console.log(`\n5분 타임라인 요약 — ${file}`)
+  console.log(`빌드: ${[...builds].join(', ') || '불명'}${isRelease ? '' : '   ← release 아님. 이 판정은 무효다'}`)
+  console.log(`런 ${perRun.size}개 · 사망 ${deaths.length}회 · 클리어 ${clears.length}회`)
+  console.log('\n  구역        사망  최종 도달 런')
+  for (let z = 1; z <= 6; z++) {
+    const d = dz.filter(v => v === z).length
+    const r = [...reached.values()].filter(v => v === z).length
+    console.log(`  ${z} ${ZN[z - 1].padEnd(10)} ${String(d).padStart(4)} ${String(r).padStart(11)}`)
+  }
+  const unknown = dz.filter(v => v === 0).length
+  if (unknown) console.log(`  (구역 미기록 사망 ${unknown}건 — 30초 루프 세션이 섞였다)`)
+  console.log('\n  질문은 구역마다 하나다 — "이 구역을 무피격으로 지나고 싶은가."')
+}
+
 console.log(`\n게이트 1 판정 — ${file}`)
 console.log(`빌드: ${[...builds].join(', ') || '불명'}${isRelease ? '' : '   ← release 아님. 이 판정은 무효다'}`)
 console.log(`사망 ${deaths.length}회 · 재시작 ${restarts.length}회 · 플레이 ${playMin.toFixed(1)}분 · 런 ${perRun.size}개`
