@@ -236,9 +236,24 @@ func _draw_hud() -> void:
 	# 보스 HP · 경과 · 현재 페이즈/창 — 요구된 디버그 항목(보스 HP · 현재 패턴 이름)
 	if m.boss != null:
 		var b: Boss = m.boss
-		var w := b.window(SimClock.sim_tick)
-		l1 += "  B%.0f%% %.1fs P1 %s" % [b.hp_frac() * 100.0,
-				float(b.elapsed(SimClock.sim_tick)) / 60.0, "압력" if w.x == 1 else "호흡"]
+		# 페이즈와 그 안의 리듬 — 요구된 디버그 항목(보스 HP · 현재 패턴 이름)
+		var sub := ""
+		match b.phase:
+			1:
+				sub = "압력" if b.window(SimClock.sim_tick).x == 1 else "호흡"
+			2:
+				var beat := (b.phase_elapsed(SimClock.sim_tick) / Boss.BEAT) % 4
+				sub = ["격자", "포낭", "협곡", "역류"][beat]
+				if BulletField.shear > 0.01:
+					sub += "·전단%.0f%%" % (BulletField.shear * 100.0)
+			_:
+				var macro_t := b.phase_elapsed(SimClock.sim_tick) % Boss.MACRO
+				sub = "수축" if macro_t < Boss.POCKET_AT \
+						else ("주머니" if macro_t < Boss.FINALE_AT else "종조")
+		if b.gap_left > 0:
+			sub = "전환"
+		l1 += "  B%.0f%% %.1fs P%d %s" % [b.hp_frac() * 100.0,
+				float(b.phase_elapsed(SimClock.sim_tick)) / 60.0, b.phase, sub]
 	var l2 := "k%.2f %s  C%+.2f  gz%d  rg%d  fpp%.3f  %.0fmm%s  %dx%d  run%d  d%d" % [
 		TouchRouter.k, "FOCUS" if TouchRouter.focus else "     ",
 		BulletField.flow_c(SimClock.sim_tick), BulletField.graze_events,

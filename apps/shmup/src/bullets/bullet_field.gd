@@ -47,6 +47,11 @@ var _swept_n: int = 0
 
 # 강등 스위치 — 게이트 1 지표 ② 미달 시 감속한다. 상수화가 아니다.
 var flow_slow: bool = false
+## 전단 — 0 이면 평소 조류, 1 이면 완전 전단. 보스 P2 가 매 틱 넣는다.
+## 시뮬과 배경이 **같은 값**을 쓰므로 시각과 판정이 어긋날 방법이 없다(설계서 §6).
+var shear: float = 0.0
+var shear_c: float = 1.0         ## 전단 시 하단 밴드의 방향
+var shear_y: float = Tune.SHEAR_Y
 
 func _ready() -> void:
 	pos_x.resize(Tune.MAX_BULLETS)
@@ -69,6 +74,11 @@ func _ready() -> void:
 		_relax[k] = 0.0 if tau <= 0.0 else Tune.DT / tau
 		_kw[k] = Tune.KIND_W[k]
 		_kh[k] = Tune.KIND_H[k]
+
+func reset_flow() -> void:
+	shear = 0.0
+	shear_c = 1.0
+	shear_y = Tune.SHEAR_Y
 
 func clear() -> void:
 	n = 0
@@ -166,13 +176,24 @@ func flow_phase(tick: int) -> float:
 		acc += seg
 	return ph
 
+## 그 y 에서의 조류 시간 성분. 전단이 없으면 flow_c(tick) 그대로다.
+##
+## 전단 중에는 경계에서 ±1 로 부드럽게 갈리므로 경계 자체는 세기가 0 이다 —
+## 그래서 경계에 있는 탄은 밀리지 않고 위아래 탄만 쓸려 나가 **통로가 남는다.**
+func flow_c_at(y: float, tick: int) -> float:
+	var c := flow_c(tick)
+	if shear <= 0.0:
+		return c
+	var b := clampf((y - shear_y) / Tune.SHEAR_SOFT, -1.0, 1.0)
+	return lerpf(c, shear_c * b, shear)
+
 ## 깊이 프로파일 — 화면 중앙이 가장 빠르다
 func flow_s(y: float) -> float:
 	return Tune.FLOW_S_BASE + Tune.FLOW_S_AMP * sin(PI * clampf(y, 0.0, Tune.PF_H) / Tune.PF_H)
 
 func flow_u(y: float, tick: int) -> float:
 	var u_max: float = Tune.FLOW_SLOW_U_MAX if flow_slow else Tune.FLOW_U_MAX
-	return flow_c(tick) * flow_s(y) * u_max
+	return flow_c_at(y, tick) * flow_s(y) * u_max
 
 ## 한 번의 순회로 적분 → 컬링 → y 밴드 기각 → 통과분만 캡슐 스윕.
 ## p0/p1 은 이 틱의 플레이어 시작·끝 위치 (플레이어가 먼저 움직인 뒤 호출된다).
@@ -189,7 +210,11 @@ func step_and_collide(tick: int, p0: Vector2, p1: Vector2, invincible: bool) -> 
 		var oy := pos_y[i]
 		# ── 적분: 항력 이완. 측면 응답이 그 탄의 현재 vx 에 의존하므로 벽이 실제로 휜다.
 		if relax > 0.0:
-			var u := c * (Tune.FLOW_S_BASE + Tune.FLOW_S_AMP * sin(PI * clampf(oy, 0.0, Tune.PF_H) / Tune.PF_H)) * u_max
+			# 전단이 없으면 c 는 루프 밖에서 이미 구한 값이다(고속 경로).
+			var cy2 := c
+			if shear > 0.0:
+				cy2 = lerpf(c, shear_c * clampf((oy - shear_y) / Tune.SHEAR_SOFT, -1.0, 1.0), shear)
+			var u := cy2 * (Tune.FLOW_S_BASE + Tune.FLOW_S_AMP * sin(PI * clampf(oy, 0.0, Tune.PF_H) / Tune.PF_H)) * u_max
 			vel_x[i] += (u - vel_x[i]) * relax
 		if Tune.KIND_ACCEL[kd]:
 			vel_x[i] += acc_x[i] * Tune.DT

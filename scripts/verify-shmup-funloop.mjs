@@ -187,14 +187,19 @@ const regrips = rows.filter(r => r[0] === 'regrip').map(r => Object.fromEntries(
   String(of(r, 'detail') || '').split(';').filter(Boolean).map(kv => kv.split('='))
 ))
 if (regrips.length) {
-  const REACH = 60, SHORT = 30
+  // 도달 소진 임계는 "기체가 남은 플레이필드를 건널 수 있는가" 로 잡는다.
+  // 60 유닛으로 잡았더니 실기 18건 중 16건이 "기타" 로 분류됐는데, 실제로는 손가락이
+  // 화면 바닥(y 1229~1410)에 있어 아래 도달력이 180~397 — 기체가 바닥까지 가려면
+  // 260 이 필요하니 이미 도달 불가였다. 설계서의 최대 요구 이동량이 250 이므로 그것을 쓴다.
+  const REACH = 250, SHORT = 30
   const cause = { '제외 영역에서 뗌': 0, '도달 소진': 0, '짧은 드래그(<0.5s)': 0, '기타': 0 }
   const axis = { 좌: 0, 우: 0, 상: 0, 하: 0 }
   for (const e of regrips) {
     const r = { 좌: +e.rl, 우: +e.rr, 상: +e.ru, 하: +e.rd }
     const low = Object.entries(r).filter(([, v]) => v < REACH)
-    if (e.excl === '1') cause['제외 영역에서 뗌']++
-    else if (low.length) { cause['도달 소진']++; for (const [k] of low) axis[k]++ }
+    // 도달 소진이 제외 영역보다 먼저다 — 둘 다 참일 때 고쳐야 할 것은 도달력이다.
+    if (low.length) { cause['도달 소진']++; for (const [k] of low) axis[k]++ }
+    else if (e.excl === '1') cause['제외 영역에서 뗌']++
     else if (+e.held < SHORT) cause['짧은 드래그(<0.5s)']++
     else cause['기타']++
   }

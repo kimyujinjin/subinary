@@ -26,6 +26,7 @@ func _ready() -> void:
 	_bubble_cases()
 	_new_pattern_cases()
 	_boss_pattern_cases()
+	_boss_phase_cases()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
 
@@ -477,4 +478,71 @@ func _boss_pattern_cases() -> void:
 			novel += 1
 	_check(kinds.size() >= 2 and novel == 0,
 		"P14 에 새 어휘 0개 (탄종 %d 종 · 신규 표식 %d)" % [kinds.size(), novel])
+	BulletField.clear()
+
+# ── 보스 3페이즈 ────────────────────────────────────────────────────────
+## 페이즈 전이는 "안전이 무엇으로 주어지는가" 가 바뀌는 지점이다.
+## 전이가 벌이 되지 않아야 하고(P15 의 틈), 전이 중에는 발사가 없어야 한다.
+func _boss_phase_cases() -> void:
+	BulletField.clear()
+	BulletField.reset_flow()
+	var b := Boss.new()
+	b.reset(0)
+	var pl := Vector2(200.0, 900.0)
+
+	# HP 를 깎아 P1 → P2 전이를 만든다
+	b.damage(Boss.HP_MAX, 100, pl)
+	_check(b.phase == 2 and b.gap_left > 0 and not b.done,
+		"P1 → P2 전이 (페이즈 %d · 연출 %d틱)" % [b.phase, b.gap_left])
+	# 전이 순간 P15 가 플레이어 방향에 틈을 연다
+	var safe := atan2(pl.y - Boss.CY, pl.x - Boss.CX)
+	var worst := PI
+	for i in BulletField.n:
+		var a := atan2(BulletField.vel_y[i], BulletField.vel_x[i])
+		worst = minf(worst, absf(angle_difference(a, safe)))
+	_check(BulletField.n > 0 and worst >= deg_to_rad(Patterns.P15_GAP_DEG) * 0.5 - 0.01,
+		"전이가 벌이 되지 않는다 — 틈이 플레이어 방향 (%.1f°)" % rad_to_deg(worst))
+	# 연출 중에는 대미지가 들어가지 않는다 — 고 DPS 가 P2 를 통째로 건너뛰는 것을 막는다.
+	# **연출이 끝나기 전에** 확인해야 한다(끝난 뒤에 재면 당연히 들어간다).
+	var hp0 := b.hp
+	b.damage(9999.0, 101, pl)
+	_check(is_equal_approx(b.hp, hp0) and b.phase == 2,
+		"전이 연출 중 무적 (HP %.0f · 페이즈 %d · 잔여 %d틱)" % [b.hp, b.phase, b.gap_left])
+	# 연출 중에는 발사도 없다
+	var before := BulletField.n
+	for t in Boss.PHASE_GAP:
+		b.step(101 + t, pl)
+	_check(BulletField.n == before,
+		"전이 연출 중 발사 0 (탄 %d → %d)" % [before, BulletField.n])
+
+	# P2 → P3 → 격파
+	b.gap_left = 0
+	b.damage(Boss.HP_MAX, 400, pl)
+	_check(b.phase == 3, "P2 → P3 전이 (페이즈 %d)" % b.phase)
+	b.gap_left = 0
+	b.damage(Boss.HP_MAX, 700, pl)
+	_check(b.done and b.done_reason == "hp", "P3 격파 (done %s · %s)" % [b.done, b.done_reason])
+
+	# P2 의 전단 — 경계가 안전 통로여야 한다.
+	# 경계에서 유속이 0 이고 위아래는 반대 부호여야 "허리선에서 산다" 가 성립한다.
+	BulletField.clear()
+	BulletField.reset_flow()
+	var b2 := Boss.new()
+	b2.reset(0)
+	b2.phase = 2
+	b2.phase_t0 = 0
+	var seen := false
+	for t in Boss.BEAT * 4:
+		b2.step(t, pl)
+		if BulletField.shear > 0.5:
+			seen = true
+			var u_mid := BulletField.flow_u(Tune.SHEAR_Y, t)
+			var u_top := BulletField.flow_u(Tune.SHEAR_Y - 260.0, t)
+			var u_bot := BulletField.flow_u(Tune.SHEAR_Y + 260.0, t)
+			_check(absf(u_mid) < 12.0 and u_top * u_bot < 0.0,
+				"전단 — 경계 유속 %.1f · 상 %.0f · 하 %.0f (부호 반대)" % [u_mid, u_top, u_bot])
+			break
+		BulletField.step_and_collide(t, Vector2(-999, -999), Vector2(-999, -999), true)
+	_check(seen, "P2 에 전단 구간이 있다")
+	BulletField.reset_flow()
 	BulletField.clear()

@@ -26,7 +26,21 @@ func _ready() -> void:
 			c[0], r[0], r[1], r[2], r[6], r[7], r[3], r[4],
 			"%du/s" % (int(r[8]) * 60) if int(r[8]) > 0 else ">%d" % (V_MAX * 60), r[9]])
 	print("")
-	print("== 보스 P1 (50초 · 자탄 없음) ==")
+	print("\n== 페이즈별 (각 페이즈 제한시간 · 자탄 없음) ==")
+	print("  페이즈 | 최장min 도달폭min  peak  전단틱 | 판정 (횡속 예산 %d u/s)" % (V_BUDGET * 60))
+	for ph in [1, 2, 3]:
+		var r := _run_phase(ph)
+		var flags := PackedStringArray()
+		if int(r[3]) == 0:
+			flags.append("FAIL:도달불가@t%d" % int(r[6]))
+		elif int(r[4]) < COMP_MIN:
+			flags.append("FAIL:정밀%d" % int(r[4]))
+		if flags.is_empty():
+			flags.append("OK")
+		print("  P%d     | %6d %8d %5d %6d | %s" % [
+			ph, r[0], r[4], r[2], r[5], " ".join(flags)])
+
+	print("\n== 보스 P1 (50초 · 자탄 없음) ==")
 	print("  ω    탄속 | 최장min 도달폭min 요구횡속 강제점프  peak  호흡발사 | 판정   (유지min 은 참고)")
 	for om in [0.20, 0.30, 0.40]:
 		for sp in [150.0, 170.0, 200.0]:
@@ -132,3 +146,50 @@ func _run(om: float, sp: float, e05 := true, e09 := true, e03 := true) -> Array:
 		jump = maxf(jump, cor.forced_jump)
 	var rr := _reach(om, sp, e05, e09, e03)
 	return [min_gap, min_track, hold_min, jump, peak, breath_fire, hold_tick, hold_win, rr.x, rr.y]
+
+## 페이즈 하나를 격리해 측정한다. HP 를 강제로 그 페이즈에 두고 시간 만료까지 돌린다.
+##
+## v 스윕(1~10)은 하지 않는다 — P3 는 70초 × 3밴드라 스윕하면 수억 연산이 된다.
+## 판정에 필요한 것은 "예산 안에서 사는가" 와 "그때 얼마나 정밀해야 하는가" 뿐이다.
+## [최장min, 통로min, peak, 생존(1/0), 도달폭, 전단틱]
+func _run_phase(ph: int) -> Array:
+	var min_gap := Tune.SCAN_CELLS
+	var min_track := Tune.SCAN_CELLS
+	var peak := 0
+	var shear_ticks := 0
+	var comp := Tune.SCAN_CELLS
+	var alive := 1
+	var died := -1
+	for band in BANDS:
+		BulletField.clear()
+		BulletField.reset_flow()
+		var b := Boss.new()
+		b.reset(0)
+		b.phase = ph
+		b.phase_t0 = 0
+		var rch := Reach1D.new()
+		var cor := Corridor.new()
+		var p := Vector2(360.0, band)
+		for t in b.phase_limit() - 1:
+			b.step(t, p)
+			if BulletField.shear > 0.01:
+				shear_ticks += 1
+			BulletField.step_and_collide(t, p, p, true)
+			_fair.scan(BulletField, p.x, p.y)
+			if _fair.in_band > 0:
+				min_gap = mini(min_gap, _fair.gap_w)
+			cor.update(_fair, p.x)
+			rch.step_mask(rch.from_fairness(_fair), V_BUDGET, t)
+			if not rch.alive:
+				alive = 0
+				died = t
+				break
+		peak = maxi(peak, BulletField.peak_n)
+		min_track = mini(min_track, cor.min_width())
+		if rch.alive:
+			comp = mini(comp, rch.min_comp)
+		else:
+			comp = 0
+	BulletField.reset_flow()
+	BulletField.clear()
+	return [min_gap, min_track, peak, alive, comp, shear_ticks / maxi(BANDS.size(), 1), died]

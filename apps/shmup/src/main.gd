@@ -75,6 +75,7 @@ var _cap_path: String = ""
 var _cap_invincible: bool = false
 var _cap_wall: bool = false
 var _cap_rescue: bool = false
+var _force_phase: int = 0
 
 func _ready() -> void:
 	shot_x.resize(Tune.MAX_PSHOTS)
@@ -128,6 +129,9 @@ func _parse_capture() -> void:
 		if a.begins_with("--screen-mm="):
 			# 실측 물리 폭 주입. 엔진의 screen_get_dpi() 는 Android 에서 논리 density 다.
 			TouchRouter.screen_mm_override = maxf(0.0, a.substr(12).to_float())
+		if a.begins_with("--boss-phase="):
+			# 보스 페이즈를 강제한다(캡처·검증용). HP 도 그 구간으로 맞춘다.
+			_force_phase = clampi(int(a.substr(13)), 1, 3)
 		if a == "--cap-rescue":
 			# 구제 창을 캡처하려면 실제로 맞아야 한다. 무적을 끄고 첫 피격을 기다린다.
 			_cap_rescue = true
@@ -206,6 +210,12 @@ func _reset(seed_value: int) -> void:
 	clear_anim = -1
 	if boss != null:
 		boss.reset(SimClock.sim_tick)
+		if _force_phase > 1:
+			boss.phase = _force_phase
+			boss.phase_t0 = SimClock.sim_tick
+			boss.hp = Boss.HP_MAX * (Boss.P1_END_FRAC if _force_phase == 2 else Boss.P2_END_FRAC)
+	else:
+		BulletField.reset_flow()
 
 # ── 입력: 사망 후 탭 재시작 ─────────────────────────────────────────────
 ## 디버그 장면 전환 — 로드맵 2단계 "스테이지를 건너뛰는 디버그 키".
@@ -425,8 +435,10 @@ func _step_boss_clear(tick: int) -> bool:
 		_clear_left = CLEAR_TICKS
 		clear_anim = 0
 		BulletField.clear()
-		# 격파 시 광립이 흩어져 전부 상승한다 — 아래로만 흐르던 화면이 뒤집힌다
-		_drop_motes(Boss.CX, Boss.CY, 40)
+		# 격파 시 세 링이 광립으로 흩어져 전부 상승한다 —
+		# 5분 내내 아래로만 흐르던 화면의 운동 방향이 마지막에 뒤집힌다(설계서 §6).
+		for ring in [Boss.R_OUTER, Boss.R_MID, Boss.R_INNER]:
+			_drop_motes_ring(Boss.CX, Boss.CY, ring, 26)
 		RunLog.write("clear", [SimClock.run_index, tick, SimClock.run_seed,
 				player.x, player.y, "", 0, 0, 0,
 				TouchRouter.k, TouchRouter.focus, TouchRouter.regrip_count, 0,
@@ -603,6 +615,12 @@ func _step_shots() -> void:
 func _shot_dmg() -> float:
 	return Tune.SHOT_DMG * (Tune.FOCUS_DMG_MULT if TouchRouter.focus else 1.0)
 
+## 링 둘레에 흩뿌린다 — 격파 연출용.
+func _drop_motes_ring(cx: float, cy: float, radius: float, count: int) -> void:
+	for i in count:
+		var a := TAU * float(i) / float(count)
+		motes.spawn(SimClock.sim_tick, cx + cos(a) * radius, cy + sin(a) * radius)
+
 func _drop_motes(x: float, y: float, count: int) -> void:
 	for i in count:
 		var a := TAU * float(i) / float(maxi(count, 1))
@@ -639,7 +657,7 @@ func _shots_vs_boss(tick: int) -> void:
 		var dx := shot_x[i] - Boss.CX
 		var dy := shot_y[i] - Boss.CY
 		if dx * dx + dy * dy <= r2:
-			boss.damage(_shot_dmg(), tick)
+			boss.damage(_shot_dmg(), tick, player)
 			shot_n -= 1
 			shot_x[i] = shot_x[shot_n]
 			shot_y[i] = shot_y[shot_n]

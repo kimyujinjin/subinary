@@ -42,6 +42,33 @@ func _draw() -> void:
 	var c_t := BulletField.flow_c(tick)
 	_draw_top_band(c_t)
 	_draw_side_profile(c_t)
+	_draw_shear()
+
+## 전단 — 상·하가 반대로 흐르는 구간. **색이 유일한 정보원이면 안 된다**(설계서 §6):
+## 경계 난류선 · 배경 유선 갈라짐 · 조류 띠 상하 분할이 같은 값에서 함께 나온다.
+func _draw_shear() -> void:
+	var sh: float = BulletField.shear
+	if sh <= 0.01:
+		return
+	var y: float = BulletField.shear_y
+	# 경계 난류선 — 여기가 안전 통로다
+	draw_rect(Rect2(-gutter, y - Tune.SHEAR_TURB_W * 0.5,
+			Tune.PF_W + gutter + gutter_r, Tune.SHEAR_TURB_W),
+			Color(0.0, 0.01, 0.02, 0.55 * sh), true)
+	draw_line(Vector2(0.0, y), Vector2(Tune.PF_W, y), Color(Tune.COL_FLOW, 0.30 * sh), 1.0)
+	# 유선 — 위아래가 서로 반대로 갈린다. 화살촉 방향이 곧 그 밴드의 흐름이다
+	var rows := 7
+	for i in rows:
+		var sy := y - Tune.SHEAR_SOFT * 1.6 + Tune.SHEAR_SOFT * 3.2 * float(i) / float(rows - 1)
+		var b := clampf((sy - y) / Tune.SHEAR_SOFT, -1.0, 1.0) * BulletField.shear_c
+		if absf(b) < 0.15:
+			continue
+		var w := 26.0 * b
+		var a := 0.10 + 0.28 * absf(b) * sh
+		var x := fposmod(float(tick) * 2.0 * b, 120.0) - 120.0
+		while x < Tune.PF_W + 120.0:
+			draw_line(Vector2(x, sy), Vector2(x + w, sy), Color(Tune.COL_FLOW, a), 2.0)
+			x += 120.0
 
 ## ① 최상단 12유닛 띠 — 흐름 방향으로 스크롤하는 눈금. 부호와 크기를 동시에 읽힌다.
 func _draw_top_band(c_t: float) -> void:
@@ -60,6 +87,19 @@ func _draw_top_band(c_t: float) -> void:
 		draw_line(Vector2(minf(x0, x1), BAND_H * 0.5), Vector2(maxf(x0, x1), BAND_H * 0.5),
 				Color(Tune.COL_FLOW, a), 5.0)
 		x += pitch
+	# 전단 중에는 띠 자체가 상하로 갈려 두 방향을 동시에 보인다
+	var sh: float = BulletField.shear
+	if sh > 0.01:
+		draw_rect(Rect2(0.0, 0.0, Tune.PF_W, BAND_H * 0.5), Color(0.0, 0.0, 0.0, 0.6), true)
+		for half in 2:
+			var dirv := (-1.0 if half == 0 else 1.0) * BulletField.shear_c
+			var yy := BAND_H * (0.25 if half == 0 else 0.75)
+			var xx := fposmod(float(tick) * 1.35 * dirv, pitch) - pitch
+			while xx < Tune.PF_W + pitch:
+				draw_line(Vector2(xx, yy), Vector2(xx + 16.0 * dirv, yy),
+						Color(Tune.COL_FLOW, 0.35 + 0.5 * sh), 3.0)
+				xx += pitch
+		return
 	# 정지 창은 다른 문법으로 — 점선이 아니라 연속선
 	if mag < 0.02:
 		draw_line(Vector2(0.0, BAND_H * 0.5), Vector2(Tune.PF_W, BAND_H * 0.5),

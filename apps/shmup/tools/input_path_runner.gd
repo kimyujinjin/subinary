@@ -98,7 +98,11 @@ func _boss_clear_case() -> void:
 		await get_tree().physics_frame
 	for i in 40:
 		await get_tree().physics_frame
-	bm.boss.damage(Boss.HP_MAX, SimClock.sim_tick)
+	# 보스는 3페이즈다 — 한 번의 대미지로는 격파되지 않고 다음 페이즈로 넘어간다.
+	# 전이 연출 중에는 무적이므로 gap_left 를 비우고 이어서 넣는다.
+	for _p in 3:
+		bm.boss.gap_left = 0
+		bm.boss.damage(Boss.HP_MAX, SimClock.sim_tick, bm.player)
 	await get_tree().physics_frame
 	_check(bm.clear_anim >= 0 and bm.deaths == deaths0 and SimClock.state == SimClock.State.RUN,
 		"격파 틱에 죽지 않는다 (clear_anim %d · 사망 %d → %d · state %d)" % [
