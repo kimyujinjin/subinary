@@ -155,7 +155,7 @@ const P2_BEAT := 200
 func _step_p2(tick: int, player: Vector2) -> void:
 	var pe := phase_elapsed(tick)
 	var l := pe % P2_BEAT
-	if l % p05_every == 0:
+	if l % Difficulty.every(p05_every) == 0:
 		Patterns.p05_ex(CX, CY, HALF_H - 30.0, spin_angle(tick),
 				Patterns.P05_SPEED, Patterns.P05_COUNT, Tune.Kind.SPORE_GRID)
 	Patterns.p08(l, CX, CY + 90.0)
@@ -172,7 +172,7 @@ func _step_p3(tick: int, player: Vector2) -> void:
 		return                            # 반전 예고 — 새 탄이 없는 0.2초
 	# P11 은 자기 주기(18틱)로 쏘면 40발/초가 되어 소용돌이 없이는 이음선이 막힌다.
 	# 발사 틱을 직접 고른다 — 패턴 상수를 고치면 보스 P2 의 협곡 비트까지 같이 변한다.
-	if pe % p11_every == 0:
+	if pe % Difficulty.every(p11_every) == 0:
 		Patterns.p11(0, tick, CY + 120.0)
 	Patterns.p12(pe, CX, Tune.PF_H - 140.0, player.x, player.y)
 

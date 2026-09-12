@@ -118,12 +118,13 @@ func _ready() -> void:
 	_bullets.warm(30)
 	get_viewport().size_changed.connect(_on_resize)
 	_on_resize()
+	Difficulty.apply_from_cmdline()
 	_parse_capture()
 	_reset(FIXED_SEED)
 	RunLog.write("run", [SimClock.run_index, 0, SimClock.run_seed, 0, 0, "", 0, 0, 0,
 			0.0, false, 0, 0, 0.0, 0.0, 0, 0, _build_tag(),
 			TouchRouter.field_per_px, TouchRouter.screen_width_mm(),
-			"mode=%s" % _mode_tag()])
+			"mode=%s;diff=%s" % [_mode_tag(), Difficulty.name_of()]])
 
 ## --capture=<tick>:<경로> — 지정 틱의 프레임을 PNG 로 저장하고 종료한다.
 ## 게이트 1 지표 ④(조류 표시 대 배경의 Weber 콘트라스트 ≥ 0.25)는 스크린샷 픽셀값으로

@@ -90,7 +90,7 @@ func _draw_set(px: PackedFloat32Array, py: PackedFloat32Array,
 	var cols := [Tune.COL_TIDE, Tune.COL_GRID, Tune.COL_NEEDLE, Tune.COL_BUBBLE,
 			Tune.COL_POD, Tune.COL_GATE]
 	var c_t := bf.flow_c(tick)
-	var u_max: float = Tune.FLOW_SLOW_U_MAX if bf.flow_slow else Tune.FLOW_U_MAX
+	var u_max: float = Difficulty.u_max
 	for i in cnt:
 		var j := base + i
 		var kd: int = pk[j]

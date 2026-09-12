@@ -45,10 +45,11 @@ var _fail := 0
 var _warn := 0
 
 func _ready() -> void:
+	Difficulty.apply_from_cmdline()
 	_fair = Fairness.new()
 	print("== 1D 공정성 스캔 ==")
 	print("   자유폭F: 하한=%d  Normal=%d  정지창=<%d/0.35s이동≤%d  요구이동상한=%d유닛/0.6s" % [
-		Tune.FREE_FLOOR, Tune.FREE_NORMAL, STILL_GAP, int(STILL_MOVE), int(MOVE_CAP)])
+		Tune.FREE_FLOOR, Difficulty.free_floor(), STILL_GAP, int(STILL_MOVE), int(MOVE_CAP)])
 
 	print("\n-- A) 패턴 단독 --")
 	# Patterns.BOOK 을 훑는다. 손으로 적으면 패턴을 추가할 때 빠뜨린다 —
@@ -119,7 +120,7 @@ func _scan(label: String, emit: Callable, ticks: int, ef: EnemyField = null) -> 
 		var still_viol := cor.still_violations(STILL_GAP, STILL_WIN, STILL_MOVE, flow_x)
 		var max_move := cor.max_demand(MOVE_WIN, TIGHT)
 		# 통로 유지 시간 — 통과 폭 이상으로 열려 있던 연속 구간
-		var hold: Array = cor.hold_times(Tune.FREE_NORMAL)
+		var hold: Array = cor.hold_times(Difficulty.free_floor())
 		for t in ticks:
 			var g := gaps[t]
 			if g < 0:
@@ -128,7 +129,7 @@ func _scan(label: String, emit: Callable, ticks: int, ef: EnemyField = null) -> 
 			sum += g
 			if g == 0:
 				walls += 1
-			if g < Tune.FREE_NORMAL:
+			if g < Difficulty.free_floor():
 				below_normal += 1
 			if g < min_gap:
 				min_gap = g
@@ -157,7 +158,7 @@ func _scan(label: String, emit: Callable, ticks: int, ef: EnemyField = null) -> 
 			flags.append("전환%d(%.0fu)" % [cor.forced, cor.forced_jump])
 		if walls > 0:
 			flags.append("WARN:절대벽%d" % walls); _warn += 1
-		if min_gap < Tune.FREE_NORMAL and min_gap >= Tune.FREE_FLOOR:
+		if min_gap < Difficulty.free_floor() and min_gap >= Tune.FREE_FLOOR:
 			flags.append("WARN:F<64"); _warn += 1
 		if flags.is_empty():
 			flags.append("OK")

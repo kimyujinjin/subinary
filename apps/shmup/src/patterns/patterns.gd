@@ -65,7 +65,7 @@ static func emit_solo(idx: int, local: int, tick: int, target: Vector2) -> void:
 			if local % int(BOOK[idx]["solo_period"]) == 0:
 				p05_ex(o.x, o.y, Boss.R_OUTER,
 						Boss.OMEGA * BulletField.flow_phase(tick) * Tune.DT,
-						P05_SPEED, P05_COUNT, Tune.Kind.SPORE_GRID)
+						P05_SPEED, Difficulty.count(P05_COUNT), Tune.Kind.SPORE_GRID)
 		Id.P09_LOW_RIPPLE:
 			if local % int(BOOK[idx]["solo_period"]) == 0:
 				p09_ex(o.y, PI if (local / int(BOOK[idx]["solo_period"])) % 2 == 1 else 0.0,
@@ -108,7 +108,7 @@ const P01_VOLLEYS := 6
 const P01_VY_FLOOR := 0.55   # 최소 낙하 속도 = speed × 0.55 → 화면 통과 ≤ 8.8초
 
 static func p01(local: int, ex: float, ey: float) -> void:
-	p01_ex(local, ex, ey, P01_ARC, P01_COUNT, P01_SPEED, P01_VOLLEY_TICKS, P01_VOLLEYS)
+	p01_ex(local, ex, ey, P01_ARC, Difficulty.count(P01_COUNT), P01_SPEED, P01_VOLLEY_TICKS, P01_VOLLEYS)
 
 ## 헤드리스 스윕용 파라미터판. p01() 이 이것을 호출하므로 튜닝과 게임이 갈라지지 않는다.
 static func p01_ex(local: int, ex: float, ey: float, arc: float, count: int,
@@ -240,10 +240,11 @@ const P02_STOP_SEC := 2.0      # 아래로 나간 탄의 하강 깊이 = v0·t/2
 const P02_EVERY := 180         # 3.0초마다 한 겹
 
 static func p02(local: int, ex: float, ey: float) -> void:
-	if local < 0 or local % P02_EVERY != 0:
+	var every := Difficulty.every(P02_EVERY)
+	if local < 0 or local % every != 0:
 		return
-	p02_ex(ex, ey, P02_COUNT, P02_SPEED, P02_STOP_SEC,
-			float(local / P02_EVERY) * 0.42)
+	p02_ex(ex, ey, Difficulty.count(P02_COUNT), P02_SPEED, P02_STOP_SEC,
+			float(local / every) * 0.42)
 
 ## rise = 위쪽 상수 가속(유닛/s²). 아래로 v0 로 나간 탄이 stop_sec 에 멈춘다.
 static func p02_ex(cx: float, cy: float, count: int, speed: float,
@@ -306,10 +307,11 @@ static func hash01(a: int, b: int) -> float:
 	return float((h ^ (h >> 16)) & 0xFFFFFF) / 16777216.0
 
 static func p10(local: int, ex: float, ey: float) -> void:
-	if local < 0 or local % P10_EVERY != 0:
+	var every := Difficulty.every(P10_EVERY)
+	if local < 0 or local % every != 0:
 		return
-	var v := local / P10_EVERY
-	for i in P10_COUNT:
+	var v := local / every
+	for i in Difficulty.count(P10_COUNT):
 		var deg := 90.0 - P10_ARC * 0.5 + P10_ARC * hash01(v, i)
 		var sp := lerpf(P10_SPEED_LO, P10_SPEED_HI, hash01(v, i + 977))
 		var a := deg_to_rad(deg)
@@ -341,9 +343,10 @@ const P06_STEP_DEG := 7.0
 const P06_EVERY := 8
 
 static func p06(local: int, ex: float, ey: float) -> void:
-	if local < 0 or local % P06_EVERY != 0:
+	var every := Difficulty.every(P06_EVERY)
+	if local < 0 or local % every != 0:
 		return
-	var k := local / P06_EVERY
+	var k := local / every
 	for s2 in 2:
 		var sign := 1.0 if s2 == 0 else -1.0
 		var kind := Tune.Kind.SPORE_TIDE if s2 == 0 else Tune.Kind.SPORE_GRID
@@ -365,13 +368,13 @@ const P11_SEAM := 90.0
 const P11_EVERY := 18
 
 static func p11(local: int, tick: int, ey: float) -> void:
-	if local < 0 or local % P11_EVERY != 0:
+	if local < 0 or local % Difficulty.every(P11_EVERY) != 0:
 		return
 	var seam := Tune.PF_W * 0.5 + BulletField.flow_c(tick) * P11_SEAM
 	var u0 := BulletField.flow_u(ey, tick)
 	for side in 2:
 		var dir := -1.0 if side == 0 else 1.0
-		for i in P11_PER_SIDE:
+		for i in Difficulty.count(P11_PER_SIDE):
 			var x := seam + dir * (70.0 + P11_PITCH * float(i))
 			if x < -20.0 or x > Tune.PF_W + 20.0:
 				continue
@@ -390,9 +393,11 @@ const P12_EVERY := 168
 static func p12(local: int, ex: float, ey: float, px: float, py: float) -> void:
 	if local < 0:
 		return
-	var phase := local % P12_EVERY
+	# 정지 → 바늘 전환이 주기 안에 들어와야 한다. 간격을 줄여도 그 아래로는 못 간다 —
+	# 넘어가면 기포가 멈추는 틱에 바늘이 안 나가고 "반전 프레임 = 조준 프레임" 이 사라진다.
+	var phase := local % maxi(Difficulty.every(P12_EVERY), int(P12_STOP_SEC * 60.0) + 30)
 	if phase == 0:
-		p02_ex(ex, ey, P12_BUBBLES, P12_SPEED, P12_STOP_SEC, 0.31)
+		p02_ex(ex, ey, Difficulty.count(P12_BUBBLES), P12_SPEED, P12_STOP_SEC, 0.31)
 	elif phase == int(P12_STOP_SEC * 60.0):
 		# 기포가 멈추고 상승으로 돌아서는 바로 그 틱에 조준 바늘이 나간다
 		var base := atan2(py - ey, px - ex)
@@ -418,10 +423,10 @@ static func p13(local: int, cx: float, cy: float, px: float, py: float) -> void:
 	# 잡히고(4발), 좁으면 가장 가까운 탄이 창 밖이라 0발이 된다 — 둘 다 겪었다.
 	# 가장 가까운 인덱스를 반올림으로 집으면 항상 정확히 1발이고, 반대편은 +COUNT/2 다.
 	var toward := atan2(py - cy, px - cx)
-	var g0 := wrapi(int(round(fposmod(toward, TAU) / (TAU / float(P13_COUNT)))), 0, P13_COUNT)
-	var g1 := wrapi(g0 + P13_COUNT / 2, 0, P13_COUNT)
-	for i in P13_COUNT:
-		var a := TAU * float(i) / float(P13_COUNT)
+	var g0 := wrapi(int(round(fposmod(toward, TAU) / (TAU / float(Difficulty.count_even(P13_COUNT))))), 0, Difficulty.count_even(P13_COUNT))
+	var g1 := wrapi(g0 + Difficulty.count_even(P13_COUNT) / 2, 0, Difficulty.count_even(P13_COUNT))
+	for i in Difficulty.count_even(P13_COUNT):
+		var a := TAU * float(i) / float(Difficulty.count_even(P13_COUNT))
 		var is_gate := i == g0 or i == g1
 		var k := Tune.Kind.GATE if is_gate else Tune.Kind.SPORE_GRID
 		var sp := P13_SPEED * (0.55 if is_gate else 1.0)
@@ -453,12 +458,12 @@ const P16_LEAD := 150.0        # 조류 방향으로 이만큼 앞선 자리에 
 const P16_EVERY := 96
 
 static func p16(local: int, tick: int, ex: float, ey: float) -> void:
-	if local < 0 or local % P16_EVERY != 0:
+	if local < 0 or local % Difficulty.every(P16_EVERY) != 0:
 		return
 	var c := BulletField.flow_c(tick)
 	var lead := c * P16_LEAD
 	var span := 300.0
-	for i in P16_COUNT:
-		var x := ex + lead - span * 0.5 + span * float(i) / float(P16_COUNT - 1)
+	for i in Difficulty.count(P16_COUNT):
+		var x := ex + lead - span * 0.5 + span * float(i) / float(Difficulty.count(P16_COUNT) - 1)
 		# 응결이므로 초기 횡속도가 0 이다 — 조류에 실려 온 것이 아니라 거기서 생긴다.
 		BulletField.spawn(x, ey, 0.0, P16_SPEED, Tune.Kind.SPORE_GRID)

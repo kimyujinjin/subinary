@@ -46,7 +46,9 @@ var _next_bid: int = 1
 var _swept_n: int = 0
 
 # 강등 스위치 — 게이트 1 지표 ② 미달 시 감속한다. 상수화가 아니다.
-var flow_slow: bool = false
+## 조류 파라미터는 Difficulty 가 들고 있다. 예전에는 flow_slow 불리언 하나로 "강등" 을
+## 흉내 냈는데, 게임에서 한 번도 켜지지 않았고(불변식 테스트만 썼다) 주기를 정수배로만
+## 바꿀 수 있어 Hard(6초 = 0.75배)를 표현할 수 없었다.
 ## 전단 — 0 이면 평소 조류, 1 이면 완전 전단. 보스 P2 가 매 틱 넣는다.
 ## 시뮬과 배경이 **같은 값**을 쓰므로 시각과 판정이 어긋날 방법이 없다(설계서 §6).
 ## 국소 소용돌이(중간보스). 0 이면 고속 경로 그대로다.
@@ -105,10 +107,17 @@ func spawn_acc(x: float, y: float, vx: float, vy: float, k: int, ax: float, ay: 
 	fuse[n] = fuse_ticks
 	pos_x[n] = x
 	pos_y[n] = y
-	vel_x[n] = vx
-	vel_y[n] = vy
-	acc_x[n] = ax
-	acc_y[n] = ay
+	# 탄속 배율은 여기 한 곳에서만 건다. 패턴마다 걸면 빠뜨린 패턴이 생기고,
+	# 그 패턴만 난이도를 안 따르는 것을 아무도 눈치채지 못한다.
+	#
+	# **가속도에도 같은 배율을 건다.** 기포는 v/a 가 정지 시각이므로 속도만 곱하면
+	# 정지가 늦어져 "두 번 온다" 의 리듬이 난이도마다 달라진다. 둘 다 곱하면
+	# 정지 시각은 그대로이고 도달 거리만 배율만큼 늘어난다 — 그게 의도한 축이다.
+	var sm := Difficulty.speed_m
+	vel_x[n] = vx * sm
+	vel_y[n] = vy * sm
+	acc_x[n] = ax * sm
+	acc_y[n] = ay * sm
 	kind[n] = k
 	bid[n] = _next_bid
 	_next_bid += 1
@@ -118,36 +127,31 @@ func spawn_acc(x: float, y: float, vx: float, vy: float, k: int, ax: float, ay: 
 ## 조류의 시간 성분 C(t) ∈ [-1, 1]. 부호 반전과 정지 창이 유일한 교재이므로
 ## 강등해도 구조는 전부 살려 두고 읽는 속도만 절반으로 만든다.
 func flow_c(tick: int) -> float:
-	var period: int = Tune.FLOW_SLOW_PERIOD if flow_slow else Tune.FLOW_PERIOD
-	var ramp: int = Tune.FLOW_SLOW_RAMP if flow_slow else Tune.FLOW_RAMP
-	var scale: int = period / Tune.FLOW_PERIOD
-	var p: int = tick % period
+	var p: int = tick % Difficulty.period
 	var i: int = 0
 	var acc: int = 0
 	while i < 3:
-		var seg: int = int(Tune.FLOW_SEGS[i]) * scale
+		var seg: int = Difficulty.segs[i]
 		if p < acc + seg:
 			break
 		acc += seg
 		i += 1
-	var seg_len: int = int(Tune.FLOW_SEGS[i]) * scale
+	var seg_len: int = Difficulty.segs[i]
 	var local: int = p - acc
-	var hold: int = seg_len - ramp
+	var hold: int = seg_len - Difficulty.ramp
 	var a: float = Tune.FLOW_LEVELS[i]
 	if local < hold:
 		return a
 	var b: float = Tune.FLOW_LEVELS[(i + 1) % 4]
-	return lerpf(a, b, float(local - hold) / float(ramp))
+	return lerpf(a, b, float(local - hold) / float(Difficulty.ramp))
 
 ## 조류 세그먼트 (index, 세그먼트 내 국소 틱). index 0 = 우 · 1 = 정 · 2 = 좌 · 3 = 정.
 ## 보스 P1 의 압력/호흡 창이 이것이다 — 리듬을 따로 두지 않고 조류에서 직접 읽는다.
 func flow_seg(tick: int) -> Vector2i:
-	var period: int = Tune.FLOW_SLOW_PERIOD if flow_slow else Tune.FLOW_PERIOD
-	var scale: int = period / Tune.FLOW_PERIOD
-	var p: int = tick % period
+	var p: int = tick % Difficulty.period
 	var acc := 0
 	for i in 4:
-		var seg: int = int(Tune.FLOW_SEGS[i]) * scale
+		var seg: int = Difficulty.segs[i]
 		if p < acc + seg:
 			return Vector2i(i, p - acc)
 		acc += seg
@@ -163,14 +167,12 @@ func flow_seg(tick: int) -> Vector2i:
 ## 주기 수를 셀 필요 없이 주기 내 위치만으로 닫힌다 — 누산기가 없어 드리프트도,
 ## 프레임당 물리 틱 수에 따른 어긋남도 없다.
 func flow_phase(tick: int) -> float:
-	var period: int = Tune.FLOW_SLOW_PERIOD if flow_slow else Tune.FLOW_PERIOD
-	var ramp: int = Tune.FLOW_SLOW_RAMP if flow_slow else Tune.FLOW_RAMP
-	var scale: int = period / Tune.FLOW_PERIOD
-	var p: int = tick % period
+	var p: int = tick % Difficulty.period
+	var ramp: int = Difficulty.ramp
 	var ph := 0.0
 	var acc := 0
 	for i in 4:
-		var seg: int = int(Tune.FLOW_SEGS[i]) * scale
+		var seg: int = Difficulty.segs[i]
 		var a: float = Tune.FLOW_LEVELS[i]
 		var b: float = Tune.FLOW_LEVELS[(i + 1) % 4]
 		var hold: int = seg - ramp
@@ -211,7 +213,7 @@ func flow_s(y: float) -> float:
 	return Tune.FLOW_S_BASE + Tune.FLOW_S_AMP * sin(PI * clampf(y, 0.0, Tune.PF_H) / Tune.PF_H)
 
 func flow_u(y: float, tick: int) -> float:
-	var u_max: float = Tune.FLOW_SLOW_U_MAX if flow_slow else Tune.FLOW_U_MAX
+	var u_max: float = Difficulty.u_max
 	return flow_c_at(y, tick) * flow_s(y) * u_max
 
 ## 한 번의 순회로 적분 → 컬링 → y 밴드 기각 → 통과분만 캡슐 스윕.
@@ -219,7 +221,7 @@ func flow_u(y: float, tick: int) -> float:
 func step_and_collide(tick: int, p0: Vector2, p1: Vector2, invincible: bool) -> void:
 	hit_index = -1
 	var c := flow_c(tick)
-	var u_max: float = Tune.FLOW_SLOW_U_MAX if flow_slow else Tune.FLOW_U_MAX
+	var u_max: float = Difficulty.u_max
 	var swept_n := 0
 	var i := 0
 	while i < n:

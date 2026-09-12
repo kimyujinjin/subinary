@@ -14,6 +14,7 @@ var _fair: Fairness = null
 var _free := PackedByteArray()
 
 func _ready() -> void:
+	Difficulty.apply_from_cmdline()
 	_fair = Fairness.new()
 	_free.resize(Tune.SCAN_CELLS)
 	for a in OS.get_cmdline_user_args():
@@ -39,8 +40,8 @@ func _ready() -> void:
 			if int(r[0]) < Tune.FREE_FLOOR:
 				flags.append("FAIL:절대벽")
 				fail += 1
-			elif int(r[0]) < Tune.FREE_NORMAL:
-				flags.append("WARN:F<%d" % Tune.FREE_NORMAL)
+			elif int(r[0]) < Difficulty.free_floor():
+				flags.append("WARN:F<%d" % Difficulty.free_floor())
 			if flags.is_empty():
 				flags.append("OK")
 			print("  P%d     | %6d %8d %5d %6.1f%% | %s" % [

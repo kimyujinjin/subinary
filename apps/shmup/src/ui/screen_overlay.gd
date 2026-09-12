@@ -233,6 +233,10 @@ func _draw_hud() -> void:
 		Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0,
 		int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
 		m.fairness.gap_w]
+	# 난이도 — 로그와 화면이 같은 문자열을 쓴다. 판정 로그를 나중에 읽을 때
+	# "이 숫자가 어느 난이도였나" 를 못 알면 그 로그는 못 쓴다.
+	if Difficulty.level != Difficulty.Level.NORMAL:
+		l1 += "  %s" % Difficulty.name_of()
 	# 5분 타임라인에서는 현재 구역을 띄운다 — 무피격 보너스 단위이자 연습 진입 단위라
 	# "지금 몇 구역인가" 를 모르면 실기 판정에서 어느 구역이 문제였는지 적을 수 없다.
 	if m.stage_full:
@@ -254,7 +258,7 @@ func _draw_hud() -> void:
 			1:
 				sub = "압력" if b.window(SimClock.sim_tick).x == 1 else "호흡"
 			2:
-				var beat := (b.phase_elapsed(SimClock.sim_tick) / Boss.BEAT) % 4
+				var beat := (b.phase_elapsed(SimClock.sim_tick) / Boss.beat_len()) % 4
 				sub = ["격자", "포낭", "협곡", "역류"][beat]
 				if BulletField.shear > 0.01:
 					sub += "·전단%.0f%%" % (BulletField.shear * 100.0)

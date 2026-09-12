@@ -136,7 +136,7 @@ func _step_p1(tick: int, player: Vector2) -> void:
 	if p05_fires(tick):
 		Patterns.p05_ex(CX, CY, R_OUTER, ring_angle(tick), p05_speed,
 				Patterns.P05_COUNT, Tune.Kind.SPORE_GRID)
-	if emit_p09 and l % P09_EVERY == 0 and l <= P09_LAST:
+	if emit_p09 and l % Difficulty.every(P09_EVERY) == 0 and l <= P09_LAST:
 		Patterns.p09_ex(P09_Y, PI if _p09_flip else 0.0, tick, Patterns.P09_SPEED,
 				Tune.Kind.SPORE_TIDE)
 		_p09_flip = not _p09_flip
@@ -150,14 +150,25 @@ func _step_p1(tick: int, player: Vector2) -> void:
 ## 그리고 조류 반전 직전 0.5초에 **전단**이 걸린다. 상·하가 반대로 흐르고 경계는 세기 0 이라
 ## 거기가 항상 안전 통로다. 처음 보면 화면이 통째로 뭉개지는 재난처럼 보이지만,
 ## 구조를 알면 "P2 에서는 허리선에서 산다" 는 한 줄이 된다.
-const BEAT := 240                 # 4초 — 조류 반전 주기와 같다
+## 4비트 루프의 한 비트 = **조류 반전 주기**다. 상수로 박으면 안 된다 —
+## Normal 은 주기 480 이라 반전이 240틱마다지만 Hard 는 360 이라 180틱마다다.
+## 240 으로 박아 두고 Hard 를 돌렸더니 비트가 조류와 어긋나 전단이 엉뚱한 자리에 걸렸고,
+## P2 도달폭이 53 → 16 으로 무너졌다(하한 52). 리듬을 조류에서 직접 읽는다는 이 보스의
+## 설계가 상수 하나 때문에 난이도에서만 깨져 있었던 것이다.
+const BEAT_NORMAL := 240          # 참고값(Normal). 실제로는 beat_len() 을 쓴다
+
+static func beat_len() -> int:
+	return maxi(1, Difficulty.period / 2)
 const SHEAR_LEAD := 30            # 반전 직전 0.5초
 
 func _step_p2(tick: int, player: Vector2) -> void:
 	var pe := phase_elapsed(tick)
 	# 전단 — 조류가 부호를 바꾸기 직전에 건다. 세기는 창 안에서 부드럽게 올렸다 내린다.
 	var seg := BulletField.flow_seg(tick)
-	var seg_len: int = int(Tune.FLOW_SEGS[seg.x])
+	# **Difficulty.segs 를 읽는다.** Tune.FLOW_SEGS 를 읽고 있었는데 그건 Normal 표다 —
+	# Hard 에서 실제 정지 구간은 67틱인데 90 으로 알고 계산해서 전단 창이 30틱이 아니라
+	# 7틱만 열렸다(실측: 전단 434 → 119틱). 같은 표를 두 곳에서 들면 반드시 갈라진다.
+	var seg_len: int = Difficulty.segs[seg.x]
 	var to_end := seg_len - seg.y
 	if (seg.x == 1 or seg.x == 3) and to_end <= SHEAR_LEAD:
 		BulletField.shear = sin(PI * float(SHEAR_LEAD - to_end) / float(SHEAR_LEAD))
@@ -165,8 +176,9 @@ func _step_p2(tick: int, player: Vector2) -> void:
 	else:
 		BulletField.shear = 0.0
 
-	var beat := (pe / BEAT) % 4
-	var l := pe % BEAT
+	var bl := beat_len()
+	var beat := (pe / bl) % 4
+	var l := pe % bl
 	match beat:
 		0: Patterns.p07(l, tick, CX, CY + 180.0)
 		1: Patterns.p08(l, CX, CY + 120.0)
@@ -231,7 +243,7 @@ func p05_fires(tick: int) -> bool:
 	if el < WAKE_TICKS or el >= P1_MAX_TICKS:
 		return false
 	var w := window(tick)
-	return w.x == 1 and w.y % P05_EVERY == 0
+	return w.x == 1 and w.y % Difficulty.every(P05_EVERY) == 0
 
 ## 다음 P05 발사까지의 근접도 0..1 — 발광 기관이 발사 직전 8틱 동안 밝아진다(예고).
 ##

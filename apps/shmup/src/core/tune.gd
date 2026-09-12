@@ -98,9 +98,8 @@ const FLOW_SEGS := [150, 90, 150, 90]
 const FLOW_LEVELS := [1.0, 0.0, -1.0, 0.0]
 const FLOW_RAMP := 24           # 0.4s
 # 강등 경로 (게이트 1 지표 ② 미달 시): 감속이다. 상수화하면 6개 설계 결정이 함께 죽는다.
-const FLOW_SLOW_PERIOD := 960
-const FLOW_SLOW_U_MAX := 55.0
-const FLOW_SLOW_RAMP := 72
+## 조류 파라미터는 Difficulty 가 난이도별로 들고 있다. 예전의 FLOW_SLOW_* 3종은
+## Difficulty.Level.EASY 로 흡수했다 — 두 벌로 두면 한쪽만 고치게 된다.
 # S(y) = 0.6 + 0.4·sin(πy/1280) — 화면 중앙이 가장 빠르다
 const FLOW_S_BASE := 0.6
 const FLOW_S_AMP := 0.4

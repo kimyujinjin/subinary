@@ -30,6 +30,8 @@ func _ready() -> void:
 	_stage_cases()
 	_midboss_cases()
 	_runlog_cases()
+	_difficulty_cases()
+	_shear_window_cases()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
 
@@ -39,8 +41,8 @@ func _check(ok: bool, label: String) -> void:
 		_fail += 1
 
 func _flow_phase_sign(slow: bool) -> void:
-	BulletField.flow_slow = slow
-	var period: int = Tune.FLOW_SLOW_PERIOD if slow else Tune.FLOW_PERIOD
+	Difficulty.apply(Difficulty.Level.EASY if slow else Difficulty.Level.NORMAL)
+	var period: int = Difficulty.period
 	var bad := 0
 	var bad_old := 0
 	for t in period * 3:
@@ -53,7 +55,7 @@ func _flow_phase_sign(slow: bool) -> void:
 		if absf(c) > 0.001 and signf(d_old) != signf(c):
 			bad_old += 1
 	var wrap := absf(BulletField.flow_phase(period) - BulletField.flow_phase(0))
-	BulletField.flow_slow = false
+	Difficulty.apply(Difficulty.Level.NORMAL)
 	var tag := "감속" if slow else "기본"
 	_check(bad == 0, "조류 위상 부호 = 유속 부호 (%s, %d틱 중 역주행 %d · 옛 공식 %d)" % [
 		tag, period * 3, bad, bad_old])
@@ -261,7 +263,7 @@ func _reach_cases() -> void:
 ## 예고와 실제 발사가 같은 출처인지. 창 경계에서 유령 예고/무예고가 났던 결함의 회귀 검사.
 func _glow_cases() -> void:
 	for slow in [false, true]:
-		BulletField.flow_slow = slow
+		Difficulty.apply(Difficulty.Level.EASY if slow else Difficulty.Level.NORMAL)
 		var b := Boss.new()
 		b.reset(0)
 		var fires := PackedInt32Array()
@@ -284,7 +286,7 @@ func _glow_cases() -> void:
 					break
 			if not has:
 				phantom += 1
-		BulletField.flow_slow = false
+		Difficulty.apply(Difficulty.Level.NORMAL)
 		var tag := "감속" if slow else "기본"
 		_check(fires.size() > 0 and unwarned == 0 and phantom == 0,
 			"보스 예고 = 발사 (%s · 발사 %d · 무예고 %d · 유령 %d)" % [
@@ -429,7 +431,7 @@ func _boss_pattern_cases() -> void:
 	BulletField.clear()
 	var t_right := -1
 	var t_left := -1
-	for t in Tune.FLOW_PERIOD:
+	for t in Difficulty.period:
 		if t_right < 0 and BulletField.flow_c(t) > 0.99:
 			t_right = t
 		if t_left < 0 and BulletField.flow_c(t) < -0.99:
@@ -535,7 +537,7 @@ func _boss_phase_cases() -> void:
 	b2.phase = 2
 	b2.phase_t0 = 0
 	var seen := false
-	for t in Boss.BEAT * 4:
+	for t in Boss.beat_len() * 4:
 		b2.step(t, pl)
 		if BulletField.shear > 0.5:
 			seen = true
@@ -755,3 +757,98 @@ func _runlog_cases() -> void:
 		"RunLog.ANDROID_PKG 가 export 프리셋과 같다 (%s / %s)" % [RunLog.ANDROID_PKG, pkg])
 	_check(RunLog.ANDROID_DIR.ends_with("/files") and RunLog.ANDROID_DIR.contains(pkg),
 		"RunLog 외부 경로가 앱 소유 디렉터리다 (%s)" % RunLog.ANDROID_DIR)
+
+
+## 난이도 프로파일. 표 하나가 게임·러너·판정기를 전부 움직이므로, 표가 깨지면
+## 조용히 다른 게임을 재고 그 숫자로 통과시킨다.
+func _difficulty_cases() -> void:
+	var keep := Difficulty.level
+	var bad_sym := 0
+	var bad_period := 0
+	for lv in 4:
+		var sg: Array = Difficulty.SEGS[lv]
+		# 좌우 대칭이어야 한 주기 적분이 0 이 되고, 그래야 flow_phase 가 누산기 없이 닫힌다.
+		if int(sg[0]) != int(sg[2]) or int(sg[1]) != int(sg[3]):
+			bad_sym += 1
+		Difficulty.apply(lv)
+		var tot := 0
+		for q in sg:
+			tot += int(q)
+		if Difficulty.period != tot:
+			bad_period += 1
+		# 램프가 세그먼트보다 길면 hold 가 음수가 되어 flow_c 가 구간 밖을 읽는다.
+		if Difficulty.ramp >= mini(int(sg[0]), int(sg[1])):
+			bad_period += 1
+	_check(bad_sym == 0, "난이도 4단 전부 조류 세그먼트가 좌우 대칭 (%d 건 위반)" % bad_sym)
+	_check(bad_period == 0, "난이도 4단 전부 주기 = 세그먼트 합 · 램프 < 세그먼트 (%d 건)" % bad_period)
+
+	# 한 주기 적분 0 — 난이도마다 확인한다. 하나라도 깨지면 그 난이도에서 조류 띠가 드리프트한다.
+	var worst := 0.0
+	for lv in 4:
+		Difficulty.apply(lv)
+		worst = maxf(worst, absf(BulletField.flow_phase(Difficulty.period) - BulletField.flow_phase(0)))
+	_check(worst < 0.001, "난이도 4단 전부 조류 위상 한 주기 적분 = 0 (최대 잔차 %.4f)" % worst)
+
+	# 출시 2단(Normal·Hard)의 게이트 하한이 정밀도 하한보다 커야 한다.
+	# 작으면 "통과 가능한 폭" 이 "엄지가 낼 수 있는 정밀도" 보다 좁다는 뜻이고, 그 게이트는 못 넘는다.
+	var bad_floor := 0
+	for lv in [Difficulty.Level.NORMAL, Difficulty.Level.HARD]:
+		Difficulty.apply(lv)
+		if Difficulty.free_floor() < 52:
+			bad_floor += 1
+	_check(bad_floor == 0, "출시 2단의 자유폭 하한 ≥ 엄지 정밀도 52 (%d 건 위반)" % bad_floor)
+
+	# 헬퍼의 하한. every 가 0 이면 매 틱 발사가 되어 패턴이 벽이 된다.
+	Difficulty.apply(Difficulty.Level.LUNATIC)
+	_check(Difficulty.every(1) >= 1, "every() 하한 1 (%d)" % Difficulty.every(1))
+	var odd := 0
+	for b in [24, 25, 26, 27]:
+		if Difficulty.count_even(b) % 2 != 0:
+			odd += 1
+	_check(odd == 0, "count_even() 이 항상 짝수 — P13 게이트 2개가 정반대에 있어야 한다")
+
+	# 탄속 축은 꺼져 있다. 켜면 조류가 미는 시간이 줄어 난이도가 거꾸로 간다(실측).
+	var all_one := true
+	for v in Difficulty.SPEED_M:
+		if absf(float(v) - 1.0) > 0.0001:
+			all_one = false
+	_check(all_one, "탄속 축은 1.0 으로 꺼져 있다 — 켜면 Hard 가 더 쉬워진다(축 분해 실측)")
+	Difficulty.apply(keep)
+
+
+## 보스 P2 전단 창이 **난이도와 무관하게 같은 길이**로 열리는가.
+## 보스가 Tune.FLOW_SEGS(Normal 표)를 읽고 있어서 Hard 에서 창이 30틱이 아니라 7틱만
+## 열렸다 — 전단이 이 페이즈의 전부인데 그게 난이도에서만 조용히 사라져 있었다.
+func _shear_window_cases() -> void:
+	var keep := Difficulty.level
+	var bad := 0
+	var report := PackedStringArray()
+	for lv in [Difficulty.Level.NORMAL, Difficulty.Level.HARD]:
+		Difficulty.apply(lv)
+		BulletField.clear()
+		BulletField.reset_flow()
+		var b := Boss.new()
+		b.reset(0)
+		b.phase = 2
+		b.phase_t0 = 0
+		# 한 조류 주기만 본다. 주기당 정지 구간이 2개이므로 창도 2개여야 한다.
+		var on := 0
+		var edges := 0
+		var prev := false
+		var p := Vector2(360.0, 900.0)
+		for t in Difficulty.period:
+			b.step(t, p)
+			var now: bool = BulletField.shear > 0.01
+			if now:
+				on += 1
+			if now and not prev:
+				edges += 1
+			prev = now
+		# 창 하나는 sin 램프라 양 끝 2틱이 0.01 미만이다 — 30틱 창에서 28틱을 센다.
+		if edges != 2 or on < 50 or on > 60:
+			bad += 1
+		report.append("%s 창%d 틱%d" % [Difficulty.name_of(), edges, on])
+		BulletField.reset_flow()
+		BulletField.clear()
+	_check(bad == 0, "보스 P2 전단 창이 난이도와 무관하게 주기당 2회·약 56틱 (%s)" % " · ".join(report))
+	Difficulty.apply(keep)

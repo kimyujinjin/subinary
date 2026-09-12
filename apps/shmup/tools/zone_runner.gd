@@ -14,19 +14,27 @@ extends Node
 
 const BANDS := [640.0, 860.0, 1040.0]
 const V_BUDGET := 5
+## 두 번째 예산. 300 u/s 하나로만 재면 "살 수 있는가" 만 보이고 "얼마나 움직여야 하는가" 가
+## 안 보인다 — 실제로 Hard 가 구역 1·5 에서 **더 넓게** 나왔다(조류가 빨라 탄이 밴드를 빨리
+## 빠져나간다). 난이도는 폭이 아니라 요구 이동량으로도 올라가므로 낮은 예산을 같이 잰다.
+const V_TIGHT := 3
 const COMP_MIN := 52
 
 var _fair: Fairness = null
 var _fail := 0
 
 func _ready() -> void:
+	Difficulty.apply_from_cmdline()
 	_fair = Fairness.new()
 	for a in OS.get_cmdline_user_args():
 		if a == "--zone5-sweep":
 			_sweep5()
 			return
+		if a == "--axes":
+			_axes()
+			return
 	print("== 6구역 무피격 가능성 (횡속 예산 %d u/s · 자탄 없음 = 최악) ==" % (V_BUDGET * 60))
-	print("  구역                 구간      | 최장min 도달폭min peak  적수 | 판정")
+	print("  구역                 구간      | 최장min 도달폭@%d 도달폭@%d peak  적수 | 판정" % [V_BUDGET * 60, V_TIGHT * 60])
 	var rows := _scan(Stage.STAGE_WAVES)
 	for z in rows.size():
 		var r: Array = rows[z]
@@ -40,14 +48,14 @@ func _ready() -> void:
 		if int(r[0]) < Tune.FREE_FLOOR:
 			flags.append("FAIL:절대벽")
 			_fail += 1
-		elif int(r[0]) < Tune.FREE_NORMAL:
-			flags.append("WARN:F<%d" % Tune.FREE_NORMAL)
+		elif int(r[0]) < Difficulty.free_floor():
+			flags.append("WARN:F<%d" % Difficulty.free_floor())
 		if int(r[6]) == 0:
 			flags.append("신규 적 0 — 휴식 구역")
 		if flags.is_empty():
 			flags.append("OK")
-		print("  %d %-10s %s | %6d %8d %4d %6d | %s" % [
-			z + 1, Stage.ZONE_NAMES[z], _span(z), r[0], r[2], int(r[1]), int(r[6]),
+		print("  %d %-10s %s | %6d %8d %8d %4d %6d | %s" % [
+			z + 1, Stage.ZONE_NAMES[z], _span(z), r[0], r[2], int(r[7]), int(r[1]), int(r[6]),
 			" ".join(flags)])
 	print("\n  가르치는 것")
 	for z in Stage.ZONES.size():
@@ -65,7 +73,7 @@ func _scan(waves: Array) -> Array:
 	var nz := Stage.ZONES.size() - 1        # 마지막 구역은 보스 — 여기서 안 본다
 	var out: Array = []
 	for z in nz:
-		out.append([Tune.SCAN_CELLS, 0, Tune.SCAN_CELLS, 1, -1, 0, 0])
+		out.append([Tune.SCAN_CELLS, 0, Tune.SCAN_CELLS, 1, -1, 0, 0, Tune.SCAN_CELLS])
 	var ef := EnemyField.new()
 	for band in BANDS:
 		BulletField.clear()
@@ -74,6 +82,7 @@ func _scan(waves: Array) -> Array:
 		var cursor := 0
 		var p := Vector2(Tune.PF_W * 0.5, band)
 		var rch := Reach1D.new()
+		var rch_t := Reach1D.new()
 		var zone := 0
 		var spawned := 0
 		var mb: MidBoss = null
@@ -82,6 +91,7 @@ func _scan(waves: Array) -> Array:
 			if z != zone:
 				# 구역 경계 — 연습 모드 진입점이다. 도달 집합만 자유로 되돌린다.
 				rch.reset()
+				rch_t.reset()
 				zone = z
 			while cursor < waves.size():
 				var w: Array = waves[cursor]
@@ -112,12 +122,18 @@ func _scan(waves: Array) -> Array:
 				row[0] = mini(int(row[0]), _fair.gap_w)
 				row[5] = int(row[5]) + 1
 			row[1] = maxi(int(row[1]), BulletField.n)
-			rch.step_mask(rch.from_fairness(_fair), V_BUDGET, t)
+			var free_mask := rch.from_fairness(_fair)
+			rch.step_mask(free_mask, V_BUDGET, t)
 			if rch.alive:
 				row[2] = mini(int(row[2]), rch.min_comp)
 			elif int(row[3]) == 1:
 				row[3] = 0
 				row[4] = t
+			rch_t.step_mask(free_mask, V_TIGHT, t)
+			if rch_t.alive:
+				row[7] = mini(int(row[7]), rch_t.min_comp)
+			else:
+				row[7] = 0
 	BulletField.reset_flow()
 	BulletField.clear()
 	# 탄이 한 발도 안 온 구역은 최장폭이 초기값 그대로다 — 720 으로 보고하면 오해를 부른다.
@@ -152,7 +168,57 @@ func _sweep5() -> void:
 				verdict = "FAIL:도달불가"
 			elif int(r[2]) < COMP_MIN:
 				verdict = "FAIL:정밀"
-			elif int(r[0]) < Tune.FREE_NORMAL:
-				verdict = "WARN:F<%d" % Tune.FREE_NORMAL
+			elif int(r[0]) < Difficulty.free_floor():
+				verdict = "WARN:F<%d" % Difficulty.free_floor()
 			print("  %4d  %5d | %6d %8d %4d | %s" % [lag, sep, r[0], r[2], int(r[1]), verdict])
+	get_tree().quit(0)
+
+
+## 난이도 축 분해. Hard 가 Normal 보다 **측정 가능하게 어려운가** 를 축별로 가른다.
+##
+## 첫 측정에서 Hard 전체가 구역 5 도달폭 60 → 59(사실상 동일), 구역 3 은 @180 에서
+## 66 → 73 으로 **넓어졌다.** peak 도 209 → 204 로 줄었다. 설계서 표를 그대로 넣었는데
+## 게임이 안 어려워진 것이다 — 축이 서로 상쇄되고 있다는 뜻이고, 그렇다면 표가 아니라
+## 이 게임의 기하에 맞는 값을 찾아야 한다. 어느 축이 무엇을 하는지부터 안다.
+func _axes() -> void:
+	print("== 난이도 축 분해 (구역 3·5 · 축을 하나씩만 Hard 로) ==")
+	print("  축                | Z3 @300 @180 peak | Z5 @300 @180 peak")
+	var H := Difficulty.Level.HARD
+	var N := Difficulty.Level.NORMAL
+	var cases: Array = [
+		["Normal (기준)", N, false, false, false, false],
+		["조류만 Hard", N, true, false, false, false],
+		["탄 수만 Hard", N, false, true, false, false],
+		["탄속만 Hard", N, false, false, true, false],
+		["발사간격만 Hard", N, false, false, false, true],
+		["Hard 전체", H, false, false, false, false],
+		["Hard − 탄속(1.00)", H, false, false, false, false],
+		["Hard 탄속 0.95", H, false, false, false, false],
+		["Hard 탄속 1.05", H, false, false, false, false],
+	]
+	var speed_override := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.00, 0.95, 1.05]
+	for c in cases:
+		Difficulty.apply(int(c[1]))
+		if bool(c[2]):
+			Difficulty.u_max = Difficulty.U_MAX[H]
+			Difficulty.ramp = Difficulty.RAMP[H]
+			Difficulty.segs = PackedInt32Array(Difficulty.SEGS[H])
+			Difficulty.period = 0
+			for q in Difficulty.segs:
+				Difficulty.period += q
+		if bool(c[3]):
+			Difficulty.count_m = Difficulty.COUNT_M[H]
+		if bool(c[4]):
+			Difficulty.speed_m = Difficulty.SPEED_M[H]
+		if bool(c[5]):
+			Difficulty.rate_m = Difficulty.RATE_M[H]
+		var so: float = speed_override[cases.find(c)]
+		if so > 0.0:
+			Difficulty.speed_m = so
+		var rows := _scan(Stage.STAGE_WAVES)
+		var z3: Array = rows[2]
+		var z5: Array = rows[4]
+		print("  %-17s | %4d %4d %4d | %4d %4d %4d" % [c[0],
+			int(z3[2]), int(z3[7]), int(z3[1]), int(z5[2]), int(z5[7]), int(z5[1])])
+	Difficulty.apply(N)
 	get_tree().quit(0)

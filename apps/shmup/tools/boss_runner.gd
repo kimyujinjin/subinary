@@ -15,6 +15,7 @@ const COMP_MIN := 52
 var _fair: Fairness = null
 
 func _ready() -> void:
+	Difficulty.apply_from_cmdline()
 	_fair = Fairness.new()
 	print("== 성분별 진단 (ω 0.30 · 탄속 170) ==")
 	print("  성분          | 최장min 통로min 유지min@t(창)        강제점프  peak  요구횡속 도달폭")
