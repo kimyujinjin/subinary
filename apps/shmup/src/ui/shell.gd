@@ -1,0 +1,304 @@
+class_name Shell
+extends Node2D
+## 화면 셸 — 타이틀 · 난이도 · 일시정지 · 결과 · 관측 기록 · 연습 · 설정.
+## 게임 화면과 사망 교재는 main.gd 가 그린다. 합쳐서 설계서 §7 의 화면 9개다.
+##
+## **Control 을 쓰지 않는다.** 전부 Node2D._draw 다 — 설계서가 지목한 mouse_filter 함정이
+## 원천적으로 생기지 않고, 절차적 도형 방침(이미지 애셋 0개)과도 일치한다.
+## 그래서 "MOUSE_FILTER_IGNORE 강제 헬퍼" 는 만들지 않는다. 없는 문제를 위한 도구다.
+##
+## 텍스트는 최소한만 쓴다. 숫자·패턴 ID(P01…P16)·난이도 이름은 전부 ASCII 라
+## 한글 서브셋 폰트가 필요 없다 — "이미지 애셋 0개" 가 유지된다.
+## 설명이 필요한 자리는 **그림으로** 말한다(점등된 칸 수, 막대, 링).
+
+enum Screen { PLAY, TITLE, DIFF, PAUSE, RESULT, LOG, PRACTICE, SETTINGS }
+
+const BTN_H := 96.0
+const BTN_GAP := 14.0
+const COL_BG := Color(0.03, 0.05, 0.07, 0.92)
+const COL_FG := Color(0.80, 0.95, 0.95, 1.0)
+const COL_DIM := Color(0.30, 0.45, 0.50, 1.0)
+const COL_ACC := Color(0.35, 0.90, 0.85, 1.0)
+const COL_LOCK := Color(0.22, 0.26, 0.30, 1.0)
+
+var main: Node = null
+var screen: int = Screen.TITLE
+var vh: float = Tune.PF_H
+var view_w: float = Tune.PF_W
+## 결과 화면이 보여줄 것. main 이 채운다.
+var result_score: int = 0
+var result_cleared: bool = false
+var result_zone: int = 0
+## 연습 모드로 고른 구역(-1 = 전체). main 이 읽는다.
+var practice_zone: int = -1
+
+var _btns: Array = []            ## [Rect2, id] — _draw 가 채우고 입력이 읽는다
+var _pressed: int = -1
+
+func playing() -> bool:
+	return screen == Screen.PLAY
+
+## ── 입력 ────────────────────────────────────────────────────────────────
+## 화면이 떠 있는 동안 **모든** 터치를 소비한다. 흘려보내면 뒤의 게임이 조작된다.
+func handle(event: InputEvent) -> bool:
+	if screen == Screen.PLAY:
+		return false
+	if event is InputEventScreenTouch:
+		var t := event as InputEventScreenTouch
+		if t.pressed:
+			_pressed = _hit(t.position)
+		else:
+			var up := _hit(t.position)
+			if up >= 0 and up == _pressed:
+				_activate(up)
+			_pressed = -1
+		queue_redraw()
+		return true
+	if event is InputEventScreenDrag:
+		return true
+	if event is InputEventKey:
+		var k := event as InputEventKey
+		if k.pressed and not k.echo and (k.keycode == KEY_ENTER or k.keycode == KEY_SPACE):
+			if not _btns.is_empty():
+				_activate(int(_btns[0][1]))
+			return true
+		if k.pressed and not k.echo and k.keycode == KEY_ESCAPE:
+			_activate(-2)
+			return true
+	return false
+
+func _hit(p: Vector2) -> int:
+	for b in _btns:
+		if (b[0] as Rect2).has_point(p):
+			return int(b[1])
+	return -1
+
+## 버튼 id 규약: 0 이상 = 화면별 의미, -2 = 뒤로.
+func _activate(id: int) -> void:
+	SaveData.save_now()
+	match screen:
+		Screen.TITLE:
+			match id:
+				0: _go(Screen.DIFF)
+				1: _go(Screen.LOG)
+				2: _go(Screen.SETTINGS)
+		Screen.DIFF:
+			if id == -2:
+				_go(Screen.TITLE)
+			elif SaveData.unlocked(id):
+				Difficulty.apply(id)
+				practice_zone = -1
+				_start()
+		Screen.LOG:
+			if id == -2:
+				_go(Screen.TITLE)
+			elif id >= 0 and SaveData.seen(id):
+				_go(Screen.PRACTICE)
+		Screen.PRACTICE:
+			if id == -2:
+				_go(Screen.LOG)
+			else:
+				practice_zone = id
+				_start()
+		Screen.SETTINGS:
+			match id:
+				0:
+					SaveData.sound_on = not SaveData.sound_on
+					SaveData._dirty = true
+					Audio.set_enabled(SaveData.sound_on)
+				1:
+					SaveData.haptics_on = not SaveData.haptics_on
+					SaveData._dirty = true
+				-2: _go(Screen.TITLE)
+		Screen.PAUSE:
+			match id:
+				0: _go(Screen.PLAY)          # 이어 하기
+				1: _start()                  # 처음부터
+				2: _go(Screen.TITLE)
+				-2: _go(Screen.PLAY)
+		Screen.RESULT:
+			match id:
+				0: _start()
+				1: _go(Screen.TITLE)
+				-2: _go(Screen.TITLE)
+	queue_redraw()
+
+func _go(s: int) -> void:
+	screen = s
+	_btns.clear()
+	queue_redraw()
+
+func _start() -> void:
+	screen = Screen.PLAY
+	_btns.clear()
+	if main != null:
+		main.begin_run()
+	queue_redraw()
+
+## ── 그리기 ──────────────────────────────────────────────────────────────
+func _draw() -> void:
+	if screen == Screen.PLAY:
+		return
+	_btns.clear()
+	draw_rect(Rect2(0.0, 0.0, view_w, vh), COL_BG)
+	match screen:
+		Screen.TITLE: _draw_title()
+		Screen.DIFF: _draw_diff()
+		Screen.LOG: _draw_log()
+		Screen.PRACTICE: _draw_practice()
+		Screen.SETTINGS: _draw_settings()
+		Screen.PAUSE: _draw_pause()
+		Screen.RESULT: _draw_result()
+
+func _f() -> Font:
+	return ThemeDB.fallback_font
+
+## 공용 버튼. 라벨은 ASCII 만 쓴다.
+func _btn(y: float, label: String, id: int, enabled := true) -> float:
+	var r := Rect2(40.0, y, view_w - 80.0, BTN_H)
+	_btns.append([r, id])
+	var col := COL_FG if enabled else COL_LOCK
+	if id == _pressed and enabled:
+		draw_rect(r, Color(col.r, col.g, col.b, 0.14))
+	draw_rect(r, col, false, 2.0)
+	draw_string(_f(), Vector2(r.position.x + 24.0, y + BTN_H * 0.5 + 9.0), label,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 28, col)
+	return y + BTN_H + BTN_GAP
+
+## 타이틀의 본문은 텍스트가 아니라 **16칸 중 몇 칸이 점등됐는가** 다(설계서 §7).
+func _draw_title() -> void:
+	# 비율(vh * 0.33)로 배치하면 화면비가 바뀔 때마다 무엇인가가 무엇인가를 덮는다 —
+	# 실측으로 두 번 겹쳤다(격자가 버튼을, 그 다음 격자가 제목을).
+	# **위에서 아래로 쌓고 버튼만 바닥에 앵커한다.** 그 사이 여백이 화면비 차이를 흡수한다.
+	var cx := view_w * 0.5
+	_draw_mark(Vector2(cx, 262.0), 80.0)
+	var title := "LUMEN DRIFT"
+	var tw := _f().get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 34).x
+	draw_string(_f(), Vector2(cx - tw * 0.5, 404.0), title,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 34, COL_ACC)
+	var gw: float = minf(268.0, view_w - 160.0)
+	_draw_log_grid(Vector2(cx - gw * 0.5, 436.0), gw, false)
+	var stack := BTN_H * 3.0 + BTN_GAP * 2.0
+	var y: float = maxf(436.0 + gw + 40.0, vh - 60.0 - stack)
+	y = _btn(y, "PLAY", 0)
+	y = _btn(y, "LOG   %d / %d" % [SaveData.seen_count(), Patterns.BOOK.size()], 1)
+	y = _btn(y, "SETTINGS", 2)
+
+## 타이틀 표식 — 링 3겹. 보스의 몸과 같은 형태다(이 게임이 무엇인지 그림으로 말한다).
+func _draw_mark(c: Vector2, r: float) -> void:
+	for i in 3:
+		var rr := r * (1.0 - 0.26 * float(i))
+		var col := Color(COL_ACC.r, COL_ACC.g, COL_ACC.b, 0.35 + 0.25 * float(i))
+		draw_arc(c, rr, 0.0, TAU, 48, col, 2.0, true)
+	draw_circle(c, r * 0.24, Color(0.02, 0.04, 0.06, 1.0))
+
+func _draw_diff() -> void:
+	draw_string(_f(), Vector2(44.0, 120.0), "DIFFICULTY", HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC)
+	var y := 180.0
+	for lv in [Difficulty.Level.NORMAL, Difficulty.Level.HARD]:
+		var ok := SaveData.unlocked(lv)
+		var label := "%s   best %d" % [Difficulty.NAMES[lv], SaveData.best[lv]]
+		if not ok:
+			label = "%s   [ clear Normal ]" % Difficulty.NAMES[lv]
+		y = _btn(y, label, lv, ok)
+		# 난이도 축을 숫자가 아니라 막대로 보인다 — 무엇이 바뀌는지가 보여야 한다.
+		# 버튼 **아래**에 둔다. 버튼 안에 그리면 테두리를 덮고 라벨이 잘린다.
+		_draw_axis_bars(Vector2(64.0, y + 6.0), lv)
+		y += 64.0
+	_btn(vh - 150.0, "BACK", -2)
+
+## 그 축의 4단 범위 안에서 이 난이도가 어디인가. invert 면 값이 작을수록 어렵다.
+static func _norm(table: Array, lv: int, invert: bool) -> float:
+	var lo := INF
+	var hi := -INF
+	for v in table:
+		lo = minf(lo, float(v))
+		hi = maxf(hi, float(v))
+	if hi - lo < 0.0001:
+		return 0.5
+	var t := (float(table[lv]) - lo) / (hi - lo)
+	return 1.0 - t if invert else t
+
+## 조류 유속 · 주기 · 탄 수 · 통과 폭 네 축을 막대로.
+func _draw_axis_bars(p: Vector2, lv: int) -> void:
+	# **축별로 정규화한다.** 절대 스케일로 그리면 Normal 과 Hard 의 차이가 막대 몇 픽셀이
+	# 되어 "무엇이 바뀌는가" 를 못 보여준다 — 이 화면의 존재 이유가 사라진다.
+	var axes := [
+		["flow", _norm(Difficulty.U_MAX, lv, false)],
+		["rate", _norm(Difficulty.RATE_M, lv, true)],
+		["bullets", _norm(Difficulty.COUNT_M, lv, false)],
+		["gap", _norm(Difficulty.PASS_D, lv, true)],
+	]
+	var x := p.x
+	for a in axes:
+		var w := 120.0
+		draw_rect(Rect2(x, p.y, w, 6.0), COL_LOCK)
+		draw_rect(Rect2(x, p.y, w * clampf(float(a[1]), 0.08, 1.0), 6.0), COL_ACC)
+		draw_string(_f(), Vector2(x, p.y + 26.0), String(a[0]),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COL_LOCK)
+		x += w + 18.0
+
+## 관측 기록 — 16칸. 어두운 칸이 남은 어휘다.
+func _draw_log() -> void:
+	draw_string(_f(), Vector2(44.0, 120.0), "OBSERVATION   %d / %d" % [
+			SaveData.seen_count(), Patterns.BOOK.size()],
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC)
+	_draw_log_grid(Vector2(44.0, 170.0), view_w - 88.0, true)
+	draw_string(_f(), Vector2(44.0, vh - 200.0), "tap a lit cell to practice",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 18, COL_LOCK)
+	_btn(vh - 150.0, "BACK", -2)
+
+func _draw_log_grid(p: Vector2, w: float, tappable: bool) -> void:
+	var cols := 4
+	var cell := w / float(cols)
+	for i in Patterns.BOOK.size():
+		var r := Rect2(p.x + cell * float(i % cols) + 4.0,
+				p.y + cell * float(i / cols) + 4.0, cell - 8.0, cell - 8.0)
+		var lit := SaveData.seen(i)
+		draw_rect(r, COL_ACC if lit else COL_LOCK, false, 2.0)
+		if lit:
+			draw_rect(r, Color(COL_ACC.r, COL_ACC.g, COL_ACC.b, 0.10))
+		var id: String = String(Patterns.BOOK[i]["id"])
+		draw_string(_f(), r.position + Vector2(10.0, r.size.y * 0.5 + 8.0), id,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 22, COL_ACC if lit else COL_LOCK)
+		if tappable and lit:
+			_btns.append([r, i])
+
+## 연습 — 구역 단위다. 구역이 곧 무피격 보너스 단위이자 연습 진입 단위다(설계서 §7).
+func _draw_practice() -> void:
+	draw_string(_f(), Vector2(44.0, 120.0), "PRACTICE", HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC)
+	var y := 180.0
+	for z in Stage.ZONES.size():
+		var clean := SaveData.zone_clean(z)
+		y = _btn(y, "ZONE %d   %s" % [z + 1, "CLEAN" if clean else "-"], z)
+	_btn(vh - 150.0, "BACK", -2)
+
+func _draw_settings() -> void:
+	draw_string(_f(), Vector2(44.0, 120.0), "SETTINGS", HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC)
+	var y := 180.0
+	y = _btn(y, "SOUND     %s" % ("ON" if SaveData.sound_on else "OFF"), 0)
+	y = _btn(y, "HAPTICS   %s" % ("ON" if SaveData.haptics_on else "OFF"), 1)
+	draw_string(_f(), Vector2(44.0, y + 40.0),
+			"sound off is a supported way to play", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, COL_LOCK)
+	_btn(vh - 150.0, "BACK", -2)
+
+func _draw_pause() -> void:
+	draw_string(_f(), Vector2(44.0, 140.0), "PAUSED", HORIZONTAL_ALIGNMENT_LEFT, -1, 34, COL_ACC)
+	var y := 220.0
+	y = _btn(y, "RESUME", 0)
+	y = _btn(y, "RESTART", 1)
+	y = _btn(y, "TITLE", 2)
+
+func _draw_result() -> void:
+	draw_string(_f(), Vector2(44.0, 140.0), "CLEAR" if result_cleared else "RUN OVER",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 34, COL_ACC if result_cleared else COL_FG)
+	draw_string(_f(), Vector2(44.0, 200.0), "SCORE   %d" % result_score,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 28, COL_FG)
+	draw_string(_f(), Vector2(44.0, 244.0), "BEST    %d" % SaveData.best[Difficulty.level],
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 24, COL_DIM)
+	draw_string(_f(), Vector2(44.0, 296.0), "REACHED ZONE %d" % (result_zone + 1),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 24, COL_DIM)
+	_draw_log_grid(Vector2(44.0, 340.0), view_w - 88.0, false)
+	var y := vh - 280.0
+	y = _btn(y, "AGAIN", 0)
+	y = _btn(y, "TITLE", 1)

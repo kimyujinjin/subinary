@@ -32,6 +32,7 @@ func _ready() -> void:
 	await _boss_clear_case()
 	await _system_cases()
 	await _bomb_input_cases()
+	Audio.teardown()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
 
@@ -185,9 +186,12 @@ func _system_cases() -> void:
 		"라이프 남음 → 사망 지점 부활·런 유지 (run %d · tick %d→%d · 무적 %d)" % [
 			SimClock.run_index, tick0, SimClock.sim_tick, m.invincible_left])
 
-	# ④ 라이프 0 → 완전 재시작
+	# ④ 라이프 0 → **결과 화면**. 셸이 들어오면서 계약이 바뀌었다 —
+	#    예전에는 곧바로 새 런을 시작했지만, 그러면 점수·관측 기록이 표시될 자리가 없고
+	#    "이 30초를 한 번 더 하고 싶은가" 를 물을 화면도 없다.
 	m.lives = 1
 	m.bombs = 0
+	m.score = 4321
 	await _force_hit(m)
 	for i in Tune.RESCUE_TICKS + Tune.RESCUE_HITSTOP + 8:
 		await get_tree().physics_frame
@@ -196,9 +200,26 @@ func _system_cases() -> void:
 	m._restart_armed = true
 	await get_tree().physics_frame
 	await get_tree().physics_frame
-	_check(SimClock.run_index > run0 and m.lives == Tune.LIVES and m.bombs == Tune.BOMBS
-			and m.score == 0,
-		"라이프 0 → 완전 재시작 (run %d → %d · 라이프 %d · 폭탄 %d)" % [
+	var sh: Shell = m._shell
+	_check(sh != null and sh.screen == Shell.Screen.RESULT and not sh.result_cleared
+			and sh.result_score == 4321 and SaveData.best[Difficulty.level] >= 4321,
+		"라이프 0 → 결과 화면 (screen %d · 점수 %d · 최고 %d)" % [
+			sh.screen if sh != null else -1, sh.result_score if sh != null else -1,
+			SaveData.best[Difficulty.level]])
+	# 결과 화면에서는 시뮬이 한 틱도 안 돈다 — 벽시계까지 멈춰야 구제 창이 뒤에서 안 만료된다.
+	var t_before := SimClock.sim_tick
+	var w_before := SimClock.wall_tick
+	for i in 10:
+		await get_tree().physics_frame
+	_check(SimClock.sim_tick == t_before and SimClock.wall_tick == w_before,
+		"결과 화면에서 시뮬·벽시계 정지 (tick %d→%d · wall %d→%d)" % [
+			t_before, SimClock.sim_tick, w_before, SimClock.wall_tick])
+	# AGAIN → 새 런
+	sh._activate(0)
+	await get_tree().physics_frame
+	_check(sh.screen == Shell.Screen.PLAY and SimClock.run_index > run0
+			and m.lives == Tune.LIVES and m.bombs == Tune.BOMBS,
+		"AGAIN → 새 런 (run %d → %d · 라이프 %d · 폭탄 %d)" % [
 			run0, SimClock.run_index, m.lives, m.bombs])
 
 	# ⑤ 광립 회수 → 점수. graze 링 반경으로 먹는다.

@@ -57,6 +57,11 @@ var _toggle_tick: int = -9999
 ## 다음 재파지에서 릴레이가 화면에 없는 손가락으로 넘어가 기체가 영구히 멈춘다(실측).
 var _band_idx: Dictionary = {}
 var fairness: Fairness = null
+var _shell: Shell = null
+## 이번 런에서 피격이 일어난 구역 비트마스크 — 무피격 보너스 판정에 쓴다.
+var _zone_hit_mask: int = 0
+var _zone_seen_mask: int = 0
+var _max_zone: int = 0
 var replay: Replay = null
 
 var lesson_step: int = 0
@@ -112,6 +117,16 @@ func _ready() -> void:
 	_screen_ui = ScreenOverlay.new()
 	_screen_ui.main = self
 	_screen.add_child(_screen_ui)
+	SaveData.load_now()
+	Audio.setup(self)
+	Audio.set_enabled(SaveData.sound_on)
+	# 셸은 화면 오버레이보다 **위**에 있어야 한다 — 아래에 두면 HUD 가 메뉴를 덮는다.
+	_shell = Shell.new()
+	_shell.main = self
+	_screen.add_child(_shell)
+	# 러너·캡처는 게임 화면에서 곧바로 시작한다. 타이틀을 띄우면 그 도구들이 전부 멈춘다.
+	if boss_mode or _headless_or_capture():
+		_shell.screen = Shell.Screen.PLAY
 
 	# 파이프라인 예열 30프레임(0.5초). 첫 탄이 뜨는 프레임의 컴파일 힛치를 미리 치른다 —
 	# 첫 웨이브는 t=30 에 오므로 그 전에 끝난다.
@@ -173,6 +188,22 @@ func _build_tag() -> String:
 	return "%s-%s" % [Engine.get_version_info()["string"],
 			"debug" if OS.is_debug_build() else "release"]
 
+## 타이틀을 건너뛰어야 하는 실행인가. 캡처·헤드리스·자동화는 입력이 없으므로
+## 메뉴에서 영원히 멈춘다 — 그 실행들의 판정이 통째로 무효가 된다.
+func _headless_or_capture() -> bool:
+	if DisplayServer.get_name() == "headless":
+		return true
+	var args := OS.get_cmdline_user_args()
+	args.append_array(OS.get_cmdline_args())
+	for a in args:
+		if a.begins_with("--capture=") or a == "--cap-rescue" or a.begins_with("--boss-phase="):
+			return true
+	return false
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_PREDELETE:
+		SaveData.save_now()
+
 func _on_resize() -> void:
 	# stretch = canvas_items + expand 이므로 폭은 항상 720 유닛이고 높이만 변한다.
 	# --force-16x9 는 16:9 실기가 없을 때 최악 케이스(덱 여백 0) 레이아웃만 대체 검증한다.
@@ -190,12 +221,20 @@ func _on_resize() -> void:
 	_backdrop.gutter_r = view_w - Tune.PF_W - field_dx
 	_screen_ui.vh = vh
 	_screen_ui.view_w = view_w
+	if _shell != null:
+		_shell.vh = vh
+		_shell.view_w = view_w
+		_shell.queue_redraw()
 	# view_size 를 직접 대입하면 _refresh_metrics 가 덮는다 — 높이 오버라이드로 전달한다.
 	TouchRouter.view_h_override = vh if forced else 0.0
 	TouchRouter._refresh_metrics()
 
-func _reset(seed_value: int) -> void:
+func _reset(seed_value: int, start_tick: int = 0) -> void:
 	SimClock.reset(seed_value)
+	SimClock.sim_tick = start_tick
+	_zone_hit_mask = 0
+	_zone_seen_mask = 0
+	_max_zone = 0
 	BulletField.clear()
 	enemies.clear()
 	motes.clear()
@@ -210,7 +249,13 @@ func _reset(seed_value: int) -> void:
 	TouchRouter.reset_run()
 	_rng_enemy.seed = seed_value
 	shot_n = 0
+	# 연습 구역에서 시작하면 그 전 웨이브는 이미 지나간 것으로 친다 —
+	# 커서를 0 으로 두면 지난 웨이브가 첫 틱에 한꺼번에 쏟아진다.
 	_wave_cursor = 0
+	if stage_full and start_tick > 0:
+		while _wave_cursor < Stage.STAGE_WAVES.size() \
+				and int(Stage.STAGE_WAVES[_wave_cursor][0]) < start_tick:
+			_wave_cursor += 1
 	invincible_left = INVINCIBLE_TICKS
 	player = Vector2(Tune.PF_W * 0.5, Tune.PF_H * 0.78)
 	player_prev = player
@@ -286,6 +331,9 @@ func _switch_scene() -> void:
 	get_tree().change_scene_to_file.call_deferred(next)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _shell != null and _shell.handle(event):
+		get_viewport().set_input_as_handled()
+		return
 	if _debug_toggle(event):
 		get_viewport().set_input_as_handled()
 		return
@@ -314,6 +362,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		# 배정해야 재시작 직후 그 손가락으로 곧바로 조작이 이어진다.
 
 func _physics_process(_delta: float) -> void:
+	# 셸(타이틀·일시정지·결과…)이 떠 있으면 시뮬이 한 틱도 돌지 않는다.
+	# 시간만 멈추는 게 아니라 begin_tick 자체를 건너뛴다 — 벽시계 틱이 흐르면
+	# 재시작 어포던스 깜빡임과 구제 창이 메뉴 뒤에서 조용히 만료된다.
+	if _shell != null and not _shell.playing():
+		return
 	SimClock.begin_tick()
 	if _cap_wall and _cap_tick > 0 and SimClock.wall_tick >= _cap_tick:
 		_cap_tick = 0
@@ -354,6 +407,7 @@ func _physics_process(_delta: float) -> void:
 		# 폭탄의 소거·무적은 _try_bomb 안에서 이미 적용됐으므로 지연되지 않는다.
 		var frozen := SimClock.hitstop_left > 0
 		if _try_bomb():
+			Audio.play(Audio.Sfx.BOMB)
 			if frozen:
 				_redraw_all(SimClock.sim_tick)
 				return
@@ -382,6 +436,10 @@ func _physics_process(_delta: float) -> void:
 	# 매 틱 상태 클램프. 가상 위치를 저장하지 않는다.
 	player.x = clampf(player.x, Tune.MARGIN, Tune.PF_W - Tune.MARGIN)
 	player.y = clampf(player.y, _player_min_y(tick), Tune.PF_H - Tune.MARGIN)
+	if stage_full:
+		var z := Stage.zone_of(tick)
+		_zone_seen_mask |= 1 << z
+		_max_zone = maxi(_max_zone, z)
 	_log_regrips(tick)
 
 	# 2. 자탄 (자동 사격)
@@ -417,12 +475,14 @@ func _physics_process(_delta: float) -> void:
 	# 4a. 격파 보상 — 적이 종류별 광립 수를 값으로 남긴다(인덱스는 이미 재배정됐다)
 	for kill in enemies.kills:
 		_drop_motes(kill[0].x, kill[0].y, int(kill[1]))
+		Audio.play(Audio.Sfx.KILL)
 	enemies.kills.clear()
 
 	# 4b. 광립 — 조류를 타고 부상하다 2초 뒤 기체로 온다. 회수 판정은 graze 링.
 	motes.step(tick, player)
 	if motes.collected > 0:
 		score += motes.collected * int(round(float(Tune.SCORE_MOTE) * _risk_mult()))
+		Audio.play(Audio.Sfx.MOTE)
 
 	# 5. 탄 적분 + 컬링 + 판정 (단일 순회)
 	# boss.done 은 이 틱의 step 4(자탄) 또는 boss.step 에서 켜지는데 _clear_left 는 아직 -1 이다.
@@ -438,6 +498,7 @@ func _physics_process(_delta: float) -> void:
 	if BulletField.graze_events > _graze_seen:
 		score += (BulletField.graze_events - _graze_seen) * Tune.SCORE_GRAZE
 		_graze_seen = BulletField.graze_events
+		Audio.play(Audio.Sfx.GRAZE)
 
 	# 6. 1D 공정성 스캔 — HUD 와 사망 교재가 같은 숫자를 쓴다
 	fairness.scan(BulletField, player.x, player.y)
@@ -562,6 +623,9 @@ func _try_bomb() -> bool:
 ## 피격 = 구제 창을 여는 것이지 사망이 아니다. 창 안에 폭탄을 누르면 취소된다.
 func _on_hit() -> void:
 	_pending_death = true
+	if stage_full:
+		_zone_hit_mask |= 1 << Stage.zone_of(SimClock.sim_tick)
+	Audio.play(Audio.Sfx.RESCUE)
 	lesson_bid = BulletField.hit_bid
 	lesson_death_pos = player
 	SimClock.rescue(Tune.RESCUE_TICKS)
@@ -575,6 +639,7 @@ func _on_hit() -> void:
 			"bombs=%d;lives=%d" % [bombs, lives]])
 
 func _on_death() -> void:
+	Audio.play(Audio.Sfx.HIT)
 	deaths += 1
 	_pending_death = false
 	lives -= 1
@@ -614,7 +679,35 @@ func _revive() -> void:
 	TouchRouter.reset_run()
 	_redraw_all(SimClock.sim_tick)
 
+## 셸이 "시작" 을 눌렀을 때 부른다. 연습 구역이 지정돼 있으면 그 구역의 첫 틱에서 연다.
+func begin_run() -> void:
+	var z: int = _shell.practice_zone if _shell != null else -1
+	_reset(FIXED_SEED, Stage.zone_of_start(z) if (stage_full and z >= 0) else 0)
+	Audio.music(SaveData.sound_on)
+	_redraw_all(SimClock.sim_tick)
+
+## 런이 끝났다 — 결과 화면으로. 라이프 소진·클리어 둘 다 여기로 온다.
+func finish_run(cleared: bool) -> void:
+	SaveData.submit_score(Difficulty.level, score)
+	if cleared:
+		SaveData.mark_cleared(Difficulty.level)
+	# 이번 런에서 지나갔고 한 번도 안 맞은 구역을 점등한다. 지나가지 않은 구역은 안 센다.
+	for z in Stage.ZONES.size():
+		if (_zone_seen_mask & (1 << z)) != 0 and (_zone_hit_mask & (1 << z)) == 0:
+			SaveData.mark_zone_clean(z)
+	SaveData.save_now()
+	Audio.music(false)
+	Audio.play(Audio.Sfx.CLEAR if cleared else Audio.Sfx.HIT)
+	if _shell != null:
+		_shell.result_score = score
+		_shell.result_cleared = cleared
+		_shell.result_zone = _max_zone
+		_shell._go(Shell.Screen.RESULT)
+
 func _restart() -> void:
+	if _shell != null and not boss_mode:
+		finish_run(false)
+		return
 	_reset(FIXED_SEED)
 	# 재드로우하지 않으면 재시작 직후 1프레임 동안 이전 런의 화면이 남는다.
 	_redraw_all(SimClock.sim_tick)
@@ -765,6 +858,7 @@ func _make_midboss(tick: int) -> void:
 ## 폭탄을 여기서 채우는 이유: 중간보스 직후가 보상 회랑이고, 그 뒤 구역 5·보스로
 ## 들어가기 때문이다. 리필이 없으면 전반부에서 폭탄을 쓴 사람이 후반부를 맨손으로 간다.
 func _kill_midboss(tick: int) -> void:
+	Audio.play(Audio.Sfx.PHASE)
 	_drop_motes_ring(MidBoss.CX, MidBoss.CY, 90.0, 60)
 	bombs = Tune.BOMBS
 	score += Tune.SCORE_MIDBOSS

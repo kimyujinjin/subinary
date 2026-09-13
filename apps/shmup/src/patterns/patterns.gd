@@ -47,6 +47,11 @@ const BOOK := [
 	{"id": &"P16", "tier": 3, "solo_period": 96,  "aimed": false, "origin": Vector2(360.0, 230.0)},
 ]
 
+## 관측 기록 — 그 패턴이 **실제로 탄을 낸** 지점에서만 표시한다.
+## 게이트 함수는 매 틱 불리므로 그 앞에 두면 한 번도 안 나온 패턴이 점등된다.
+static func mark(idx: int) -> void:
+	SaveData.mark_seen(idx)
+
 ## 단독 관측 — 도구 전용. 게임이 쓰는 것과 **같은 함수**를 부른다(별도 하네스를 만들면
 ## 게임과 갈라져서 틀린 숫자를 자신 있게 보고한다).
 static func emit_solo(idx: int, local: int, tick: int, target: Vector2) -> void:
@@ -115,6 +120,7 @@ static func p01_ex(local: int, ex: float, ey: float, arc: float, count: int,
 		speed: float, volley_ticks: int, volleys: int) -> void:
 	if local < 0 or local % volley_ticks != 0:
 		return
+	mark(0)
 	var v := local / volley_ticks
 	if v >= volleys:
 		return
@@ -139,6 +145,7 @@ const P03_GAP := 7
 static func p03(local: int, ex: float, ey: float, px: float, py: float) -> void:
 	if local < 0 or local >= P03_BURST * P03_GAP or local % P03_GAP != 0:
 		return
+	mark(1)
 	var a := atan2(py - ey, px - ex)
 	BulletField.spawn(ex, ey, cos(a) * P03_SPEED, sin(a) * P03_SPEED, Tune.Kind.NEEDLE)
 
@@ -165,6 +172,7 @@ static func p07_ex(local: int, tick: int, ex: float, ey: float,
 		pitch: float, emit_ticks: int, amp: float, ph: float) -> void:
 	if local < 0 or local % emit_ticks != 0:
 		return
+	mark(2)
 	# 격자 전체가 조류 적분값을 따라 표류한다 — 리본 간 간격은 보존된다.
 	var drift := BulletField.flow_c(tick) * 46.0
 	var phase := TAU * float(tick % P07_WAVE_PERIOD) / float(P07_WAVE_PERIOD)
@@ -190,6 +198,7 @@ const P05_SPEED := 200.0
 
 static func p05_ex(cx: float, cy: float, radius: float, angle: float,
 		speed: float, count: int, kind: int) -> void:
+	mark(3)
 	for i in count:
 		var a := angle + TAU * float(i) / float(count)
 		var dx := cos(a)
@@ -207,6 +216,7 @@ const P09_LAMBDA := 360.0
 const P09_GAP_HALF := 60.0     # 골 중심 ±60 을 비운다 → 중심간 160, 자유폭 128 > Normal 96
 
 static func p09_ex(y0: float, phase: float, tick: int, speed: float, kind: int) -> void:
+	mark(4)
 	# 발사 시점의 유속을 실어 준다 → 즉시 조류에 탄다
 	var u0 := BulletField.flow_u(y0, tick)
 	# 골 = sin(2πx/λ + φ) = 1 인 x — 가장 앞선(아래로 내려온) 지점
@@ -243,6 +253,7 @@ static func p02(local: int, ex: float, ey: float) -> void:
 	var every := Difficulty.every(P02_EVERY)
 	if local < 0 or local % every != 0:
 		return
+	mark(5)
 	p02_ex(ex, ey, Difficulty.count(P02_COUNT), P02_SPEED, P02_STOP_SEC,
 			float(local / every) * 0.42)
 
@@ -269,6 +280,7 @@ const P04_GAP := 12
 static func p04(local: int, ex: float, ey: float, px: float, py: float) -> void:
 	if local < 0 or local >= P04_BURST * P04_GAP or local % P04_GAP != 0:
 		return
+	mark(6)
 	var base := atan2(py - ey, px - ex)
 	for d in [-P04_SPREAD, 0.0, P04_SPREAD]:
 		var a := base + deg_to_rad(d)
@@ -290,6 +302,7 @@ static func p08(local: int, ex: float, ey: float) -> void:
 	var every := maxi(Boss.beat_len(), Tune.POD_FUSE + 30)
 	if local < 0 or local % every != 0:
 		return
+	mark(7)
 	var v := local / every
 	for i in 2:
 		var x := ex + (float(i) - 0.5) * P08_SPREAD + (30.0 if (v & 1) == 1 else -30.0)
@@ -316,6 +329,7 @@ static func p10(local: int, ex: float, ey: float) -> void:
 	var every := Difficulty.every(P10_EVERY)
 	if local < 0 or local % every != 0:
 		return
+	mark(8)
 	var v := local / every
 	for i in Difficulty.count(P10_COUNT):
 		var deg := 90.0 - P10_ARC * 0.5 + P10_ARC * hash01(v, i)
@@ -331,6 +345,7 @@ const P15_SPEED := 240.0
 const P15_GAP_DEG := 40.0
 
 static func p15(cx: float, cy: float, px: float, py: float) -> void:
+	mark(9)
 	var safe := atan2(py - cy, px - cx)
 	var half := deg_to_rad(P15_GAP_DEG) * 0.5
 	for i in P15_COUNT:
@@ -352,6 +367,7 @@ static func p06(local: int, ex: float, ey: float) -> void:
 	var every := Difficulty.every(P06_EVERY)
 	if local < 0 or local % every != 0:
 		return
+	mark(10)
 	var k := local / every
 	for s2 in 2:
 		var sign := 1.0 if s2 == 0 else -1.0
@@ -376,6 +392,7 @@ const P11_EVERY := 18
 static func p11(local: int, tick: int, ey: float) -> void:
 	if local < 0 or local % Difficulty.every(P11_EVERY) != 0:
 		return
+	mark(11)
 	var seam := Tune.PF_W * 0.5 + BulletField.flow_c(tick) * P11_SEAM
 	var u0 := BulletField.flow_u(ey, tick)
 	for side in 2:
@@ -403,6 +420,7 @@ static func p12(local: int, ex: float, ey: float, px: float, py: float) -> void:
 	# 넘어가면 기포가 멈추는 틱에 바늘이 안 나가고 "반전 프레임 = 조준 프레임" 이 사라진다.
 	var phase := local % maxi(Difficulty.every(P12_EVERY), int(P12_STOP_SEC * 60.0) + 30)
 	if phase == 0:
+		mark(12)
 		p02_ex(ex, ey, Difficulty.count(P12_BUBBLES), P12_SPEED, P12_STOP_SEC, 0.31)
 	elif phase == int(P12_STOP_SEC * 60.0):
 		# 기포가 멈추고 상승으로 돌아서는 바로 그 틱에 조준 바늘이 나간다
@@ -424,6 +442,7 @@ const P13_GATES := 2
 static func p13(local: int, cx: float, cy: float, px: float, py: float) -> void:
 	if local != 0:
 		return
+	mark(13)
 	# 게이트는 플레이어에 가장 가까운 각과 그 반대편 — 항상 250유닛 이내에 하나가 있다
 	# 게이트는 **인덱스로** 고른다. 각도 창으로 고르면 창 폭이 탄 간격보다 넓으면 2발씩
 	# 잡히고(4발), 좁으면 가장 가까운 탄이 창 밖이라 0발이 된다 — 둘 다 겪었다.
@@ -447,6 +466,9 @@ const P14_CYCLE := 384
 static func p14(local: int, tick: int, ex: float, ey: float, px: float, py: float) -> void:
 	if local < 0:
 		return
+	# P14 는 P01·P07·P03 의 합성이라 자기 spawn 이 없다. 이 함수가 도는 동안은
+	# 세 층 중 하나가 반드시 나가므로 여기서 표시한다.
+	mark(14)
 	var ph := local % P14_CYCLE
 	p01(ph, ex, ey)                                   # 층 1 — 낙하벽
 	p07(ph - 96, tick, ex, ey + 40.0)                 # 층 2 — 조류 격자
@@ -466,6 +488,7 @@ const P16_EVERY := 96
 static func p16(local: int, tick: int, ex: float, ey: float) -> void:
 	if local < 0 or local % Difficulty.every(P16_EVERY) != 0:
 		return
+	mark(15)
 	var c := BulletField.flow_c(tick)
 	var lead := c * P16_LEAD
 	var span := 300.0

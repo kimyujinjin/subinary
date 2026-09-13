@@ -123,6 +123,12 @@ const STAGE_WAVES := [
 	# 3:05–3:12 접근 연출 — 웨이브 없음. 조류가 강해지는 것으로 예고한다
 ]
 
+## 그 구역이 시작하는 틱. 연습 모드가 여기서 런을 연다.
+static func zone_of_start(z: int) -> int:
+	if z < 0 or z >= ZONES.size():
+		return 0
+	return int(ZONES[z][0])
+
 ## 구역 인덱스. 화면과 계측이 같은 함수를 쓴다.
 static func zone_of(tick: int) -> int:
 	var z := 0

@@ -34,6 +34,9 @@ func _ready() -> void:
 	_shear_window_cases()
 	_spin_cases()
 	_table_cases()
+	_shell_cases()
+	_audio_cases()
+	Audio.teardown()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
 
@@ -907,3 +910,95 @@ func _table_cases() -> void:
 		if Tune.KIND_NAMES[k] != "":
 			names += 1
 	_check(names == Tune.KIND_N, "탄종 이름이 전부 비어 있지 않다 (%d/%d)" % [names, Tune.KIND_N])
+
+
+## 화면 레이아웃. 버튼끼리 겹치거나 화면 밖으로 나가면 누를 수 없는 버튼이 생긴다 —
+## 실제로 타이틀에서 두 번 겹쳤다(격자가 버튼을, 고친 뒤엔 격자가 제목을).
+## 720×1280 과 889×1280(태블릿 expand 실측값), 720×1560(S25+) 세 비율을 전부 본다.
+func _shell_cases() -> void:
+	var keep := SaveData.seen_mask
+	SaveData.seen_mask = 0b0000101101011011      # 절반쯤 찬 상태 — 빈/꽉 찬 화면은 둘 다 거짓말이다
+	var sh := Shell.new()
+	sh.main = null
+	var bad := PackedStringArray()
+	for size in [Vector2(720.0, 1280.0), Vector2(889.0, 1280.0), Vector2(720.0, 1560.0)]:
+		sh.view_w = size.x
+		sh.vh = size.y
+		for scr in [Shell.Screen.TITLE, Shell.Screen.DIFF, Shell.Screen.LOG,
+				Shell.Screen.PRACTICE, Shell.Screen.SETTINGS, Shell.Screen.PAUSE,
+				Shell.Screen.RESULT]:
+			sh.screen = scr
+			sh._btns.clear()
+			sh._draw()                    # 트리 밖이라 draw_* 는 버려지지만 _btns 는 채워진다
+			for i in sh._btns.size():
+				var a: Rect2 = sh._btns[i][0]
+				if a.position.y < 0.0 or a.end.y > size.y or a.end.x > size.x:
+					bad.append("s%d scr%d 화면밖" % [int(size.y), scr])
+				for j in range(i + 1, sh._btns.size()):
+					if a.intersects(sh._btns[j][0] as Rect2):
+						bad.append("s%dx%d scr%d 버튼 %d↔%d 겹침" % [
+							int(size.x), int(size.y), scr, i, j])
+	sh.free()
+	SaveData.seen_mask = keep
+	_check(bad.is_empty(), "화면 7종 × 비율 3종 — 버튼 겹침·화면밖 0 %s" % (
+		"" if bad.is_empty() else "— " + ", ".join(bad)))
+
+
+## 8단계 게이트: **소리를 완전히 끄고도 정확히 플레이되는가.**
+## 조건은 하나다 — 소리가 시뮬에 영향을 주지 않아야 하고, 소리만 있는 정보가 없어야 한다.
+## 앞쪽은 여기서 기계적으로 확인한다(같은 시드로 소리 ON/OFF 두 판이 틱 단위로 같은가).
+## 뒤쪽은 코드 배치로 보장한다 — Audio.play 호출은 전부 main 의 **연출 경로**에 있고
+## src/bullets · src/enemies · src/patterns 어디에도 없다. 그것도 여기서 확인한다.
+func _audio_cases() -> void:
+	# 러너는 main 을 안 띄우므로 직접 굽는다. 굽는 것 자체가 검사 대상이기도 하다 —
+	# 기동 때 한 번 굽는 비용이 얼마인지도 같이 본다(실기 기동 지연에 직결된다).
+	var t0 := Time.get_ticks_usec()
+	Audio.setup(self)
+	var bake_ms := float(Time.get_ticks_usec() - t0) / 1000.0
+	_check(bake_ms < 400.0, "SFX 8종 + 루프 트랙 굽는 데 %.0f ms (기동 지연)" % bake_ms)
+	var src := ["res://src/bullets/bullet_field.gd", "res://src/enemies/boss.gd",
+			"res://src/enemies/midboss.gd", "res://src/enemies/enemy_field.gd",
+			"res://src/patterns/patterns.gd", "res://src/input/touch_router.gd",
+			"res://src/core/sim_clock.gd"]
+	var dirty := PackedStringArray()
+	for path in src:
+		var f := FileAccess.open(path, FileAccess.READ)
+		if f == null:
+			continue
+		if f.get_as_text().contains("Audio."):
+			dirty.append(path.get_file())
+		f.close()
+	_check(dirty.is_empty(), "시뮬 코드에 Audio 호출 0 %s" % (
+		"" if dirty.is_empty() else "— " + ", ".join(dirty)))
+
+	# 소리 ON/OFF 가 시뮬을 바꾸지 않는가. 같은 시드로 두 판을 돌려 탄 상태를 비교한다.
+	var sig := PackedFloat64Array()
+	for on in [true, false]:
+		Audio.set_enabled(on)
+		BulletField.clear()
+		BulletField.reset_flow()
+		Difficulty.apply(Difficulty.Level.NORMAL)
+		var b := Boss.new()
+		b.reset(0)
+		var p := Vector2(360.0, 1000.0)
+		for t in 900:
+			b.step(t, p)
+			BulletField.step_and_collide(t, p, p, true)
+		var acc := 0.0
+		for i in BulletField.n:
+			acc += float(BulletField.pos_x[i]) * 1.0 + float(BulletField.pos_y[i]) * 3.0
+		sig.append(acc + float(BulletField.n) * 1000.0)
+	Audio.set_enabled(SaveData.sound_on)
+	BulletField.clear()
+	BulletField.reset_flow()
+	_check(absf(sig[0] - sig[1]) < 0.0001,
+		"소리 ON/OFF 가 시뮬을 바꾸지 않는다 (%.1f / %.1f)" % [sig[0], sig[1]])
+
+	# 구운 소리가 실제로 소리인가 — 길이 0 이나 무음이면 "껐다" 와 구분이 안 된다.
+	var silent := PackedStringArray()
+	for i in Audio.SFX_N:
+		var w: AudioStreamWAV = Audio._streams[i] if Audio._streams.size() > i else null
+		if w == null or w.data.size() < 1000:
+			silent.append(str(i))
+	_check(silent.is_empty(), "SFX 8종이 전부 구워졌다 %s" % (
+		"" if silent.is_empty() else "— 빈 것: " + ", ".join(silent)))
