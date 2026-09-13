@@ -12,10 +12,9 @@ const RAW := "res://assets/raw"
 ## 키로 쓸 색과 허용 반경. 마젠타는 이 게임 팔레트에 없는 색이라 안전하다
 ## (청록·산호·호박·심청 어디에도 안 겹친다).
 const KEY := Color(1.0, 0.0, 1.0)
-const TOL := 0.34
-## 가장자리 번짐 정리 — 키 색과 섞인 화소는 알파를 깎는다. 안 하면 인물 테두리에
-## 자주색 실이 남고, 어두운 배경 위에서 그게 제일 먼저 보인다.
-const FRINGE := 0.55
+## 이 값 이상으로 마젠타가 섞였으면 배경으로 본다. 낮추면 반투명부가 더 투명해지고,
+## 높이면 배경 가장자리에 자주 실이 남는다. 0.45 는 받은 그림 6장으로 맞춘 값이다.
+const KEY_FULL := 0.45
 
 func _ready() -> void:
 	var jobs: Array = []
@@ -39,10 +38,12 @@ func _ready() -> void:
 		var before := Vector2i(img.get_width(), img.get_height())
 		img.convert(Image.FORMAT_RGBA8)
 		var keyed := _key(img)
-		var fitted := _fit(img, int(j[1]), int(j[2]), int(j[3]))
+		var trimmed := _trim(img)
+		var fitted := _fit(trimmed, int(j[1]), int(j[2]), int(j[3]))
 		var err := fitted.save_png(ProjectSettings.globalize_path(dst))
-		print("  %-20s %dx%d → %dx%d · 배경 화소 %d%% 제거 · %s" % [
-			name_, before.x, before.y, int(j[1]), int(j[2]), keyed,
+		print("  %-20s %dx%d → 잘라내기 %dx%d → %dx%d · 배경 %d%% · %s" % [
+			name_, before.x, before.y, trimmed.get_width(), trimmed.get_height(),
+			int(j[1]), int(j[2]), keyed,
 			"ok" if err == OK else "err %d" % err])
 		done += 1
 	print("== %d장 배치 ==" % done)
@@ -50,30 +51,67 @@ func _ready() -> void:
 		print("  다음: --import 한 번 → scenes/check_portraits.tscn → scenes/portrait_preview.tscn")
 	get_tree().quit(0)
 
-## 마젠타를 알파로. 반환은 제거된 화소 비율(%).
+## 마젠타를 알파로 — **디스필(despill) 방식**. 반환은 완전 제거된 화소 비율(%).
+##
+## 처음엔 "키 색과 거리가 가까우면 지운다" 로 짰는데, 그건 **반투명 부분을 못 지운다.**
+## 나린의 모자와 어깨 망토는 반투명이라 마젠타가 그 아래로 비쳐 자주색으로 섞였고,
+## 순수 마젠타가 아니라서 살아남아 화면에서 모자에 보라색 격자가 남았다(실측).
+##
+## 마젠타는 정의상 **R 과 B 가 G 보다 높은** 색이다. 그 초과분 m = min(R,B) − G 가
+## 곧 "이 화소에 섞인 마젠타의 양" 이다. 그래서:
+##   · m 이 크면 배경 → 알파 0
+##   · m 이 중간이면 반투명부에 배경이 비친 것 → 알파를 그만큼 깎고 색에서 자주를 뺀다
+##   · m ≤ 0 이면 마젠타가 아니다 → 손대지 않는다
+## 이 게임 팔레트가 전부 안전한 이유: 민트(G≥B>R)·심청(B>G>R)·호박(R>G>B) 어디도
+## "R 과 B 가 동시에 G 보다 높다" 를 만족하지 않는다.
 func _key(img: Image) -> int:
 	var w := img.get_width()
 	var h := img.get_height()
-	var hit := 0
+	var gone := 0
 	for y in h:
 		for x in w:
 			var c := img.get_pixel(x, y)
-			# 키 색과의 거리. 마젠타는 R 과 B 가 높고 G 가 낮다 —
-			# 그 조합이 이 게임 팔레트에 없어서 인물을 안 갉아먹는다.
-			var d := absf(c.r - KEY.r) + absf(c.g - KEY.g) + absf(c.b - KEY.b)
-			if d < TOL:
+			var m: float = minf(c.r, c.b) - c.g
+			if m <= 0.02:
+				continue
+			# 알파: 마젠타 초과분이 KEY_FULL 이상이면 완전 투명.
+			var a: float = clampf(1.0 - m / KEY_FULL, 0.0, 1.0)
+			if a <= 0.004:
 				img.set_pixel(x, y, Color(0, 0, 0, 0))
-				hit += 1
-			elif d < TOL * 2.2:
-				# 경계 번짐 — 알파를 깎고 자주색 성분을 빼서 테두리 실을 없앤다
-				var t := (d - TOL) / (TOL * 1.2)
-				var g := maxf(c.g, 0.0)
-				img.set_pixel(x, y, Color(minf(c.r, g + 0.12), c.g, minf(c.b, g + 0.12),
-						c.a * clampf(t, 0.0, 1.0) * FRINGE + c.a * (1.0 - FRINGE) * t))
-			hit += 0
-	return int(round(100.0 * float(hit) / float(w * h)))
+				gone += 1
+				continue
+			# 디스필: R·B 를 G 까지 끌어내려 자주 기운을 없앤다.
+			# 완전히 G 로 눌러 버리면 색이 죽으므로 초과분만 제거한다.
+			img.set_pixel(x, y, Color(minf(c.r, c.g), c.g, minf(c.b, c.g), c.a * a))
+	return int(round(100.0 * float(gone) / float(w * h)))
 
-## 규격 비율에 **여백을 붙여서** 맞춘다(잘라내지 않는다). 그 다음 규격 크기로 리샘플.
+## 알파가 있는 영역까지 잘라낸다 — **빈 여백을 버린다.**
+##
+## 받은 그림에는 빈 배경이 30~60%% 있다. 그걸 그대로 리샘플하면 화면에서 인물이 그만큼
+## 작아진다. 실제로 비행 스프라이트(58px)에서 인물이 안 읽히는 뭉개짐이 됐다.
+## 잘라내는 것은 **배경뿐**이고 인물은 한 화소도 안 자른다 — 규격의 "잘라내지 않는다" 는
+## 인물을 자르지 말라는 뜻이다.
+func _trim(img: Image) -> Image:
+	var w := img.get_width()
+	var h := img.get_height()
+	var x0 := w
+	var y0 := h
+	var x1 := -1
+	var y1 := -1
+	for y in h:
+		for x in w:
+			if img.get_pixel(x, y).a > 0.02:
+				if x < x0: x0 = x
+				if y < y0: y0 = y
+				if x > x1: x1 = x
+				if y > y1: y1 = y
+	if x1 < 0:
+		return img
+	var out := Image.create(x1 - x0 + 1, y1 - y0 + 1, false, Image.FORMAT_RGBA8)
+	out.blit_rect(img, Rect2i(x0, y0, x1 - x0 + 1, y1 - y0 + 1), Vector2i.ZERO)
+	return out
+
+## 규격 비율에 **여백을 붙여서** 맞춘다(인물을 잘라내지 않는다). 그 다음 규격 크기로 리샘플.
 func _fit(img: Image, tw: int, th: int, margin: int) -> Image:
 	var inner_w := tw - margin * 2
 	var inner_h := th - margin * 2
