@@ -40,15 +40,21 @@ static func setup(node: Node) -> void:
 	_streams.resize(SFX_N)
 	for i in SFX_N:
 		_streams[i] = _bake(i)
+	# **call_deferred 로 붙인다.** main._ready 안에서 트리 루트에 직접 add_child 하면
+	# 루트가 자식 설정 중이라 실패한다 — 실기 로그가 정확히 그렇게 말했다:
+	#   "Parent node is busy setting up children, add_child() failed" ×4
+	#   "Playback can only happen when a node is inside the scene tree"
+	# 즉 폰에서 **소리가 통째로 안 났다.** 데스크톱 러너는 러너 _ready 에서 부르는데
+	# 그때는 루트가 한가해서 통과했다 — 실기에서만 깨지는 부류다.
 	for i in VOICES:
 		var p := AudioStreamPlayer.new()
 		p.bus = "SFX"
-		root.add_child(p)
+		root.add_child.call_deferred(p)
 		_players.append(p)
 	_music = AudioStreamPlayer.new()
 	_music.bus = "MUSIC"
 	_music.stream = _bake_music()
-	root.add_child(_music)
+	root.add_child.call_deferred(_music)
 
 static func _make_bus(_root: Node, name_: String) -> int:
 	var idx := AudioServer.get_bus_index(name_)
@@ -96,14 +102,16 @@ static func play(id: int) -> void:
 	if _players.is_empty():
 		return
 	var p: AudioStreamPlayer = _players[_next]
-	if not is_instance_valid(p):
+	# 아직 트리에 안 들어갔을 수 있다(call_deferred). 들어가기 전에 play() 하면
+	# "Playback can only happen when a node is inside the scene tree" 로 에러만 쌓인다.
+	if not is_instance_valid(p) or not p.is_inside_tree():
 		return
 	_next = (_next + 1) % VOICES
 	p.stream = _streams[id]
 	p.play()
 
 static func music(on: bool) -> void:
-	if _music == null or not is_instance_valid(_music):
+	if _music == null or not is_instance_valid(_music) or not _music.is_inside_tree():
 		return
 	if on and not _music.playing:
 		_music.play()

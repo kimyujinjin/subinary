@@ -39,7 +39,7 @@ func _ready() -> void:
 	_spin_cases()
 	_table_cases()
 	_shell_cases()
-	_audio_cases()
+	await _audio_cases()
 	Audio.teardown()
 	print("== 실패 %d ==" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
@@ -1004,5 +1004,19 @@ func _audio_cases() -> void:
 		var w: AudioStreamWAV = Audio._streams[i] if Audio._streams.size() > i else null
 		if w == null or w.data.size() < 1000:
 			silent.append(str(i))
+	# 실기에서 소리가 통째로 안 났다: main._ready 안에서 트리 루트에 직접 add_child 하면
+	# "Parent node is busy setting up children" 으로 실패하고, 그 뒤 모든 play() 가
+	# "Playback can only happen when a node is inside the scene tree" 로 죽는다.
+	# call_deferred 로 붙이므로 **한 프레임 뒤에** 트리에 들어와 있어야 한다.
+	await get_tree().process_frame
+	var in_tree := 0
+	for pl in Audio._players:
+		if is_instance_valid(pl) and pl.is_inside_tree():
+			in_tree += 1
+	_check(in_tree == Audio.VOICES and Audio._music != null and Audio._music.is_inside_tree(),
+		"오디오 노드가 한 프레임 뒤 트리에 들어와 있다 (%d/%d · 음악 %s)" % [
+			in_tree, Audio.VOICES,
+			"있음" if Audio._music != null and Audio._music.is_inside_tree() else "없음"])
+
 	_check(silent.is_empty(), "SFX 8종이 전부 구워졌다 %s" % (
 		"" if silent.is_empty() else "— 빈 것: " + ", ".join(silent)))
