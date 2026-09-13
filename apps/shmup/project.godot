@@ -78,3 +78,11 @@ textures/canvas_textures/default_texture_filter=1
 ; 의 has_valid_project_configuration 이 should_import_etc2_astc() 실패 시 valid=false 만 하고
 ; r_error 에 아무것도 넣지 않는다. 그래서 doctor.sh 의 대조 목록에 넣어 다시 꺼지지 않게 한다.
 textures/vram_compression/import_etc2_astc=true
+
+[gui]
+
+; 한글 폰트. Godot 기본 폰트는 CJK 를 포함하지 않아 대사·이름이 빈 칸으로 나온다.
+; Pretendard(SIL OFL 1.1)를 **화면에 실제로 나오는 글자만** 서브셋했다(1.5MB → 114KB).
+; 이 프로젝트의 "이미지 애셋 0개" 는 여기서 끝난다 — 폰트도 초상화도 애셋이다.
+; 라이선스 고지는 ATTRIBUTIONS.md 에 있고, OFL 은 배포 시 고지를 함께 싣도록 요구한다.
+theme/custom_font="res://assets/fonts/Pretendard-subset.ttf"

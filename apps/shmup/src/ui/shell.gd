@@ -11,7 +11,7 @@ extends Node2D
 ## 한글 서브셋 폰트가 필요 없다 — "이미지 애셋 0개" 가 유지된다.
 ## 설명이 필요한 자리는 **그림으로** 말한다(점등된 칸 수, 막대, 링).
 
-enum Screen { PLAY, TITLE, DIFF, PAUSE, RESULT, LOG, PRACTICE, SETTINGS }
+enum Screen { PLAY, TITLE, DIFF, PAUSE, RESULT, LOG, PRACTICE, SETTINGS, PILOT, TALK }
 
 const BTN_H := 96.0
 const BTN_GAP := 14.0
@@ -31,6 +31,10 @@ var result_cleared: bool = false
 var result_zone: int = 0
 ## 연습 모드로 고른 구역(-1 = 전체). main 이 읽는다.
 var practice_zone: int = -1
+## 대사 — main 이 보스 등장에서 채우고 셸이 한 줄씩 넘긴다.
+var talk_script: Array = []
+var talk_line: int = 0
+var talk_opponent: int = 2       ## 초상화 인덱스 (2 = 테르사, 3 = 코로나)
 
 var _btns: Array = []            ## [Rect2, id] — _draw 가 채우고 입력이 읽는다
 ## 누르고 있는 손가락 → 버튼 id. **index 별로 든다.**
@@ -94,14 +98,26 @@ func _hit(p: Vector2) -> int:
 ## 버튼 id 규약: 0 이상 = 화면별 의미, -2 = 뒤로.
 func _activate(id: int) -> void:
 	match screen:
+		Screen.PILOT:
+			if id == -2:
+				_go(Screen.TITLE)
+			elif id >= 0 and id < Cast.PILOT_N:
+				Cast.pilot = id
+				_go(Screen.DIFF)
+		Screen.TALK:
+			# 대사는 어디를 눌러도 넘어간다. 읽는 속도는 사람마다 다르고,
+			# 5분 런 중간이라 "다음" 버튼을 찾게 만들면 안 된다.
+			talk_line += 1
+			if talk_line >= talk_script.size():
+				_go(Screen.PLAY)
 		Screen.TITLE:
 			match id:
-				0: _go(Screen.DIFF)
+				0: _go(Screen.PILOT)
 				1: _go(Screen.LOG)
 				2: _go(Screen.SETTINGS)
 		Screen.DIFF:
 			if id == -2:
-				_go(Screen.TITLE)
+				_go(Screen.PILOT)
 			elif SaveData.unlocked(id):
 				Difficulty.apply(id)
 				practice_zone = -1
@@ -181,6 +197,8 @@ func _draw() -> void:
 	match screen:
 		Screen.TITLE: _draw_title()
 		Screen.DIFF: _draw_diff()
+		Screen.PILOT: _draw_pilot()
+		Screen.TALK: _draw_talk()
 		Screen.LOG: _draw_log()
 		Screen.PRACTICE: _draw_practice()
 		Screen.SETTINGS: _draw_settings()
@@ -369,3 +387,58 @@ func _draw_result() -> void:
 	var y := by
 	y = _btn(y, "AGAIN", 0)
 	y = _btn(y, "TITLE", 1)
+
+
+## 조종사 선택 — 두 사람의 차이를 **문장 하나와 그림**으로 보인다.
+## 숫자(대미지 0.95/1.10)를 보이지 않는 이유: 그 숫자를 비교하면 "더 센 쪽" 을 고르게 되는데
+## 이 둘은 세기가 아니라 조준 방식이 다르다. 차이는 사격 폭 그림으로 말한다.
+func _draw_pilot() -> void:
+	if not dry:
+		draw_string(_f(), Vector2(44.0, 120.0), "PILOT", HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC)
+	var y := 180.0
+	for i in Cast.PILOT_N:
+		var r := Rect2(40.0, y, view_w - 80.0, 180.0)
+		_btns.append([r, i])
+		var sel := Cast.pilot == i
+		if not dry:
+			draw_rect(r, COL_ACC if sel else COL_FG, false, 2.0)
+			Portraits.draw_into(self, i, Rect2(r.position + Vector2(14.0, 14.0), Vector2(152.0, 152.0)))
+			draw_string(_f(), r.position + Vector2(186.0, 52.0), Cast.NAMES[i],
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC if sel else COL_FG)
+			draw_string(_f(), r.position + Vector2(186.0, 92.0), Cast.TAGLINE[i],
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 17, COL_DIM)
+			# 사격 폭을 그대로 그린다 — 이것이 두 사람의 진짜 차이다.
+			var sx := r.position.x + 186.0
+			var sy := r.position.y + 132.0
+			for s2 in [-Cast.COL_HALF[i], Cast.COL_HALF[i]]:
+				draw_line(Vector2(sx + 60.0 + s2, sy + 26.0), Vector2(sx + 60.0 + s2, sy),
+						COL_ACC if sel else COL_DIM, 3.0)
+			draw_arc(Vector2(sx + 60.0, sy + 34.0), Cast.PICKUP_MULT[i] * 12.0, 0.0, TAU, 20,
+					COL_DIM, 1.5, true)
+		y += 196.0
+	_btn(vh - 150.0, "BACK", -2)
+
+## 전투 전 대사. 초상화 + 이름 + 한 줄.
+func _draw_talk() -> void:
+	if talk_line >= talk_script.size():
+		return
+	var line: Array = talk_script[talk_line]
+	var speaker := int(line[0])
+	var who: int = Cast.portrait_of(speaker, talk_opponent)
+	var name_: String = Cast.NAMES[Cast.pilot] if speaker < 0 else (
+			Cast.MID_NAME if talk_opponent == 2 else Cast.BOSS_NAME)
+	# 화면 전체가 탭 대상이다 — 어디를 눌러도 넘어간다.
+	_btns.append([Rect2(0.0, 0.0, view_w, vh), 0])
+	if dry:
+		return
+	var box := Rect2(30.0, vh - 340.0, view_w - 60.0, 260.0)
+	Portraits.draw_into(self, who, Rect2(Vector2(view_w * 0.5 - 130.0, box.position.y - 250.0),
+			Vector2(260.0, 260.0)))
+	draw_rect(box, Color(0.03, 0.06, 0.08, 0.94))
+	draw_rect(box, COL_ACC, false, 2.0)
+	draw_string(_f(), box.position + Vector2(22.0, 42.0), name_,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 24, COL_ACC)
+	draw_multiline_string(_f(), box.position + Vector2(22.0, 92.0), String(line[1]),
+			HORIZONTAL_ALIGNMENT_LEFT, box.size.x - 44.0, 22, 4, COL_FG)
+	draw_string(_f(), box.position + Vector2(box.size.x - 40.0, box.size.y - 18.0), ">",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 22, COL_DIM)

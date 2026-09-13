@@ -247,7 +247,8 @@ func _draw_hud() -> void:
 	if m.midboss != null:
 		var mb: MidBoss = m.midboss
 		var w := mb.vortex_w(SimClock.sim_tick)
-		l1 += "  M%.0f%% P%d %s" % [mb.hp_frac() * 100.0, mb.phase,
+		l1 += "  M%.0f%% %s %s" % [mb.hp_frac() * 100.0,
+				Cast.MID_PHASE[clampi(mb.phase - 1, 0, 2)],
 				"전환" if mb.gap_left > 0 else ("와류%+.1f" % w if w != 0.0 else "조류만")]
 	# 보스 HP · 경과 · 현재 페이즈/창 — 요구된 디버그 항목(보스 HP · 현재 패턴 이름)
 	if m.boss != null:
@@ -268,8 +269,11 @@ func _draw_hud() -> void:
 						else ("주머니" if macro_t < Boss.FINALE_AT else "종조")
 		if b.gap_left > 0:
 			sub = "전환"
-		l1 += "  B%.0f%% %.1fs P%d %s" % [b.hp_frac() * 100.0,
-				float(b.phase_elapsed(SimClock.sim_tick)) / 60.0, b.phase, sub]
+		# 페이즈를 숫자가 아니라 **이름**으로 띄운다. 「점등」·「역상」·「화관」은
+		# 그 페이즈가 무엇을 가르치는가와 같은 말이라, 이름이 곧 힌트다.
+		l1 += "  B%.0f%% %.1fs %s %s" % [b.hp_frac() * 100.0,
+				float(b.phase_elapsed(SimClock.sim_tick)) / 60.0,
+				Cast.BOSS_PHASE[clampi(b.phase - 1, 0, 2)], sub]
 	var l2 := "k%.2f %s  C%+.2f  gz%d  rg%d  fpp%.3f  %.0fmm%s  %dx%d  run%d  d%d" % [
 		TouchRouter.k, "FOCUS" if TouchRouter.focus else "     ",
 		BulletField.flow_c(SimClock.sim_tick), BulletField.graze_events,

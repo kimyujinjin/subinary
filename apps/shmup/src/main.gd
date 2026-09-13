@@ -134,6 +134,7 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(_on_resize)
 	_on_resize()
 	Difficulty.apply_from_cmdline()
+	Cast.apply_from_cmdline()
 	_parse_capture()
 	_reset(FIXED_SEED)
 	# run 행은 **런이 시작될 때** 쓴다(begin_run). 기동 시 쓰면 그때는 아직 타이틀이라
@@ -768,7 +769,9 @@ func _step_lesson() -> void:
 # ── 자탄 ────────────────────────────────────────────────────────────────
 func _fire() -> void:
 	# 집중이면 2열이 1줄로 수렴한다(설계서 §3). 대미지는 _shot_dmg() 가 1.4배로 올린다.
-	var half: float = 2.0 if TouchRouter.focus else Tune.SHOT_COL_HALF
+	# 조종사마다 2열의 폭이 다르다. 집중하면 두 사람 다 한 줄로 모인다 —
+	# 집중은 "폭을 버리고 화력을 얻는다" 는 공통 규칙이고, 그 교환비만 사람마다 다르다.
+	var half: float = 2.0 if TouchRouter.focus else Cast.col_half()
 	for s in [-half, half]:
 		if shot_n >= Tune.MAX_PSHOTS:
 			return
@@ -789,7 +792,7 @@ func _step_shots() -> void:
 
 ## 집중 사격은 DPS +40%.
 func _shot_dmg() -> float:
-	return Tune.SHOT_DMG * (Tune.FOCUS_DMG_MULT if TouchRouter.focus else 1.0)
+	return Cast.shot_dmg(TouchRouter.focus)
 
 ## 링 둘레에 흩뿌린다 — 격파 연출용.
 func _drop_motes_ring(cx: float, cy: float, radius: float, count: int) -> void:
@@ -869,6 +872,17 @@ func _player_min_y(tick: int) -> float:
 		return base
 	return lerpf(Boss.PLAYER_MIN_Y, base, float(d) / float(BOSS_APPROACH))
 
+## 전투 전 대사를 띄운다. 시뮬은 셸이 떠 있는 동안 한 틱도 안 돈다 —
+## 대사가 끝나면 **그 틱 그대로** 이어진다(읽는 동안 탄이 날아오면 대사가 벌이 된다).
+## 연습 모드에서는 띄우지 않는다: 같은 구역을 반복하는데 매번 대사를 보게 하면 방해다.
+func _talk(script_: Array, opponent: int) -> void:
+	if _shell == null or boss_mode or _shell.practice_zone >= 0:
+		return
+	_shell.talk_script = script_
+	_shell.talk_opponent = opponent
+	_shell.talk_line = 0
+	_shell._go(Shell.Screen.TALK)
+
 func _make_boss() -> void:
 	boss = Boss.new()
 	boss.reset(SimClock.sim_tick)
@@ -876,6 +890,7 @@ func _make_boss() -> void:
 	_boss_view.boss = boss
 	_field.add_child(_boss_view)
 	_field.move_child(_boss_view, 1)   # 배경 바로 위 = 탄 레이어 아래. 탄이 몸통 위를 지나간다
+	_talk(Cast.BOSS_TALK, 3)
 
 func _make_midboss(tick: int) -> void:
 	midboss = MidBoss.new()
@@ -884,6 +899,7 @@ func _make_midboss(tick: int) -> void:
 	_mb_view.mb = midboss
 	_field.add_child(_mb_view)
 	_field.move_child(_mb_view, 1)     # 배경 바로 위 = 탄 레이어 아래
+	_talk(Cast.MID_TALK, 2)
 
 ## 격파 보상 — 광립 60개 상승 + 폭탄 최대치 리필(설계서 §6).
 ## 폭탄을 여기서 채우는 이유: 중간보스 직후가 보상 회랑이고, 그 뒤 구역 5·보스로

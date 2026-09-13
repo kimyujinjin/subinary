@@ -32,13 +32,13 @@ func _ready() -> void:
 	# 최고점수·해금·무피격 기록을 0 으로 덮어쓴다(실측). 경고도 실패도 없이 사라진다.
 	SaveData.reset_for_test("user://save-test-killtime_runner.json")
 	Difficulty.apply_from_cmdline()
+	Cast.apply_from_cmdline()
 	_fair = Fairness.new()
 	_free.resize(Tune.SCAN_CELLS)
 	print("== 킬타임 실측 (코어 정렬을 노리며 회피하는 경로) ==")
-	print("  자탄 %.0f dmg × %.1f발/초 = %.0f DPS (집중 %.0f DPS)" % [
-		Tune.SHOT_DMG, 2.0 * 60.0 / float(Tune.SHOT_PERIOD_TICKS),
-		Tune.SHOT_DMG * 2.0 * 60.0 / float(Tune.SHOT_PERIOD_TICKS),
-		Tune.SHOT_DMG * Tune.FOCUS_DMG_MULT * 2.0 * 60.0 / float(Tune.SHOT_PERIOD_TICKS)])
+	print("  %s · 자탄 %.2f dmg × %.1f발/초 = %.1f DPS (집중 %.1f DPS)" % [
+		Cast.pilot_name(), Cast.shot_dmg(false),
+		2.0 * 60.0 / float(Tune.SHOT_PERIOD_TICKS), Cast.dps(), Cast.dps(true)])
 	print("  정렬률 = 살아남는 경로 중 코어 정렬 볼리가 최대인 것(고정점 반복). 잔여피격 0 이면 달성 가능하다.")
 	print("  실제 플레이어는 완전정보가 없으므로 이보다 낮다 — 이것은 상한이다.")
 	print("  페이즈 | 정렬률 잔여피격 반복 | DPS실효 | 소요 / 상한")
@@ -49,7 +49,7 @@ func _ready() -> void:
 		var align: float = r[0]
 		var share := Boss.HP_MAX * _hp_share(ph)
 		var cap := float(_cap(ph)) / 60.0
-		var dps: float = align * Tune.SHOT_DMG * 2.0 * 60.0 / float(Tune.SHOT_PERIOD_TICKS)
+		var dps: float = align * Cast.dps()
 		var secs: float = share / maxf(dps, 0.001)
 		total += secs
 		frac_all += align
@@ -60,7 +60,7 @@ func _ready() -> void:
 	print("  ─ 합계 킬타임 %.0f초 (평균 정렬 %.1f%%) · 5분 스테이지의 보스 예산은 108초" % [
 		total, avg * 100.0])
 	print("  ─ 이 정렬률에서 108초에 맞는 HP = %.0f (현재 %.0f)" % [
-		avg * Tune.SHOT_DMG * 2.0 * 60.0 / float(Tune.SHOT_PERIOD_TICKS) * 108.0, Boss.HP_MAX])
+		avg * Cast.dps() * 108.0, Boss.HP_MAX])
 	get_tree().quit(0)
 
 func _hp_share(ph: int) -> float:

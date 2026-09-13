@@ -28,8 +28,13 @@ func _ready() -> void:
 		await get_tree().physics_frame
 	_check(SimClock.sim_tick == t0, "타이틀에서 시뮬 정지 (tick %d)" % SimClock.sim_tick)
 
-	sh._activate(0)                                  # PLAY → 난이도
-	_check(sh.screen == Shell.Screen.DIFF, "PLAY → 난이도 화면")
+	sh._activate(0)                                  # PLAY → 조종사
+	_check(sh.screen == Shell.Screen.PILOT, "PLAY → 조종사 선택 (screen %d)" % sh.screen)
+	sh._activate(Cast.Pilot.HAEMU)                   # 조종사 고르면 난이도로
+	_check(sh.screen == Shell.Screen.DIFF and Cast.pilot == Cast.Pilot.HAEMU,
+		"조종사 선택 → 난이도 (%s)" % Cast.pilot_name())
+	_check(absf(Cast.shot_dmg(false) - Tune.SHOT_DMG * Cast.DMG_MULT[Cast.Pilot.HAEMU]) < 0.001,
+		"조종사가 자탄 대미지를 바꾼다 (%.2f)" % Cast.shot_dmg(false))
 	_check(SaveData.unlocked(Difficulty.Level.NORMAL)
 			and not SaveData.unlocked(Difficulty.Level.HARD) or SaveData.cleared_mask != 0,
 		"Hard 는 Normal 클리어 전까지 잠겨 있다 (cleared %d)" % SaveData.cleared_mask)
@@ -69,7 +74,8 @@ func _ready() -> void:
 
 	sh._activate(1)                                  # TITLE
 	_check(sh.screen == Shell.Screen.TITLE, "결과 → 타이틀")
-	sh._activate(0)
+	sh._activate(0)                                  # → 조종사
+	sh._activate(Cast.Pilot.NARIN)                   # → 난이도
 	sh._activate(Difficulty.Level.HARD)
 	_check(sh.playing() and Difficulty.level == Difficulty.Level.HARD,
 		"해금된 Hard 로 시작된다 (%s)" % Difficulty.name_of())
@@ -184,8 +190,32 @@ func _ready() -> void:
 	a2.pressed = false
 	a2.position = a1.position
 	sh.handle(a2)
-	_check(sh.screen == Shell.Screen.DIFF,
+	# 타이틀의 첫 버튼은 PLAY 이고 그 목적지는 이제 조종사 선택이다.
+	_check(sh.screen == Shell.Screen.PILOT,
 		"두 번째 손가락이 첫 탭을 취소하지 않는다 (screen %d)" % sh.screen)
+
+	# ⑤ 보스 등장 대사 — 시뮬이 멈추고, 탭으로 넘기면 **그 틱 그대로** 이어진다.
+	sh.practice_zone = -1
+	sh._go(Shell.Screen.PLAY)
+	m.begin_run()
+	await get_tree().physics_frame
+	m._talk(Cast.MID_TALK, 2)
+	_check(sh.screen == Shell.Screen.TALK and sh.talk_line == 0,
+		"보스 등장 → 대사 화면 (screen %d)" % sh.screen)
+	var t_talk := SimClock.sim_tick
+	for i in 8:
+		await get_tree().physics_frame
+	_check(SimClock.sim_tick == t_talk, "대사 중 시뮬 정지 (%d → %d)" % [t_talk, SimClock.sim_tick])
+	for i in Cast.MID_TALK.size():
+		sh._activate(0)
+	_check(sh.playing() and SimClock.sim_tick == t_talk,
+		"대사가 끝나면 그 틱 그대로 이어진다 (screen %d · tick %d)" % [sh.screen, SimClock.sim_tick])
+
+	# ⑥ 연습 모드에서는 대사를 띄우지 않는다 — 같은 구역을 반복하는데 매번 보면 방해다.
+	sh.practice_zone = 2
+	m._talk(Cast.MID_TALK, 2)
+	_check(sh.playing(), "연습 모드에서는 대사를 건너뛴다 (screen %d)" % sh.screen)
+	sh.practice_zone = -1
 
 	m.queue_free()
 	await get_tree().process_frame

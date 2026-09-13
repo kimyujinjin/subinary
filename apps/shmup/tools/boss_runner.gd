@@ -20,6 +20,7 @@ func _ready() -> void:
 	# 최고점수·해금·무피격 기록을 0 으로 덮어쓴다(실측). 경고도 실패도 없이 사라진다.
 	SaveData.reset_for_test("user://save-test-boss_runner.json")
 	Difficulty.apply_from_cmdline()
+	Cast.apply_from_cmdline()
 	_fair = Fairness.new()
 	for a in OS.get_cmdline_user_args():
 		if a == "--p1-sweep":
@@ -63,7 +64,7 @@ func _ready() -> void:
 			print("  %.2f %4.0f | %6d %8d %6s   %6.0f   %4d  %6d   | %-14s (%d)" % [
 				om, sp, r[0], r[9], "%du/s" % (int(r[8]) * 60) if int(r[8]) > 0 else ">%d" % (V_MAX * 60),
 				r[3], r[4], r[5], "OK" if flags.is_empty() else "FAIL:" + ",".join(flags), r[2]])
-	var shots_needed := Boss.HP_MAX * (1.0 - Boss.P1_END_FRAC) / Tune.SHOT_DMG
+	var shots_needed := Boss.HP_MAX * (1.0 - Boss.P1_END_FRAC) / Cast.shot_dmg(false)
 	var per_sec := 2.0 * 60.0 / float(Tune.SHOT_PERIOD_TICKS)
 	print("\n  코어 정렬 100%% 가정 시 70%% 도달: %.1f초 (자탄 %.0f발 · %.1f발/초) — 상한 50초" % [
 		shots_needed / per_sec, shots_needed, per_sec])

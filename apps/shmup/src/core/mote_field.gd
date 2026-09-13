@@ -38,7 +38,10 @@ func spawn(tick: int, x: float, y: float) -> void:
 func step(tick: int, player: Vector2) -> void:
 	collected = 0
 	var relax := Tune.DT / float(Tune.KIND_TAU[Tune.Kind.SPORE_TIDE])
-	var r2: float = Tune.GRAZE_R * Tune.GRAZE_R
+	# 회수 반경은 조종사마다 다르다 — 나린의 보상이다.
+	# 판정 반경이 아니라 graze 링을 쓰는 이유는 그대로다: 회수가 사망 원인이 되면 안 된다.
+	var pr: float = Cast.pickup_r()
+	var r2: float = pr * pr
 	var i := 0
 	while i < n:
 		var age := tick - born[i]

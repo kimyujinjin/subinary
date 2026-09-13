@@ -20,6 +20,7 @@ func _ready() -> void:
 	# 최고점수·해금·무피격 기록을 0 으로 덮어쓴다(실측). 경고도 실패도 없이 사라진다.
 	SaveData.reset_for_test("user://save-test-midboss_runner.json")
 	Difficulty.apply_from_cmdline()
+	Cast.apply_from_cmdline()
 	_fair = Fairness.new()
 	_free.resize(Tune.SCAN_CELLS)
 	for a in OS.get_cmdline_user_args():
@@ -73,7 +74,8 @@ func _ready() -> void:
 ## 그 짧은 구간에서 DP 와 그리디가 갈라지지 않는 것을 P1 에서 확인했다.
 func _killtime() -> void:
 	var per_sec := 2.0 * 60.0 / float(Tune.SHOT_PERIOD_TICKS)
-	print("\n  킬타임 — 자탄 %.1f발/초 × %.0f dmg" % [per_sec, Tune.SHOT_DMG])
+	print("\n  킬타임 — %s · 자탄 %.1f발/초 × %.2f dmg = %.1f DPS (집중 %.1f)" % [
+		Cast.pilot_name(), per_sec, Cast.shot_dmg(false), Cast.dps(), Cast.dps(true)])
 	print("  페이즈 정렬률 | 킬타임 / 상한 | 판정")
 	# **실측 정렬률로 계산한다.** 임의의 표(100/90/80/60%)를 찍으면 그 표가 게임의 숫자인지
 	# 가정인지 구분이 안 되고, 실제로 HP 가 "정렬 100%" 라는 틀린 가정에서 유도됐었다.
@@ -81,7 +83,7 @@ func _killtime() -> void:
 	for ph in [1, 2, 3]:
 		var al: float = _align[ph - 1]
 		var share := MidBoss.HP_MAX * (0.35 if ph < 3 else 0.30)
-		var secs := share / maxf(al * per_sec * Tune.SHOT_DMG, 0.001)
+		var secs := share / maxf(al * Cast.dps(), 0.001)
 		var cap := float(_cap(ph)) / 60.0
 		total += secs
 		print("   P%d %4.1f%% | %5.1f초 / 상한 %.0f초 | %s" % [ph, al * 100.0, secs, cap,
