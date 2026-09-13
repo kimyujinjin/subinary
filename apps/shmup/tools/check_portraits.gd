@@ -8,8 +8,15 @@ func _ready() -> void:
 	var fail := 0
 	print("== 초상화 규격 검사 ==")
 	print("  파일                     크기        비율   알파  가장자리  판정")
-	for i in Portraits.PATHS.size():
-		var path: String = Portraits.PATHS[i]
+	var all: Array = []
+	for x in Portraits.PATHS:
+		all.append([x, Portraits.ASPECT, 512])
+	for x in Sprites.PATHS:
+		all.append([x, Tune.SHIP_SPRITE_ASPECT, 192])
+	for entry in all:
+		var path: String = entry[0]
+		var want_aspect: float = entry[1]
+		var min_w: int = entry[2]
 		if not ResourceLoader.exists(path):
 			print("  %-24s (없음 — 자리표시자로 그려진다)" % path.get_file())
 			continue
@@ -19,16 +26,17 @@ func _ready() -> void:
 		var h := img.get_height()
 		var ratio := float(w) / float(h)
 		var flags := PackedStringArray()
-		if absf(ratio - Portraits.ASPECT) > 0.02:
-			flags.append("비율(3:4 아님)")
-		if w < 512:
-			flags.append("작다(폭 512 미만)")
+		if absf(ratio - want_aspect) > 0.02:
+			flags.append("비율(%.2f 아님)" % want_aspect)
+		if w < min_w:
+			flags.append("작다(폭 %d 미만)" % min_w)
 		if not img.detect_alpha():
 			flags.append("알파 없음 — 배경이 화면을 가린다")
 			fail += 1
 		# 가장자리 20px 이 비어 있는가. 모바일 텍스처 압축이 가장자리를 물어뜯는다.
 		var edge_hit := false
-		var m := 20
+		var _unused := min_w
+		var m := 20 if want_aspect == Portraits.ASPECT else 10
 		for x in range(0, w, maxi(1, w / 64)):
 			if img.get_pixel(x, 0).a > 0.02 or img.get_pixel(x, h - 1).a > 0.02:
 				edge_hit = true

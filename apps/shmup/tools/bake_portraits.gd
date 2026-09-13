@@ -16,36 +16,48 @@ const H := 1024
 const MARGIN := 20.0        ## 가장자리 여백 — 모바일 텍스처 압축이 가장자리를 물어뜯는다
 const OUT := "res://assets/portraits"
 const FILES := ["p0_narin", "p1_haemu", "p2_tersa", "p3_corona"]
+const SPR_OUT := "res://assets/sprites"
+const SPR_FILES := ["s0_narin", "s1_haemu"]
+const SPR_W := 256
+const SPR_H := 320
 
 func _ready() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT))
 	for i in FILES.size():
-		var img := _bake(i)
+		var img := _bake(i, W, H)
 		var path := "%s/%s.png" % [OUT, FILES[i]]
 		var err := img.save_png(ProjectSettings.globalize_path(path))
 		print("  %s  %s" % [path, "ok" if err == OK else "err %d" % err])
-	print("== 초상화 4장 ==")
+	# 비행 스프라이트 — 초상화와 **다른 파일**이다. 플레이 중 화면에 계속 있는 것이라
+	# 작게 그려지고, 그래서 실루엣이 전부다.
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(SPR_OUT))
+	for i in SPR_FILES.size():
+		var img := _bake(i, SPR_W, SPR_H)
+		var path := "%s/%s.png" % [SPR_OUT, SPR_FILES[i]]
+		var err := img.save_png(ProjectSettings.globalize_path(path))
+		print("  %s  %s" % [path, "ok" if err == OK else "err %d" % err])
+	print("== 초상화 4장 + 비행 스프라이트 2장 ==")
 	get_tree().quit(0)
 
 ## 0 나린 · 1 해무 · 2 테르사(방추체) · 3 코로나(화륜종)
-func _bake(who: int) -> Image:
-	var img := Image.create(W, H, false, Image.FORMAT_RGBA8)
+func _bake(who: int, iw: int, ih: int) -> Image:
+	var img := Image.create(iw, ih, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
 	var hue: float = [0.46, 0.55, 0.10, 0.02][who]
 	var base := Color.from_hsv(hue, 0.55, 0.95)
 	var dark := Color.from_hsv(hue, 0.75, 0.16)
 	# 얼굴이 위쪽 40%% 안에 오도록 중심을 위로 올린다(규격).
-	var c := Vector2(W * 0.5, H * 0.46)
-	var span := float(H) - MARGIN * 2.0
-	for y in H:
-		for x in W:
+	var c := Vector2(iw * 0.5, ih * 0.46)
+	var span := float(ih) - MARGIN * 2.0
+	for y in ih:
+		for x in iw:
 			var p := Vector2(x, y)
 			var d := (p - c) / span
 			var a := _shape(who, d)
 			# 가장자리 여백을 **굽는 쪽에서** 강제한다. 검사기가 자기 자리표시자를 잡는 것을
 			# 보고 고쳤다 — 규격을 만든 사람이 규격을 안 지키면 그 규격은 무시당한다.
-			a *= clampf(minf(minf(float(x), float(W - 1 - x)),
-					minf(float(y), float(H - 1 - y))) - MARGIN, 0.0, 8.0) / 8.0
+			a *= clampf(minf(minf(float(x), float(iw - 1 - x)),
+					minf(float(y), float(ih - 1 - y))) - MARGIN, 0.0, 8.0) / 8.0
 			if a <= 0.0:
 				continue
 			var glow := _glow(who, d)
@@ -96,4 +108,4 @@ func _glow(who: int, d: Vector2) -> float:
 
 ## 가장자리 1픽셀 안티에일리어싱. 계단이 보이면 자리표시자가 아니라 그냥 못 만든 것이다.
 func _edge(v: float) -> float:
-	return clampf(v * float(H) * 0.05, 0.0, 1.0)
+	return clampf(v * 1024.0 * 0.05, 0.0, 1.0)

@@ -59,6 +59,13 @@ const MAX_STEP_PER_TICK := 40.0 # limit_length 클램프
 const PLAYER_R := 4.0           # 판정 반경. 기체 2종이 동일하다 (공정성 검증을 2번 하지 않는다)
 const GRAZE_R := 20.0
 const SHIP_VIS := 13.0          # 시각 반경 — 판정과 분리
+## 비행 스프라이트(인물)의 폭. **판정과 무관하다** — 판정은 PLAYER_R 4 그대로다.
+##
+## 이 장르의 비율을 따른다: 캐릭터가 플레이필드 폭의 약 8%%. 720 × 0.08 ≈ 58.
+## 더 키우면 인물 아래의 탄이 가려지고, 더 줄이면 사람으로 안 읽힌다.
+## 판정 원과 스침 링은 스프라이트 **위에** 그린다 — 그게 이 게임의 가독성 계약이다.
+const SHIP_SPRITE_W := 58.0
+const SHIP_SPRITE_ASPECT := 0.8      # 4:5 (폭:높이)
 const SHOT_PERIOD_TICKS := 8    # 7.5발/초 (설계 8발/초의 정수 근사)
 const SHOT_SPEED := 1200.0
 const SHOT_COL_HALF := 7.0      # 폭 14유닛 2열

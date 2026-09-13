@@ -82,12 +82,16 @@ func _draw_bomb() -> void:
 			Color(0.86, 0.97, 1.0, 0.8 * f), 3.0, true)
 
 func _draw_ship(p: Vector2, a: float) -> void:
-	# 관측침 — 절차적 도형. 세로로 긴 삼각 실루엣.
-	var v := Tune.SHIP_VIS
-	var poly := PackedVector2Array([
-		p + Vector2(0.0, -v * 1.5), p + Vector2(v * 0.72, v * 0.85),
-		p + Vector2(0.0, v * 0.35), p + Vector2(-v * 0.72, v * 0.85)])
-	draw_colored_polygon(poly, Color(Tune.COL_SHIP, 0.90 * a))
+	# **인물을 그린다.** 이게 없으면 메뉴에만 캐릭터가 있고 5분 동안은 삼각형이 난다 —
+	# 캐릭터 게임인데 플레이 중엔 캐릭터가 없는 상태였다.
+	# 스프라이트가 없으면 삼각형으로 되돌아간다(그림이 아직 없어도 게임은 돈다).
+	if not Sprites.draw_pilot(self, Cast.pilot, p, a):
+		# 관측침 — 절차적 도형. 세로로 긴 삼각 실루엣.
+		var v := Tune.SHIP_VIS
+		var poly := PackedVector2Array([
+			p + Vector2(0.0, -v * 1.5), p + Vector2(v * 0.72, v * 0.85),
+			p + Vector2(0.0, v * 0.35), p + Vector2(-v * 0.72, v * 0.85)])
+		draw_colored_polygon(poly, Color(Tune.COL_SHIP, 0.90 * a))
 	# 스침 링 20유닛 (알파 0.15) — 상시
 	draw_arc(p, Tune.GRAZE_R, 0.0, TAU, 28, Color(Tune.COL_GRID, 0.15 * a), 1.5, true)
 	# 판정 원 4유닛: 흰 채움 + 2유닛 검은 외곽 — 상시

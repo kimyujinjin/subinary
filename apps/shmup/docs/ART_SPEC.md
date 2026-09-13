@@ -4,7 +4,26 @@
 아래 규격에 맞는 PNG 를 **같은 파일명으로 덮으면** 코드 변경 없이 바로 들어간다.
 `godot --headless --path . scenes/check_portraits.tscn` 이 규격 위반을 잡아 준다.
 
-## 파일
+## 파일 — **두 종류가 필요하다**
+
+초상화만으로는 부족하다. 초상화는 메뉴와 대사에만 나오고, 플레이하는 5분 동안은
+**비행 스프라이트**가 화면에 계속 있다. 이게 없으면 캐릭터 게임인데 정작 게임 중엔
+캐릭터가 없다 — 삼각형이 난다.
+
+### 1) 비행 스프라이트 `assets/sprites/` — 플레이 중 계속 보이는 것
+
+| 파일명 | 인물 | 크기 | 프레이밍 |
+|---|---|---|---|
+| `s0_narin.png` | 나린 | 256×320 (4:5) | 전신, 정면, 물속을 날아가는 자세 |
+| `s1_haemu.png` | 해무 | 256×320 (4:5) | 같음 |
+
+- 화면에서 **폭 58유닛**으로 그려진다(플레이필드 720의 8%). 작게 보이므로
+  **실루엣과 두 색이 전부다** — 얼굴 디테일은 이 크기에서 안 보인다.
+- 몸 **가운데**가 판정 위치다. 그 위에 흰 판정 원(반경 4)과 스침 링(반경 20)이 덮어 그려진다.
+  가슴 한가운데를 비워 둘 필요는 없지만, 그 부분에 밝은 디테일을 몰아넣지 말 것.
+- 투명 배경. 가장자리 10px 여백.
+
+### 2) 초상화 `assets/portraits/` — 선택 화면과 대사
 
 | 파일명 | 인물 | 정체 |
 |---|---|---|
@@ -73,9 +92,31 @@
 strong silhouette, transparent background, 768x1024, no text, no watermark, no logo,
 clean edges, character is the brightest element, dark teal background tone #081014`
 
+### s0_narin — 나린 비행 스프라이트
+```
+Anime game sprite, full body, front view, young woman floating and flying through
+deep water, seen small — readable by silhouette alone at 58px wide.
+Signature: a WIDE translucent hood fanning out like a light-catching net, broad brim.
+Two colors only: bright mint (#5AE6D9) and pale gold. HORIZONTAL glowing stripes.
+She holds a wide glowing net in one hand, arms open and relaxed, hair and hood
+trailing upward in the current. Glowing from within. 256x320, transparent background,
+no background elements, clean edges.
+```
+
+### s1_haemu — 해무 비행 스프라이트
+```
+Anime game sprite, full body, front view, young woman diving forward through black water,
+seen small — readable by silhouette alone at 58px wide.
+Signature: a TALL narrow dorsal crest rising straight up from the helm, a single vertical fin.
+Two colors only: deep navy (#2A4A8C) and white light. VERTICAL glowing lines down the suit.
+She holds a single slender needle-lance pointed forward, body compact and streamlined,
+arms close to the body. Glowing from within. 256x320, transparent background,
+no background elements, clean edges.
+```
+
 ### p0_narin — 나린 (넓게 보고 멀리 줍는다)
 ```
-Anime character art, bust portrait of Narin, a bold young deep-sea scout.
+Anime character art, bust portrait of Narin, a bold young WOMAN, deep-sea scout.
 Signature headwear: a WIDE translucent hood that fans out like a light-catching net,
 broad brim silhouette — instantly readable from her outline alone.
 Two-color identity: bright mint (#5AE6D9) and pale gold, nothing else.
@@ -87,7 +128,7 @@ glowing from within like a deep-sea organism. Transparent background.
 
 ### p1_haemu — 해무 (좁게 보고 깊게 뚫는다)
 ```
-Anime character art, bust portrait of Haemu, a disciplined deep-diving pilot.
+Anime character art, bust portrait of Haemu, a disciplined young WOMAN, deep-diving pilot.
 Signature headwear: a TALL narrow dorsal crest rising straight up from the helm,
 a single vertical fin — a thin sharp silhouette, the opposite of Narin's wide brim.
 Two-color identity: deep navy (#2A4A8C) and white light, nothing else.
@@ -120,7 +161,7 @@ Brightest element in frame. Transparent background.
 
 ## 받은 뒤
 
-1. `assets/portraits/` 에 같은 이름으로 덮는다.
+1. 초상화는 `assets/portraits/`, 비행 스프라이트는 `assets/sprites/` 에 같은 이름으로 덮는다.
 2. `godot --headless --path . --import` 한 번.
 3. `godot --headless --path . scenes/check_portraits.tscn` — 규격 위반이 있으면 알려준다.
 4. `godot --path . scenes/portrait_preview.tscn` — 실제 화면에서 어떻게 보이는지 본다.
