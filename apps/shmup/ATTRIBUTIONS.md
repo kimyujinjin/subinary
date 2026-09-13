@@ -29,10 +29,15 @@ Godot Engine 4.7.2-stable — MIT License. https://godotengine.org
 - 라이선스: SIL Open Font License, Version 1.1
 - 원본: https://github.com/orioncactus/pretendard
 
-**미해결 — 배포 전에 반드시 처리할 것.** OFL 1.1 은 폰트(파생 서브셋 포함)를 배포할 때
-라이선스 **전문**을 함께 싣도록 요구한다. 지금 저장소에는 전문 파일이 없다.
-원본 저장소의 `OFL.txt` 를 `assets/fonts/OFL.txt` 로 받아 두고, 앱 안에서도 볼 수 있게
-해야 한다(설정 화면의 고지 항목). 그 전에는 공개 배포하지 않는다.
+**해결됨(2026-09-13).** OFL 1.1 은 폰트(파생 서브셋 포함)를 배포할 때 라이선스 **전문**을
+함께 싣도록 요구한다.
+
+- `assets/fonts/OFL.txt` — 원본 저장소의 라이선스 전문(Kil Hyung-jin · Adobe Source 고지 포함)
+- `export_presets.cfg` 의 `include_filter` 에 넣어 **APK/IPA 안에 실제로 들어간다.**
+  `.txt` 는 Godot 이 리소스로 임포트하지 않으므로 이 필터가 없으면 조용히 빠진다
+- 설정 → `FONT LICENSE` 에서 전문을 페이지로 읽을 수 있다. 이 화면만 **내장 폰트**로
+  그린다 — Pretendard 는 화면에 나오는 글자만 남긴 서브셋이라 전문의 기호가 서브셋
+  밖이면 통째로 빈칸이 되고, **빈칸으로 나오는 라이선스는 동봉하지 않은 것과 같다**
 
 ## 초상화 — 자리표시자
 

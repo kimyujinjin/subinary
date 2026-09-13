@@ -67,10 +67,12 @@ var bomb_pressed: bool = false
 var rescue_presses: int = 0
 var rescue_first_tick: int = -1     ## 창이 열린 뒤 첫 press 까지의 벽시계 틱
 var rescue_first_zone: bool = false ## 그 press 가 폭탄 히트영역 안이었는가
+var rescue_releases: int = 0        ## 창 안에서 **떼어진** 손가락 수 — press 와 갈라 센다
 var _rescue_open_tick: int = -1
 
 func rescue_watch_begin() -> void:
 	rescue_presses = 0
+	rescue_releases = 0
 	rescue_first_tick = -1
 	rescue_first_zone = false
 	_rescue_open_tick = SimClock.wall_tick
@@ -146,6 +148,19 @@ func _unhandled_input(event: InputEvent) -> void:
 			_touch_delta[t.index] = Vector2.ZERO
 			_on_press(t.index, t.position)
 		else:
+			# **떼는 것도 폭탄이다.** 이 게임은 드래그로 조종하므로 피격 순간 엄지는 이미
+			# 화면에 닿아 있다 — 이미 눌린 손가락은 press 이벤트를 만들지 않는다. 그래서
+			# "창 안에 폭탄을 눌러라" 는 실제로는 "0.5초 안에 두 번째 손가락을 새로
+			# 내려놓아라" 였고, 한 손 세로 플레이에서 그것은 불가능에 가깝다.
+			# 실기 로그 23/23 사망: rpress=0 이 22건, 나머지 1건도 존 밖이었다.
+			# 시선 자리에 고리를 그려도(field_overlay) 0건이었다 — 신호가 아니라
+			# **할 수 있는 동작이 없었던 것**이다. 이미 닿은 손가락이 할 수 있는 것은 떼기뿐이다.
+			if SimClock.state == SimClock.State.RESCUE:
+				bomb_pressed = true
+				rescue_releases += 1
+				if rescue_first_tick < 0:
+					rescue_first_tick = SimClock.wall_tick - _rescue_open_tick
+					rescue_first_zone = true      # 떼기에는 존이 없다
 			# iOS 는 canceled 를 세팅하지 않고 position=(-1,-1) 의 release 를 보낸다.
 			# 릴리스 좌표로 탭 판정을 하면 iOS 에서만 오작동하므로 마지막 알려진 좌표를 쓴다.
 			var last: Vector2 = _touch.get(t.index, Vector2.ZERO)
@@ -174,11 +189,13 @@ func _excluded(p: Vector2) -> bool:
 	return p.x < Tune.EXCL_SIDE or p.x > view_size.x - Tune.EXCL_SIDE \
 			or p.y > view_size.y - Tune.EXCL_BOTTOM
 
-## 폭탄 히트영역. 평시에는 우하단 원, 구제 창 동안에는 덱 하단 240유닛 전역 —
-## 그 순간 팜 오접촉은 "공짜 구제" 라 오탐 방향이 플레이어에게 유리하다.
+## 폭탄 히트영역. 평시에는 우하단 원, 구제 창 동안에는 **화면 전역**이다.
+## 덱 하단 240유닛으로 잡았던 것이 실기에서 유일한 창 안 press 를 버렸다(rzone=0) —
+## 회피 중 손은 기체를 따라 화면 중단까지 올라가 있고, 거기서 떼거나 두드린다.
+## 오탐 방향은 "공짜 구제" 이고 폭탄 재고를 소모하므로 대가는 그대로 남는다.
 func _bomb_zone(p: Vector2) -> bool:
 	if SimClock.state == SimClock.State.RESCUE:
-		return p.y >= view_size.y - Tune.DECK_H
+		return true
 	var c := Vector2(view_size.x - Tune.BOMB_CX_FROM_RIGHT, view_size.y - Tune.BOMB_CY_FROM_BOTTOM)
 	return p.distance_to(c) <= Tune.BOMB_R
 

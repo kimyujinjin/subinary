@@ -11,7 +11,7 @@ extends Node2D
 ## 한글 서브셋 폰트가 필요 없다 — "이미지 애셋 0개" 가 유지된다.
 ## 설명이 필요한 자리는 **그림으로** 말한다(점등된 칸 수, 막대, 링).
 
-enum Screen { PLAY, TITLE, DIFF, PAUSE, RESULT, LOG, PRACTICE, SETTINGS, PILOT, TALK }
+enum Screen { PLAY, TITLE, DIFF, PAUSE, RESULT, LOG, PRACTICE, SETTINGS, PILOT, TALK, LICENSE }
 
 const BTN_H := 96.0
 const BTN_GAP := 14.0
@@ -44,6 +44,12 @@ var _pressed: Dictionary = {}
 ## 트리 밖(불변식·흐름 테스트)에서 히트박스만 계산할 때 켠다. draw_* 는 _draw() 밖에서
 ## 부르면 엔진이 에러를 쏟고, 그 에러가 로그를 덮어 **진짜 에러를 못 보게 한다.**
 var dry: bool = false
+
+## 라이선스 전문 — 한 번 읽어 들고 있는다(104줄, 페이지로 넘긴다)
+const LIC_PATH := "res://assets/fonts/OFL.txt"
+const LIC_PAGE := 30
+static var _lic: PackedStringArray = PackedStringArray()
+var lic_page: int = 0
 
 ## 그리지 않고 버튼 배치만 구한다. 검사기가 쓰는 단일 진입점이다.
 func layout() -> void:
@@ -142,7 +148,13 @@ func _activate(id: int) -> void:
 				1:
 					SaveData.haptics_on = not SaveData.haptics_on
 					SaveData._dirty = true
+				2: _go(Screen.LICENSE)
 				-2: _go(Screen.TITLE)
+		Screen.LICENSE:
+			if id == -2:
+				_go(Screen.SETTINGS)
+			else:
+				lic_page += 1            # 마지막 장에서 누르면 _draw_license 가 0 으로 감는다
 		Screen.PAUSE:
 			match id:
 				0: _go(Screen.PLAY)          # 이어 하기
@@ -197,6 +209,7 @@ func _draw() -> void:
 	match screen:
 		Screen.TITLE: _draw_title()
 		Screen.DIFF: _draw_diff()
+		Screen.LICENSE: _draw_license()
 		Screen.PILOT: _draw_pilot()
 		Screen.TALK: _draw_talk()
 		Screen.LOG: _draw_log()
@@ -350,9 +363,34 @@ func _draw_settings() -> void:
 	var y := 180.0
 	y = _btn(y, "SOUND     %s" % ("ON" if SaveData.sound_on else "OFF"), 0)
 	y = _btn(y, "HAPTICS   %s" % ("ON" if SaveData.haptics_on else "OFF"), 1)
+	# OFL 1.1 은 폰트를 배포할 때 라이선스 사본을 **함께** 배포하도록 요구한다.
+	# APK 안에 파일만 넣고 볼 길이 없으면 실질적으로 동봉이 아니다.
+	y = _btn(y, "FONT LICENSE", 2)
 	if not dry:
 		draw_string(_f(), Vector2(44.0, y + 40.0),
 			"sound off is a supported way to play", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, COL_LOCK)
+	_btn(vh - 150.0, "BACK", -2)
+
+## 폰트 라이선스 전문. **내장 폰트로 그린다** — 이 저장소의 Pretendard 는 화면에 실제로
+## 나오는 글자만 남긴 서브셋이라, 전문의 괄호·기호가 서브셋 밖이면 통째로 빈칸이 된다.
+## 라이선스가 빈칸으로 나오는 것은 동봉하지 않은 것과 같다.
+func _draw_license() -> void:
+	if _lic.is_empty():
+		var fa := FileAccess.open(LIC_PATH, FileAccess.READ)
+		_lic = (fa.get_as_text() if fa != null else "OFL.txt not bundled").split("\n")
+	var pages: int = maxi(1, ceili(float(_lic.size()) / float(LIC_PAGE)))
+	if lic_page >= pages:
+		lic_page = 0
+	if not dry:
+		draw_string(_f(), Vector2(44.0, 96.0), "FONT LICENSE   %d / %d" % [lic_page + 1, pages],
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 26, COL_ACC)
+		var ff := ThemeDB.fallback_font
+		var ty := 140.0
+		for i in range(lic_page * LIC_PAGE, mini(_lic.size(), (lic_page + 1) * LIC_PAGE)):
+			draw_string(ff, Vector2(44.0, ty), _lic[i], HORIZONTAL_ALIGNMENT_LEFT,
+					view_w - 88.0, 15, COL_FG)
+			ty += 19.0
+	_btn(vh - 224.0, "NEXT PAGE", 0)
 	_btn(vh - 150.0, "BACK", -2)
 
 func _draw_pause() -> void:

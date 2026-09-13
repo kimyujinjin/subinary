@@ -71,7 +71,15 @@ func _ready() -> void:
 	_touch(0, r.get_center(), true)
 	_touch(0, r.get_center(), false)
 	await get_tree().process_frame
-	_p("PLAY 탭 → screen=%d (DIFF=%d)" % [_sh.screen, Shell.Screen.DIFF])
+	_p("PLAY 탭 → screen=%d (PILOT=%d)" % [_sh.screen, Shell.Screen.PILOT])
+
+	# ②' 파일럿 선택. 이 단계가 생긴 뒤로 여기를 빼먹은 러너는 DIFF 에서 멈춘다 —
+	# Difficulty.Level.NORMAL(=0) 이 파일럿 0 으로 소비되기 때문이다.
+	r = _btn_rect(Cast.Pilot.NARIN)
+	_touch(0, r.get_center(), true)
+	_touch(0, r.get_center(), false)
+	await get_tree().process_frame
+	_p("파일럿 탭 → screen=%d (DIFF=%d)" % [_sh.screen, Shell.Screen.DIFF])
 
 	# ② NORMAL 을 진짜 터치로 → 런 시작
 	r = _btn_rect(Difficulty.Level.NORMAL)
@@ -79,6 +87,18 @@ func _ready() -> void:
 	_touch(0, r.get_center(), false)
 	await get_tree().process_frame
 	_p("NORMAL 탭 → screen=%d (PLAY=%d)" % [_sh.screen, Shell.Screen.PLAY])
+	# 코드가 주장하는 그 자리를 **정확히** 찍는다(main.gd: 띠 y<64 · x >= view_w-90).
+	# 격자가 이 점을 스치지 못하면 "도달 불가" 라는 결론이 격자의 성김일 뿐이다.
+	if _sh.screen == Shell.Screen.PLAY:
+		var pp := Vector2(_m.view_w - 45.0, 32.0)
+		_touch(0, pp, true)
+		_touch(0, pp, false)
+		await get_tree().physics_frame
+		_p("띠 우측 끝 %s 탭 → screen=%d (PAUSE=%d)" % [str(pp), _sh.screen, Shell.Screen.PAUSE])
+		if _sh.screen == Shell.Screen.PAUSE:
+			_reached = true
+			_sh._go(Shell.Screen.PLAY)
+			await get_tree().physics_frame
 	if _sh.screen != Shell.Screen.PLAY:
 		_p("!! 런 시작 실패 — 재현 무효")
 		get_tree().quit(2)
@@ -167,6 +187,9 @@ func _ready() -> void:
 	await _frames(30)
 	_p("알림 뒤 시뮬 진행: %d → %d" % [t0, SimClock.sim_tick])
 
+	# 이 러너의 원래 결론은 "어떤 입력으로도 PAUSE 에 못 간다" 였는데, 그것은 탭 격자가
+	# 띠 우측 끝(x >= view_w-90, y<64)을 스치지 못해서였다. 격자의 성김이 결론이 되면
+	# 안 된다 — 코드가 주장하는 자리를 **정확히** 찍는 한 점이 이제 판정을 쥔다.
 	print("== 시도 %d 건 · PAUSE 도달 %s · 최종 screen=%d ==" % [
 		_tried, "예" if _reached else "아니오", _sh.screen])
 	_m.queue_free()

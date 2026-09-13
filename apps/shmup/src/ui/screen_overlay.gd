@@ -83,10 +83,10 @@ func _draw_rescue_window() -> void:
 	draw_rect(Rect2(0.0, vh - edge, view_w, edge), col, true)
 	draw_rect(Rect2(0.0, 0.0, edge, vh), col, true)
 	draw_rect(Rect2(view_w - edge, 0.0, edge, vh), col, true)
-	# 덱 전역이 히트영역 — 남은 시간을 폭으로 보인다
-	var top := vh - Tune.DECK_H
-	draw_rect(Rect2(0.0, top, view_w, Tune.DECK_H), Color(1.0, 0.85, 0.45, 0.16 * pulse), true)
-	draw_rect(Rect2(0.0, top, view_w * f, 6.0), Color(1.0, 0.85, 0.45, 0.9), true)
+	# **화면 전역이 히트영역이다.** 덱만 밝히면 "저기를 눌러라" 로 읽히는데, 실기에서
+	# 유일했던 창 안 press 가 정확히 그 밖이었다(rzone=0). 위치를 가리키는 표현을 지우고
+	# 남은 시간만 남긴다 — 어디를 눌러도, 들고 있던 손을 떼도 구제된다.
+	draw_rect(Rect2(0.0, vh - 6.0, view_w * f, 6.0), Color(1.0, 0.85, 0.45, 0.9), true)
 
 ## 폭탄 버튼 — 두 번째 손가락 press. 남은 수만큼 채운 원.
 func _draw_bomb_button() -> void:

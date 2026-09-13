@@ -685,9 +685,10 @@ func _on_death() -> void:
 			BulletField.flow_c(SimClock.sim_tick),
 			BulletField.flow_u(player.y, SimClock.sim_tick),
 			BulletField.n, int(Engine.get_frames_per_second()), "", 0.0, 0.0,
-			"relay=%d;lives=%d;bombs=%d;score=%d;rpress=%d;rfirst=%d;rzone=%d;zone=%d" % [
+			"relay=%d;lives=%d;bombs=%d;score=%d;rpress=%d;rrel=%d;rfirst=%d;rzone=%d;zone=%d" % [
 				TouchRouter.relay_count, lives, bombs, score,
-				TouchRouter.rescue_presses, TouchRouter.rescue_first_tick,
+				TouchRouter.rescue_presses, TouchRouter.rescue_releases,
+				TouchRouter.rescue_first_tick,
 				1 if TouchRouter.rescue_first_zone else 0,
 				# 구역 번호는 게임이 쓴다. 판정 스크립트가 틱으로 다시 계산하면
 				# 경계표가 두 벌이 되고, 갈라진 쪽이 틀린 판정을 자신 있게 낸다.
