@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c5cvs4gsayu5h"
-path="res://.godot/imported/p2_tersa.png-b57b013987c01a2b82e410d238bf5321.ctex"
+uid="uid://oyhwxy63xlim"
+path="res://.godot/imported/e1_needlefish.png-126ebd03d0306339f8a4331f0258adaa.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/raw/p2_tersa.png"
-dest_files=["res://.godot/imported/p2_tersa.png-b57b013987c01a2b82e410d238bf5321.ctex"]
+source_file="res://assets/enemies/e1_needlefish.png"
+dest_files=["res://.godot/imported/e1_needlefish.png-126ebd03d0306339f8a4331f0258adaa.ctex"]
 
 [params]
 

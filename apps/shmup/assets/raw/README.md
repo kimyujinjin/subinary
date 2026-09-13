@@ -8,3 +8,7 @@
 잘라내지 않고 여백을 붙여 맞추므로 비율이 달라도 받은 그림 그대로 들어간다.
 
 프롬프트는 `docs/META_PROMPT.md` 에 있다.
+
+이 폴더에는 `.gdignore` 가 있다 — Godot 이 아예 임포트하지 않는다.
+없으면 1024×1024 원본 12장이 APK 에 통째로 들어가 **10MB 를 먹는다**(실측: 27MB → 37MB).
+게임이 쓰는 것은 `assets/portraits/` · `assets/sprites/` · `assets/enemies/` 의 리샘플본뿐이다.

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cfoefiklcpip7"
-path="res://.godot/imported/s1_haemu.png-61c1d9221c764d4babba78747f61d5b8.ctex"
+uid="uid://daicuyv6wkaak"
+path="res://.godot/imported/e3_tube.png-9ba3535cd81f14eef39a7d5d36b16d82.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/raw/s1_haemu.png"
-dest_files=["res://.godot/imported/s1_haemu.png-61c1d9221c764d4babba78747f61d5b8.ctex"]
+source_file="res://assets/enemies/e3_tube.png"
+dest_files=["res://.godot/imported/e3_tube.png-9ba3535cd81f14eef39a7d5d36b16d82.ctex"]
 
 [params]
 

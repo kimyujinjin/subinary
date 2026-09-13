@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://br6sch3ofybyv"
-path="res://.godot/imported/p3_corona.png-ce5cbaf6a16da78d7cb06407002c50ff.ctex"
+uid="uid://d06a24rbko1ss"
+path="res://.godot/imported/e0_drifter.png-16cfbc643535489044c81effa25b02e4.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/raw/p3_corona.png"
-dest_files=["res://.godot/imported/p3_corona.png-ce5cbaf6a16da78d7cb06407002c50ff.ctex"]
+source_file="res://assets/enemies/e0_drifter.png"
+dest_files=["res://.godot/imported/e0_drifter.png-16cfbc643535489044c81effa25b02e4.ctex"]
 
 [params]
 

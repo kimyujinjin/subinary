@@ -103,7 +103,8 @@ func _draw_ship(p: Vector2, a: float) -> void:
 		draw_arc(p, Tune.GRAZE_R + 6.0, -PI * 0.5, -PI * 0.5 + TAU * clampf(w, 0.0, 1.0), 32,
 				Color(0.9, 0.98, 1.0, 0.55 * a), 2.0, true)
 
-## 적 7종 — 절차적 도형. 실루엣이 "무엇을 강요하는 적인가" 를 말해야 한다.
+## 적 7종 — 그림이 있으면 그림, 없으면 절차적 도형.
+## 실루엣이 "무엇을 강요하는 적인가" 를 말해야 한다는 규칙은 둘 다에 적용된다.
 func _draw_enemies() -> void:
 	var ef: EnemyField = main.enemies
 	for i in ef.n:
@@ -111,6 +112,17 @@ func _draw_enemies() -> void:
 		var k: int = ef.etype[i]
 		var r: float = EnemyField.R_VIS[k]
 		var frac: float = clampf(ef.hp[i] / float(EnemyField.HP[k]), 0.0, 1.0)
+		# 그림이 있으면 그림. 없는 종(군체)은 아래 도형으로 내려간다.
+		if EnemySprites.draw_enemy(self, k, p, r):
+			# **남은 HP 는 그림이 못 말한다.** 절차적 도형은 종마다 다른 방식으로
+			# HP 를 그리고 있었는데(채움·호·밝기) 그림이 그걸 통째로 덮는다.
+			# 광낭충은 DPS 체크이고 군체는 표적 우선순위라, 남은 HP 를 못 보면
+			# 그 적이 가르치는 것이 사라진다. 그림 위에 **공통 호** 하나로 올린다 —
+			# 종마다 다른 관용구보다 하나로 통일된 채널이 읽기 쉽다.
+			if frac < 0.999:
+				draw_arc(p, r + 5.0, -PI * 0.5, -PI * 0.5 + TAU * frac, 28,
+						Color(Tune.COL_TIDE, 0.8), 2.5, true)
+			continue
 		match k:
 			EnemyField.Type.DRIFTER:
 				draw_circle(p, r, Color(Tune.COL_ENEMY, 0.9))

@@ -22,6 +22,11 @@ func _ready() -> void:
 		jobs.append([Portraits.PATHS[i], 768, 1024, 20])
 	for i in Sprites.PATHS.size():
 		jobs.append([Sprites.PATHS[i], 256, 320, 10])
+	# 적 — 정사각 256. 길쭉한 종도 비율을 지켜 들어가고(여백이 붙는다),
+	# 그리는 쪽이 그 비율을 그대로 쓴다.
+	for i in EnemySprites.PATHS.size():
+		if EnemySprites.PATHS[i] != "":
+			jobs.append([EnemySprites.PATHS[i], 256, 256, 8])
 	var done := 0
 	print("== 키잉 · 배치 ==")
 	for j in jobs:

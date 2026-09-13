@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://k2x8cxl88nmj"
-path="res://.godot/imported/p0_narin.png-5d0be34d13bbf5d370db5df05a87ab2e.ctex"
+uid="uid://b2ofajkxt1rrm"
+path="res://.godot/imported/e7_eel.png-e26707b545d83d6f41f08666d4d31eeb.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/raw/p0_narin.png"
-dest_files=["res://.godot/imported/p0_narin.png-5d0be34d13bbf5d370db5df05a87ab2e.ctex"]
+source_file="res://assets/enemies/e7_eel.png"
+dest_files=["res://.godot/imported/e7_eel.png-e26707b545d83d6f41f08666d4d31eeb.ctex"]
 
 [params]
 
