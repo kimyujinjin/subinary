@@ -33,7 +33,19 @@ var result_zone: int = 0
 var practice_zone: int = -1
 
 var _btns: Array = []            ## [Rect2, id] — _draw 가 채우고 입력이 읽는다
-var _pressed: int = -1
+## 누르고 있는 손가락 → 버튼 id. **index 별로 든다.**
+## 단일 슬롯이면 두 번째 손가락이 화면 아무 데나 닿는 순간(팜 접촉 포함)
+## 첫 손가락의 대기 중인 탭이 조용히 취소된다 — 실기에서 흔한 상황이다.
+var _pressed: Dictionary = {}
+## 트리 밖(불변식·흐름 테스트)에서 히트박스만 계산할 때 켠다. draw_* 는 _draw() 밖에서
+## 부르면 엔진이 에러를 쏟고, 그 에러가 로그를 덮어 **진짜 에러를 못 보게 한다.**
+var dry: bool = false
+
+## 그리지 않고 버튼 배치만 구한다. 검사기가 쓰는 단일 진입점이다.
+func layout() -> void:
+	dry = true
+	_draw()
+	dry = false
 
 func playing() -> bool:
 	return screen == Screen.PLAY
@@ -46,12 +58,16 @@ func handle(event: InputEvent) -> bool:
 	if event is InputEventScreenTouch:
 		var t := event as InputEventScreenTouch
 		if t.pressed:
-			_pressed = _hit(t.position)
+			var hit := _hit(t.position)
+			if hit != -1:
+				_pressed[t.index] = hit
 		else:
 			var up := _hit(t.position)
-			if up >= 0 and up == _pressed:
+			if _pressed.has(t.index) and up >= 0 and up == int(_pressed[t.index]):
+				_pressed.erase(t.index)
 				_activate(up)
-			_pressed = -1
+			else:
+				_pressed.erase(t.index)
 		queue_redraw()
 		return true
 	if event is InputEventScreenDrag:
@@ -65,6 +81,8 @@ func handle(event: InputEvent) -> bool:
 		if k.pressed and not k.echo and k.keycode == KEY_ESCAPE:
 			_activate(-2)
 			return true
+	if event is InputEventMouseButton or event is InputEventMouseMotion:
+		return true            # 마우스도 흘리지 않는다 — 뒤의 게임이 조작된다
 	return false
 
 func _hit(p: Vector2) -> int:
@@ -75,7 +93,6 @@ func _hit(p: Vector2) -> int:
 
 ## 버튼 id 규약: 0 이상 = 화면별 의미, -2 = 뒤로.
 func _activate(id: int) -> void:
-	SaveData.save_now()
 	match screen:
 		Screen.TITLE:
 			match id:
@@ -121,11 +138,30 @@ func _activate(id: int) -> void:
 				0: _start()
 				1: _go(Screen.TITLE)
 				-2: _go(Screen.TITLE)
+	# **동작 뒤에** 저장한다. 앞에 두면 이번 동작의 변경분(설정 토글 등)이 빠져
+	# 항상 한 동작 늦게 저장되고, 마지막 토글은 영영 저장되지 않는다.
+	SaveData.save_now()
 	queue_redraw()
 
+## 화면을 바꾼다. **경계에서 모든 소유자가 손가락을 놓는다.**
+##
+## 셸은 떠 있는 동안 모든 터치를 소비하는데, 그중에는 셸이 뜨기 전에 TouchRouter 나
+## main._band_idx 가 press 를 가져간 손가락의 release 가 섞인다. 그 release 를 못 본
+## 소유자에게는 유령이 남고, TouchRouter 는 유령 index 에 드래그 역할을 묶은 채
+## 다음 런 내내 기체를 못 움직인다(반증 패스에서 5개 렌즈가 독립적으로 잡았다).
+##
+## CLAUDE.md 의 "이벤트를 소비하면 그 손가락의 **전부**를 소비해야 한다" 의 다른 얼굴이다.
+## 여기서는 반대로 — 내가 전부 소비할 것이므로, 남이 들고 있던 것을 먼저 놓게 한다.
+## clear_touches() 는 포커스 아웃·일시정지 알림에서 이미 같은 이유로 쓰는 함수다.
 func _go(s: int) -> void:
+	var was_play := screen == Screen.PLAY
 	screen = s
 	_btns.clear()
+	_pressed.clear()
+	if was_play != (s == Screen.PLAY):
+		TouchRouter.clear_touches()
+		if main != null:
+			main.drop_band_touches()
 	queue_redraw()
 
 func _start() -> void:
@@ -140,7 +176,8 @@ func _draw() -> void:
 	if screen == Screen.PLAY:
 		return
 	_btns.clear()
-	draw_rect(Rect2(0.0, 0.0, view_w, vh), COL_BG)
+	if not dry:
+		draw_rect(Rect2(0.0, 0.0, view_w, vh), COL_BG)
 	match screen:
 		Screen.TITLE: _draw_title()
 		Screen.DIFF: _draw_diff()
@@ -158,10 +195,13 @@ func _btn(y: float, label: String, id: int, enabled := true) -> float:
 	var r := Rect2(40.0, y, view_w - 80.0, BTN_H)
 	_btns.append([r, id])
 	var col := COL_FG if enabled else COL_LOCK
-	if id == _pressed and enabled:
-		draw_rect(r, Color(col.r, col.g, col.b, 0.14))
-	draw_rect(r, col, false, 2.0)
-	draw_string(_f(), Vector2(r.position.x + 24.0, y + BTN_H * 0.5 + 9.0), label,
+	if enabled and _pressed.values().has(id):
+		if not dry:
+			draw_rect(r, Color(col.r, col.g, col.b, 0.14))
+	if not dry:
+		draw_rect(r, col, false, 2.0)
+	if not dry:
+		draw_string(_f(), Vector2(r.position.x + 24.0, y + BTN_H * 0.5 + 9.0), label,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 28, col)
 	return y + BTN_H + BTN_GAP
 
@@ -174,7 +214,8 @@ func _draw_title() -> void:
 	_draw_mark(Vector2(cx, 262.0), 80.0)
 	var title := "LUMEN DRIFT"
 	var tw := _f().get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 34).x
-	draw_string(_f(), Vector2(cx - tw * 0.5, 404.0), title,
+	if not dry:
+		draw_string(_f(), Vector2(cx - tw * 0.5, 404.0), title,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 34, COL_ACC)
 	var gw: float = minf(268.0, view_w - 160.0)
 	_draw_log_grid(Vector2(cx - gw * 0.5, 436.0), gw, false)
@@ -189,11 +230,14 @@ func _draw_mark(c: Vector2, r: float) -> void:
 	for i in 3:
 		var rr := r * (1.0 - 0.26 * float(i))
 		var col := Color(COL_ACC.r, COL_ACC.g, COL_ACC.b, 0.35 + 0.25 * float(i))
-		draw_arc(c, rr, 0.0, TAU, 48, col, 2.0, true)
-	draw_circle(c, r * 0.24, Color(0.02, 0.04, 0.06, 1.0))
+		if not dry:
+			draw_arc(c, rr, 0.0, TAU, 48, col, 2.0, true)
+	if not dry:
+		draw_circle(c, r * 0.24, Color(0.02, 0.04, 0.06, 1.0))
 
 func _draw_diff() -> void:
-	draw_string(_f(), Vector2(44.0, 120.0), "DIFFICULTY", HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC)
+	if not dry:
+		draw_string(_f(), Vector2(44.0, 120.0), "DIFFICULTY", HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC)
 	var y := 180.0
 	for lv in [Difficulty.Level.NORMAL, Difficulty.Level.HARD]:
 		var ok := SaveData.unlocked(lv)
@@ -232,19 +276,24 @@ func _draw_axis_bars(p: Vector2, lv: int) -> void:
 	var x := p.x
 	for a in axes:
 		var w := 120.0
-		draw_rect(Rect2(x, p.y, w, 6.0), COL_LOCK)
-		draw_rect(Rect2(x, p.y, w * clampf(float(a[1]), 0.08, 1.0), 6.0), COL_ACC)
-		draw_string(_f(), Vector2(x, p.y + 26.0), String(a[0]),
+		if not dry:
+			draw_rect(Rect2(x, p.y, w, 6.0), COL_LOCK)
+		if not dry:
+			draw_rect(Rect2(x, p.y, w * clampf(float(a[1]), 0.08, 1.0), 6.0), COL_ACC)
+		if not dry:
+			draw_string(_f(), Vector2(x, p.y + 26.0), String(a[0]),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COL_LOCK)
 		x += w + 18.0
 
 ## 관측 기록 — 16칸. 어두운 칸이 남은 어휘다.
 func _draw_log() -> void:
-	draw_string(_f(), Vector2(44.0, 120.0), "OBSERVATION   %d / %d" % [
+	if not dry:
+		draw_string(_f(), Vector2(44.0, 120.0), "OBSERVATION   %d / %d" % [
 			SaveData.seen_count(), Patterns.BOOK.size()],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC)
 	_draw_log_grid(Vector2(44.0, 170.0), view_w - 88.0, true)
-	draw_string(_f(), Vector2(44.0, vh - 200.0), "tap a lit cell to practice",
+	if not dry:
+		draw_string(_f(), Vector2(44.0, vh - 200.0), "tap a lit cell to practice",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 18, COL_LOCK)
 	_btn(vh - 150.0, "BACK", -2)
 
@@ -255,18 +304,22 @@ func _draw_log_grid(p: Vector2, w: float, tappable: bool) -> void:
 		var r := Rect2(p.x + cell * float(i % cols) + 4.0,
 				p.y + cell * float(i / cols) + 4.0, cell - 8.0, cell - 8.0)
 		var lit := SaveData.seen(i)
-		draw_rect(r, COL_ACC if lit else COL_LOCK, false, 2.0)
+		if not dry:
+			draw_rect(r, COL_ACC if lit else COL_LOCK, false, 2.0)
 		if lit:
-			draw_rect(r, Color(COL_ACC.r, COL_ACC.g, COL_ACC.b, 0.10))
+			if not dry:
+				draw_rect(r, Color(COL_ACC.r, COL_ACC.g, COL_ACC.b, 0.10))
 		var id: String = String(Patterns.BOOK[i]["id"])
-		draw_string(_f(), r.position + Vector2(10.0, r.size.y * 0.5 + 8.0), id,
+		if not dry:
+			draw_string(_f(), r.position + Vector2(10.0, r.size.y * 0.5 + 8.0), id,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 22, COL_ACC if lit else COL_LOCK)
 		if tappable and lit:
 			_btns.append([r, i])
 
 ## 연습 — 구역 단위다. 구역이 곧 무피격 보너스 단위이자 연습 진입 단위다(설계서 §7).
 func _draw_practice() -> void:
-	draw_string(_f(), Vector2(44.0, 120.0), "PRACTICE", HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC)
+	if not dry:
+		draw_string(_f(), Vector2(44.0, 120.0), "PRACTICE", HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC)
 	var y := 180.0
 	for z in Stage.ZONES.size():
 		var clean := SaveData.zone_clean(z)
@@ -274,31 +327,45 @@ func _draw_practice() -> void:
 	_btn(vh - 150.0, "BACK", -2)
 
 func _draw_settings() -> void:
-	draw_string(_f(), Vector2(44.0, 120.0), "SETTINGS", HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC)
+	if not dry:
+		draw_string(_f(), Vector2(44.0, 120.0), "SETTINGS", HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC)
 	var y := 180.0
 	y = _btn(y, "SOUND     %s" % ("ON" if SaveData.sound_on else "OFF"), 0)
 	y = _btn(y, "HAPTICS   %s" % ("ON" if SaveData.haptics_on else "OFF"), 1)
-	draw_string(_f(), Vector2(44.0, y + 40.0),
+	if not dry:
+		draw_string(_f(), Vector2(44.0, y + 40.0),
 			"sound off is a supported way to play", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, COL_LOCK)
 	_btn(vh - 150.0, "BACK", -2)
 
 func _draw_pause() -> void:
-	draw_string(_f(), Vector2(44.0, 140.0), "PAUSED", HORIZONTAL_ALIGNMENT_LEFT, -1, 34, COL_ACC)
+	if not dry:
+		draw_string(_f(), Vector2(44.0, 140.0), "PAUSED", HORIZONTAL_ALIGNMENT_LEFT, -1, 34, COL_ACC)
 	var y := 220.0
 	y = _btn(y, "RESUME", 0)
 	y = _btn(y, "RESTART", 1)
 	y = _btn(y, "TITLE", 2)
 
 func _draw_result() -> void:
-	draw_string(_f(), Vector2(44.0, 140.0), "CLEAR" if result_cleared else "RUN OVER",
+	if not dry:
+		draw_string(_f(), Vector2(44.0, 140.0), "CLEAR" if result_cleared else "RUN OVER",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 34, COL_ACC if result_cleared else COL_FG)
-	draw_string(_f(), Vector2(44.0, 200.0), "SCORE   %d" % result_score,
+	if not dry:
+		draw_string(_f(), Vector2(44.0, 200.0), "SCORE   %d" % result_score,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 28, COL_FG)
-	draw_string(_f(), Vector2(44.0, 244.0), "BEST    %d" % SaveData.best[Difficulty.level],
+	if not dry:
+		draw_string(_f(), Vector2(44.0, 244.0), "BEST    %d" % SaveData.best[Difficulty.level],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 24, COL_DIM)
-	draw_string(_f(), Vector2(44.0, 296.0), "REACHED ZONE %d" % (result_zone + 1),
+	if not dry:
+		draw_string(_f(), Vector2(44.0, 296.0), "REACHED ZONE %d" % (result_zone + 1),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 24, COL_DIM)
-	_draw_log_grid(Vector2(44.0, 340.0), view_w - 88.0, false)
-	var y := vh - 280.0
+	# 버튼을 먼저 바닥에 앵커하고, 격자는 **남은 공간에 맞춰** 그린다.
+	# 폭에서만 역산하면 화면이 넓을수록 격자가 길어져 버튼을 덮는다
+	# (889×1280 태블릿에서 141px 겹쳤다 — 불변식은 격자가 버튼이 아니라서 못 봤다).
+	var stack := BTN_H * 2.0 + BTN_GAP
+	var by: float = vh - 60.0 - stack
+	var top := 340.0
+	var gw: float = minf(view_w - 88.0, (by - 30.0 - top))
+	_draw_log_grid(Vector2(44.0, top), gw, false)
+	var y := by
 	y = _btn(y, "AGAIN", 0)
 	y = _btn(y, "TITLE", 1)

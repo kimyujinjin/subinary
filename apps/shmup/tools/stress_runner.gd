@@ -36,6 +36,10 @@ var _sim_p50: float = 0.0
 var _needles: int = 0
 
 func _ready() -> void:
+	# **실제 세이브를 건드리지 않는다.** 러너는 패턴을 직접 호출하므로 mark() 가
+	# _dirty 를 켜고, Main 을 띄우는 러너는 free() 때 save_now() 가 돌아
+	# 최고점수·해금·무피격 기록을 0 으로 덮어쓴다(실측). 경고도 실패도 없이 사라진다.
+	SaveData.reset_for_test("user://save-test-stress_runner.json")
 	# vsync 를 끄지 않으면 프레임타임이 표시 주사율에 고정돼 여유가 보이지 않는다 —
 	# 16.67ms 가 "딱 맞다" 인지 "1/5 만 쓴다" 인지 구분이 안 되고, 그 표로는 교체 판단을 못 한다.
 	_kill_vsync()

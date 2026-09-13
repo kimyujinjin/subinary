@@ -2,6 +2,10 @@ extends Node
 ## 누적 확인 — 30초 루프를 5회 돌려 활성 탄 수가 정상 상태로 수렴하는지 본다.
 ## 자탄을 쏘지 않는 최악 케이스(적이 방출 창을 전부 채운다)로 잰다.
 func _ready() -> void:
+	# **실제 세이브를 건드리지 않는다.** 러너는 패턴을 직접 호출하므로 mark() 가
+	# _dirty 를 켜고, Main 을 띄우는 러너는 free() 때 save_now() 가 돌아
+	# 최고점수·해금·무피격 기록을 0 으로 덮어쓴다(실측). 경고도 실패도 없이 사라진다.
+	SaveData.reset_for_test("user://save-test-soak_runner.json")
 	var ef := EnemyField.new()
 	var cursor := 0
 	var p := Vector2(360.0, 1040.0)

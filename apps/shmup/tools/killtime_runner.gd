@@ -27,6 +27,10 @@ var _fair: Fairness = null
 var _free := PackedByteArray()
 
 func _ready() -> void:
+	# **실제 세이브를 건드리지 않는다.** 러너는 패턴을 직접 호출하므로 mark() 가
+	# _dirty 를 켜고, Main 을 띄우는 러너는 free() 때 save_now() 가 돌아
+	# 최고점수·해금·무피격 기록을 0 으로 덮어쓴다(실측). 경고도 실패도 없이 사라진다.
+	SaveData.reset_for_test("user://save-test-killtime_runner.json")
 	Difficulty.apply_from_cmdline()
 	_fair = Fairness.new()
 	_free.resize(Tune.SCAN_CELLS)

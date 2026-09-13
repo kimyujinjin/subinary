@@ -136,11 +136,8 @@ func _ready() -> void:
 	Difficulty.apply_from_cmdline()
 	_parse_capture()
 	_reset(FIXED_SEED)
-	RunLog.write("run", [SimClock.run_index, 0, SimClock.run_seed, 0, 0, "", 0, 0, 0,
-			0.0, false, 0, 0, 0.0, 0.0, 0, 0, _build_tag(),
-			TouchRouter.field_per_px, TouchRouter.screen_width_mm(),
-			"mode=%s;diff=%s" % [_mode_tag(), Difficulty.name_of()]])
-
+	# run 행은 **런이 시작될 때** 쓴다(begin_run). 기동 시 쓰면 그때는 아직 타이틀이라
+	# diff= 가 항상 커맨드라인 기본값(Normal)으로 박히고, 실기 로그의 난이도가 거짓이 된다.
 ## --capture=<tick>:<경로> — 지정 틱의 프레임을 PNG 로 저장하고 종료한다.
 ## 게이트 1 지표 ④(조류 표시 대 배경의 Weber 콘트라스트 ≥ 0.25)는 스크린샷 픽셀값으로
 ## 재야 하고, 야외 직사광 판정도 같은 경로를 쓴다. 헤드리스에는 렌더링 장치가 없으므로
@@ -199,6 +196,12 @@ func _headless_or_capture() -> bool:
 		if a.begins_with("--capture=") or a == "--cap-rescue" or a.begins_with("--boss-phase="):
 			return true
 	return false
+
+## 셸이 뜨고 질 때 부른다. 띠 제스처가 들고 있던 손가락을 놓지 않으면
+## 그 index 의 drag 를 _debug_toggle 이 계속 소비해 다음 런에서 기체가 안 움직인다.
+func drop_band_touches() -> void:
+	_band_idx.clear()
+	_toggle_taps = 0
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_PREDELETE:
@@ -265,16 +268,21 @@ func _reset(seed_value: int, start_tick: int = 0) -> void:
 	_clear_left = -1
 	clear_anim = -1
 	if midboss != null:
-		_field.remove_child(_mb_view)
-		_mb_view.queue_free()
+		# 뷰의 존재를 가정하지 않는다. _make_midboss 가 항상 짝지어 만들지만,
+		# 짝이 깨진 상태에서 _reset 이 불리면 여기서 죽으면서 **런 전체가 멈춘다** —
+		# 정리 코드가 정리하다 죽으면 안 된다.
+		if _mb_view != null:
+			_field.remove_child(_mb_view)
+			_mb_view.queue_free()
 		_mb_view = null
 		midboss = null
 		BulletField.reset_flow()
 	if stage_full and boss != null:
 		# remove_child 를 먼저 한다. queue_free 는 다음 프레임이라 그 사이 한 번 더 그려지고,
 		# 그때 boss 는 이미 null 이다.
-		_field.remove_child(_boss_view)
-		_boss_view.queue_free()
+		if _boss_view != null:
+			_field.remove_child(_boss_view)
+			_boss_view.queue_free()
 		_boss_view = null
 		boss = null
 	if boss != null:
@@ -309,6 +317,13 @@ func _debug_toggle(event: InputEvent) -> bool:
 			return _band_idx.erase(t.index)
 		if t.position.y >= 64.0:
 			return false
+		# 띠의 오른쪽 끝 90유닛은 **일시정지 전용**이다. 이 경로가 없으면 런을 시작한 뒤
+		# 나오는 방법이 라이프 3개를 다 잃는 것뿐이다 — 잘못 고른 난이도로 5분을 갇힌다.
+		# 3연타 판정에서 빼지 않으면 일시정지를 누르려다 장면이 바뀐다.
+		if _shell != null and not boss_mode and t.position.x >= view_w - 90.0:
+			_band_idx[t.index] = true
+			_shell._go(Shell.Screen.PAUSE)
+			return true
 		_band_idx[t.index] = true
 		if SimClock.wall_tick - _toggle_tick > 30:
 			_toggle_taps = 0
@@ -451,9 +466,17 @@ func _physics_process(_delta: float) -> void:
 	# 멈추면 화면 중간에 굳은 몸통이 남고, 그 몸통의 탄만 살아 움직인다.
 	_spawn_waves(tick)
 	if boss != null:
+		var ph0 := boss.phase
 		boss.step(tick, player)
+		# 페이즈 전환음은 **시뮬 밖에서** 관찰해 울린다. Boss 가 직접 Audio 를 부르면
+		# 헤드리스 러너가 오디오 서버를 건드리고 시뮬이 연출에 의존하게 된다.
+		if boss.phase != ph0:
+			Audio.play(Audio.Sfx.PHASE)
 	if midboss != null:
+		var mph0 := midboss.phase
 		midboss.step(tick, player)
+		if midboss.phase != mph0:
+			Audio.play(Audio.Sfx.PHASE)
 	enemies.step(tick, player)
 
 	# 4. 자탄 — 보스·중간보스가 먼저 먹는다(관통 없음). 남은 자탄이 적을 관통한다.
@@ -536,6 +559,7 @@ func _step_boss_clear(tick: int) -> bool:
 	if boss.done and _clear_left < 0:
 		_clear_left = CLEAR_TICKS
 		clear_anim = 0
+		Audio.play(Audio.Sfx.CLEAR)
 		BulletField.clear()
 		# 격파 시 세 링이 광립으로 흩어져 전부 상승한다 —
 		# 5분 내내 아래로만 흐르던 화면의 운동 방향이 마지막에 뒤집힌다(설계서 §6).
@@ -552,7 +576,13 @@ func _step_boss_clear(tick: int) -> bool:
 		_clear_left -= 1
 		clear_anim += 1
 		if _clear_left == 0:
-			_restart()
+			# 보스를 잡았다 = **클리어**다. _restart() 로 보내면 finish_run(false) 로 떨어져
+			# 결과 화면이 승리한 런에 "RUN OVER" 를 찍고 cleared_mask 가 영원히 0 이라
+			# Hard 가 절대 해금되지 않는다(실측: 러너는 finish_run(true) 를 직접 불러 통과했다).
+			if _shell != null and not boss_mode:
+				finish_run(true)
+			else:
+				_reset(FIXED_SEED)
 			return true
 	return false
 
@@ -681,6 +711,7 @@ func _revive() -> void:
 
 ## 셸이 "시작" 을 눌렀을 때 부른다. 연습 구역이 지정돼 있으면 그 구역의 첫 틱에서 연다.
 func begin_run() -> void:
+	_log_run_header()
 	var z: int = _shell.practice_zone if _shell != null else -1
 	_reset(FIXED_SEED, Stage.zone_of_start(z) if (stage_full and z >= 0) else 0)
 	Audio.music(SaveData.sound_on)
@@ -906,3 +937,11 @@ func _mode_tag() -> String:
 	if boss_mode:
 		return "boss"
 	return "full" if stage_full else "stage"
+
+
+## 이 런의 헤더 한 줄. 판정 스크립트가 첫 행에서 mode·diff 를 읽는다.
+func _log_run_header() -> void:
+	RunLog.write("run", [SimClock.run_index, 0, SimClock.run_seed, 0, 0, "", 0, 0, 0,
+			0.0, false, 0, 0, 0.0, 0.0, 0, 0, _build_tag(),
+			TouchRouter.field_per_px, TouchRouter.screen_width_mm(),
+			"mode=%s;diff=%s" % [_mode_tag(), Difficulty.name_of()]])
