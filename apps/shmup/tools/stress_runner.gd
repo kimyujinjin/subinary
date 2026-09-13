@@ -20,13 +20,19 @@ var _renderer: BulletRenderer = null
 var _level: int = 0
 var _frame: int = 0
 var _dt := PackedFloat32Array()
-var _proc := PackedFloat32Array()
-var _phys := PackedFloat32Array()
+## 시뮬 시간은 **직접 잰다.** Performance.TIME_PHYSICS_PROCESS / TIME_PROCESS 는
+## 프레임값이 아니라 **1초에 한 번 갱신되는 그 1초의 최댓값**이다(실측: 갱신 시각
+## t=1026·2029·3029·4028·5025ms, 그리고 30틱 중 1틱만 무겁게 만들자 평균 0.8ms 여야 할
+## 자리에 19~30ms 를 보고했다). 그 값을 300프레임 평균 내면 서로 다른 값 두세 개의
+## 산술평균이 되고, 레벨을 바꿔도 직전 레벨의 값이 다음 창으로 넘어온다.
+## CLAUDE.md 의 시뮬 표(1.26~1.77ms)가 전부 그 위에 서 있었다.
+var _sim_us := PackedFloat32Array()
 var _rng := RandomNumberGenerator.new()
 var _done := false
 var _p50 := PackedFloat32Array()
 var _dc: int = 0
 var _dc_level: int = 0
+var _sim_p50: float = 0.0
 var _needles: int = 0
 
 func _ready() -> void:
@@ -41,7 +47,7 @@ func _ready() -> void:
 	print("  빌드: %s%s" % ["debug" if OS.is_debug_build() else "release",
 			"   ← debug. 이 숫자는 곡선의 모양일 뿐 판정이 아니다" if OS.is_debug_build() else ""])
 	print("  렌더러: draw_texture_rect × N (MultiMesh 0 · 셰이더 0)")
-	print("  탄수 | 프레임타임 p50   p95   p99  최대 | 드로우콜 | process  physics (ms) | 바늘")
+	print("  탄수 | 프레임타임 p50   p95   p99  최대 | 드로우콜 | 시뮬 p50  p99 (ms) | 바늘")
 	_p50 = PackedFloat32Array()
 	_fill(LEVELS[0])
 
@@ -57,8 +63,7 @@ func _fill(n: int) -> void:
 				cos(a) * sp, sin(a) * sp, kd)
 	_frame = 0
 	_dt.clear()
-	_proc.clear()
-	_phys.clear()
+	_sim_us.clear()
 
 ## vsync 를 끄는 요청이 한 번에 안 먹는다(창 생성 타이밍과 경쟁한다). 실제로 첫 판은
 ## 꺼졌고 두 번째 판은 8.33ms 에 고정됐다 — 같은 코드, 다른 결과다.
@@ -81,8 +86,6 @@ func _process(delta: float) -> void:
 	_renderer.queue_redraw()
 	if _frame > WARM_FRAMES:
 		_dt.append(delta * 1000.0)
-		_proc.append(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
-		_phys.append(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0)
 		var dc := int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
 		_dc = maxi(_dc, dc)
 		_dc_level = maxi(_dc_level, dc)
@@ -105,7 +108,11 @@ func _physics_process(_d: float) -> void:
 	if _done:
 		return
 	# 판정·컬링까지 포함한 실제 한 틱. 렌더만 재면 반쪽이다.
+	var t0 := Time.get_ticks_usec()
 	BulletField.step_and_collide(_frame, Vector2(360.0, 1000.0), Vector2(362.0, 1000.0), true)
+	var us := float(Time.get_ticks_usec() - t0)
+	if _frame > WARM_FRAMES:
+		_sim_us.append(us)
 
 ## 되채울 때도 **같은 분포**를 쓴다. 처음에만 섞어 두면 탄이 화면 밖으로 빠져나가며
 ## 되채운 탄종으로 치환되고, 측정 구간에는 그 탄종만 남는다 — 첫 판에서 바늘(회전 패스)이
@@ -136,9 +143,12 @@ func _report(n: int) -> void:
 	for v in s:
 		mx = maxf(mx, v)
 	_p50.append(_pct(s, 0.5))
-	print("  %5d | %14.2f %5.2f %5.2f %5.2f | %8d | %7.2f %8.2f | %5d" % [
+	var sim := _sim_us.duplicate()
+	sim.sort()
+	_sim_p50 = _pct(sim, 0.5) / 1000.0
+	print("  %5d | %14.2f %5.2f %5.2f %5.2f | %8d | %8.3f %5.3f | %5d" % [
 		n, _pct(s, 0.5), _pct(s, 0.95), _pct(s, 0.99), mx, _dc_level,
-		_avg(_proc), _avg(_phys), _needles])
+		_sim_p50, _pct(sim, 0.99) / 1000.0, _needles])
 	_dc_level = 0
 	_needles = 0
 
@@ -173,8 +183,8 @@ func _verdict() -> void:
 		var dn: float = float(LEVELS[LEVELS.size() - 1] - LEVELS[0])
 		print("  → 기울기 탄 1,000발당 %+.2f ms" % ((hi - lo) / dn * 1000.0))
 	# 시뮬(물리)은 vsync 와 무관하다 — 이쪽은 그대로 유효한 숫자다.
-	print("  시뮬(적분+컬링+판정) %d탄: %.2f ms — vsync 와 무관하므로 이 숫자는 유효하다" % [
-		LEVELS[LEVELS.size() - 1], _avg(_phys)])
+	print("  시뮬(적분+컬링+판정) %d탄 p50: %.3f ms — Time.get_ticks_usec 로 직접 잰 값이다" % [
+		LEVELS[LEVELS.size() - 1], _sim_p50])
 	print("  드로우콜 %d (배칭이 되면 탄 수와 무관하게 낮게 유지된다)" % _dc)
 	print("")
 	print("  게이트: \"2,000탄에서 60fps 미달이면 백엔드 재검토\" — 데스크톱에서는 미달이 아니다.")

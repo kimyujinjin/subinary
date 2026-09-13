@@ -192,15 +192,19 @@ func _axes() -> void:
 		["Normal (기준)", N, false, false, false, false],
 		["조류만 Hard", N, true, false, false, false],
 		["탄 수만 Hard", N, false, true, false, false],
-		["탄속만 Hard", N, false, false, true, false],
+		["탄속만 1.10", N, false, false, true, false],
 		["발사간격만 Hard", N, false, false, false, true],
 		["Hard 전체", H, false, false, false, false],
-		["Hard − 탄속(1.00)", H, false, false, false, false],
-		["Hard 탄속 0.95", H, false, false, false, false],
-		["Hard 탄속 1.05", H, false, false, false, false],
+		["Hard + 탄속 1.05", H, false, false, false, false],
 	]
-	var speed_override := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.00, 0.95, 1.05]
-	for c in cases:
+	# SPEED_M 이 전 난이도 1.0 으로 꺼져 있으므로 "탄속만 Hard" 를 SPEED_M[H] 로 켜면
+	# 아무것도 안 움직인다 — 그 행이 'Normal (기준)' 의 조용한 복제본이 된다.
+	# 표에 기록된 1.1·1.05 를 재현하려면 **명시적으로** 넣어야 한다.
+	var speed_override := [0.0, 0.0, 0.0, 1.10, 0.0, 0.0, 1.05]
+	# 인덱스로 돈다. cases.find(c) 같은 값 비교는 두 행의 내용이 같아지는 순간
+	# 조용히 같은 인덱스를 집는다 — 라벨만 다른 행이 실제로 있었다.
+	for ci in cases.size():
+		var c: Array = cases[ci]
 		Difficulty.apply(int(c[1]))
 		if bool(c[2]):
 			Difficulty.u_max = Difficulty.U_MAX[H]
@@ -212,10 +216,10 @@ func _axes() -> void:
 		if bool(c[3]):
 			Difficulty.count_m = Difficulty.COUNT_M[H]
 		if bool(c[4]):
-			Difficulty.speed_m = Difficulty.SPEED_M[H]
+			pass    # 탄속 축은 아래 speed_override 로만 켠다(SPEED_M 은 1.0 으로 꺼져 있다)
 		if bool(c[5]):
 			Difficulty.rate_m = Difficulty.RATE_M[H]
-		var so: float = speed_override[cases.find(c)]
+		var so: float = speed_override[ci]
 		if so > 0.0:
 			Difficulty.speed_m = so
 		var rows := _scan(Stage.STAGE_WAVES)

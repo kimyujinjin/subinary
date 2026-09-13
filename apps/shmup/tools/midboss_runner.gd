@@ -11,6 +11,7 @@ const COMP_MIN := 52
 const HIT_HALF := MidBoss.HIT_HALF_W + Tune.SHOT_R
 
 var _fair: Fairness = null
+var _align := [1.0, 1.0, 1.0]      ## 소용돌이 ON 기준 실측 정렬률(킬타임 계산에 쓴다)
 var _free := PackedByteArray()
 
 func _ready() -> void:
@@ -30,7 +31,7 @@ func _ready() -> void:
 	var fail := 0
 	for on in [true, false]:
 		print("\n-- 소용돌이 %s --" % ("ON" if on else "OFF (컷 시뮬레이션)"))
-		print("  페이즈 | 최장min 도달폭min peak 정렬률 | 판정")
+		print("  페이즈 | 최장min 도달폭min peak 정렬률 잔여피격 | 판정")
 		for ph in [1, 2, 3]:
 			var r := _run_phase(ph, on)
 			var flags := PackedStringArray()
@@ -47,24 +48,48 @@ func _ready() -> void:
 				flags.append("WARN:F<%d" % Difficulty.free_floor())
 			if flags.is_empty():
 				flags.append("OK")
-			print("  P%d     | %6d %8d %5d %6.1f%% | %s" % [
-				ph, int(r[0]), int(r[2]), int(r[1]), float(r[4]) * 100.0, " ".join(flags)])
+			if int(r[6]) > 0:
+				flags.append("정렬률 무효(피격 %d)" % int(r[6]))
+			if on:
+				_align[ph - 1] = float(r[4])
+			print("  P%d     | %6d %8d %5d %6.1f%% %6d | %s" % [
+				ph, int(r[0]), int(r[2]), int(r[1]), float(r[4]) * 100.0,
+				int(r[6]), " ".join(flags)])
 	_killtime()
 	print("\n== 실패 %d ==" % fail)
 	get_tree().quit(1 if fail > 0 else 0)
 
-## 정렬률은 여기서 **그리디 상한**으로만 쓴다 — 몸통이 폭 84 짜리 세로 막대라
+## 정렬률은 여기서 **그리디 상한**으로만 쓴다 — 그리고 그 경로가 실제로 살아남는지
+## 같이 센다. 안 세면 탄 안에 서 있는 채로 정렬률을 적립한 숫자가 나온다:
+## `_pick` 은 예산 안에 자유 칸이 없으면 -1 을 돌려주고 호출부는 제자리에 둔다.
+## killtime_runner 가 보스에서 겪은 바로 그 결함(강제피격 958회에 정렬 100%)이다.
+## 피격이 0 이 아니면 그 정렬률은 달성 불가능한 값이므로 HP 유도에 쓰면 안 된다. — 몸통이 폭 84 짜리 세로 막대라
 ## 보스 코어(반경 70)와 달리 "중앙에 있으면 맞는다" 가 거의 항상 성립하기 때문이다.
 ## 보스처럼 후방 DP 를 돌리지 않는 이유는 페이즈가 8~10초로 짧아 갇힘의 영향이 작고,
 ## 그 짧은 구간에서 DP 와 그리디가 갈라지지 않는 것을 P1 에서 확인했다.
 func _killtime() -> void:
 	var per_sec := 2.0 * 60.0 / float(Tune.SHOT_PERIOD_TICKS)
 	print("\n  킬타임 — 자탄 %.1f발/초 × %.0f dmg" % [per_sec, Tune.SHOT_DMG])
-	print("  정렬률 | 킬타임 | 배정 30초(1800틱) 대비")
-	for al in [1.0, 0.9, 0.8, 0.6]:
-		var secs := MidBoss.HP_MAX / maxf(al * per_sec * Tune.SHOT_DMG, 0.001)
-		print("   %4.0f%% | %5.1f초 | %s" % [al * 100.0, secs,
-			"OK" if secs <= 28.0 else "시간 상한으로 넘어간다"])
+	print("  페이즈 정렬률 | 킬타임 / 상한 | 판정")
+	# **실측 정렬률로 계산한다.** 임의의 표(100/90/80/60%)를 찍으면 그 표가 게임의 숫자인지
+	# 가정인지 구분이 안 되고, 실제로 HP 가 "정렬 100%" 라는 틀린 가정에서 유도됐었다.
+	var total := 0.0
+	for ph in [1, 2, 3]:
+		var al: float = _align[ph - 1]
+		var share := MidBoss.HP_MAX * (0.35 if ph < 3 else 0.30)
+		var secs := share / maxf(al * per_sec * Tune.SHOT_DMG, 0.001)
+		var cap := float(_cap(ph)) / 60.0
+		total += secs
+		print("   P%d %4.1f%% | %5.1f초 / 상한 %.0f초 | %s" % [ph, al * 100.0, secs, cap,
+			"OK" if secs <= cap else "시간 상한으로 넘어간다"])
+	print("  ─ 합계 %.1f초 + 전환 2회 2.0초 = %.1f초 · 배정 30초" % [total, total + 2.0])
+
+func _cap(ph: int) -> int:
+	if ph == 1:
+		return MidBoss.P1_MAX_TICKS
+	if ph == 2:
+		return MidBoss.P2_MAX_TICKS
+	return MidBoss.P3_MAX_TICKS
 
 ## [최장min, peak, 도달폭min, 생존, 정렬률, 사망틱]
 ## 손잡이 스윕. 판정은 **소용돌이 OFF** 기준으로 한다 — 컷 후보가 공정성을 떠받치면
@@ -106,8 +131,8 @@ func _run_phase(ph: int, vortex_on: bool, p05e: int = 0, p11e: int = 0) -> Array
 	var comp := Tune.SCAN_CELLS
 	var alive := 1
 	var died := -1
-	var vol := 0
-	var hit := 0
+	var align := 0.0
+	var hits := 0
 	for band in BANDS:
 		BulletField.clear()
 		BulletField.reset_flow()
@@ -137,38 +162,35 @@ func _run_phase(ph: int, vortex_on: bool, p05e: int = 0, p11e: int = 0) -> Array
 				alive = 0
 				died = t
 				break
-			# 살아 있는 칸 중 몸통에 가장 가까운 곳으로 — 정렬률 상한
-			var nx := _pick(int(round(p.x)))
-			if nx >= 0:
-				p.x = float(nx)
-			if t % Tune.SHOT_PERIOD_TICKS == 0:
-				for sc in [-Tune.SHOT_COL_HALF, Tune.SHOT_COL_HALF]:
-					vol += 1
-					if absf(p.x + sc - MidBoss.CX) <= HIT_HALF:
-						hit += 1
 		peak = maxi(peak, BulletField.peak_n)
 		if rch.alive:
 			comp = mini(comp, rch.min_comp)
 		else:
 			comp = 0
+		# 정렬률은 **살아남는 경로 중 최대**를 후방 DP 로 구한다(tools/align_dp.gd).
+		# 보스 러너와 같은 정의다 — 전방 그리디로 재면 탄 안에 서 있는 채로
+		# 정렬 100%% 가 나오고(실측: 피격 63 · 갇힘 391틱), HP 가 그 숫자에서 유도된다.
+		var mb2 := MidBoss.new()
+		mb2.reset(0)
+		mb2.vortex_on = vortex_on
+		if p05e > 0:
+			mb2.p05_every = p05e
+		if p11e > 0:
+			mb2.p11_every = p11e
+		if _only.size() == 3:
+			mb2.emit_p05 = bool(_only[0])
+			mb2.emit_p08 = bool(_only[1])
+			mb2.emit_p16 = bool(_only[2])
+		mb2.phase = ph
+		mb2.phase_t0 = 0
+		var dp := AlignDP.new(_fair)
+		dp.v_budget = V_BUDGET
+		dp.target_x = MidBoss.CX
+		dp.hit_half = HIT_HALF
+		var dr := dp.measure(func(t: int, q: Vector2) -> void: mb2.step(t, q),
+				mb2.phase_limit() - 1, band)
+		align += float(dr["align"])
+		hits += int(dr["hits"])
 	BulletField.reset_flow()
 	BulletField.clear()
-	return [min_gap, peak, comp, alive, float(hit) / maxf(float(vol), 1.0), died]
-
-func _pick(cx: int) -> int:
-	var n := Tune.SCAN_CELLS
-	var acc := 0
-	for i in n:
-		acc += _fair.diff[i]
-		_free[i] = 1 if (acc == 0 or _fair.in_band == 0) else 0
-	var target := int(round(MidBoss.CX))
-	var best := -1
-	var best_d := 1 << 30
-	for i in range(maxi(0, cx - V_BUDGET), mini(n - 1, cx + V_BUDGET) + 1):
-		if _free[i] == 0:
-			continue
-		var d: int = absi(i - target)
-		if d < best_d:
-			best_d = d
-			best = i
-	return best
+	return [min_gap, peak, comp, alive, align / float(BANDS.size()), died, hits]

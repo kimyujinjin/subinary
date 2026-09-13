@@ -20,6 +20,7 @@ var acc_y := PackedFloat32Array()
 ## 단일 순회 안에서 spawn 하면 새 탄이 같은 틱에 한 번 더 적분되므로,
 ## 위치만 모아 두고 순회가 끝난 뒤 터뜨린다.
 var fuse := PackedInt32Array()
+var born := PackedInt32Array()   ## 생성 틱 — 수명 상한 컬링용
 var _burst := PackedVector2Array()
 var _burst_n: int = 0
 var kind := PackedInt32Array()
@@ -52,6 +53,7 @@ var _swept_n: int = 0
 ## 전단 — 0 이면 평소 조류, 1 이면 완전 전단. 보스 P2 가 매 틱 넣는다.
 ## 시뮬과 배경이 **같은 값**을 쓰므로 시각과 판정이 어긋날 방법이 없다(설계서 §6).
 ## 국소 소용돌이(중간보스). 0 이면 고속 경로 그대로다.
+var _now_tick: int = 0
 var vortex_w: float = 0.0
 var vortex_x: float = 0.0
 var vortex_y: float = 0.0
@@ -68,6 +70,7 @@ func _ready() -> void:
 	acc_x.resize(Tune.MAX_BULLETS)
 	acc_y.resize(Tune.MAX_BULLETS)
 	fuse.resize(Tune.MAX_BULLETS)
+	born.resize(Tune.MAX_BULLETS)
 	_burst.resize(64)
 	kind.resize(Tune.MAX_BULLETS)
 	bid.resize(Tune.MAX_BULLETS)
@@ -105,6 +108,7 @@ func spawn_acc(x: float, y: float, vx: float, vy: float, k: int, ax: float, ay: 
 		_spawn_overflow += 1
 		return
 	fuse[n] = fuse_ticks
+	born[n] = _now_tick
 	pos_x[n] = x
 	pos_y[n] = y
 	# 탄속 배율은 여기 한 곳에서만 건다. 패턴마다 걸면 빠뜨린 패턴이 생기고,
@@ -220,6 +224,7 @@ func flow_u(y: float, tick: int) -> float:
 ## p0/p1 은 이 틱의 플레이어 시작·끝 위치 (플레이어가 먼저 움직인 뒤 호출된다).
 func step_and_collide(tick: int, p0: Vector2, p1: Vector2, invincible: bool) -> void:
 	hit_index = -1
+	_now_tick = tick
 	var c := flow_c(tick)
 	var u_max: float = Difficulty.u_max
 	var swept_n := 0
@@ -269,16 +274,17 @@ func step_and_collide(tick: int, p0: Vector2, p1: Vector2, invincible: bool) -> 
 				n -= 1
 				pos_x[i] = pos_x[n]; pos_y[i] = pos_y[n]
 				vel_x[i] = vel_x[n]; vel_y[i] = vel_y[n]
-				acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]; fuse[i] = fuse[n]
+				acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]; fuse[i] = fuse[n]; born[i] = born[n]
 				kind[i] = kind[n]; bid[i] = bid[n]; flags[i] = flags[n]
 				continue
 
 		# ── 화면밖 컬링 (swap-with-last)
-		if nx < -48.0 or nx > Tune.PF_W + 48.0 or ny < -72.0 or ny > Tune.PF_H + 72.0:
+		if nx < -48.0 or nx > Tune.PF_W + 48.0 or ny < -72.0 or ny > Tune.PF_H + 72.0 \
+				or tick - born[i] > Tune.MAX_LIFE:
 			n -= 1
 			pos_x[i] = pos_x[n]; pos_y[i] = pos_y[n]
 			vel_x[i] = vel_x[n]; vel_y[i] = vel_y[n]
-			acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]; fuse[i] = fuse[n]
+			acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]; fuse[i] = fuse[n]; born[i] = born[n]
 			kind[i] = kind[n]; bid[i] = bid[n]; flags[i] = flags[n]
 			continue
 
@@ -359,7 +365,7 @@ func clear_column(cx: float, half_w: float, y_max: float) -> void:
 			n -= 1
 			pos_x[i] = pos_x[n]; pos_y[i] = pos_y[n]
 			vel_x[i] = vel_x[n]; vel_y[i] = vel_y[n]
-			acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]; fuse[i] = fuse[n]
+			acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]; fuse[i] = fuse[n]; born[i] = born[n]
 			kind[i] = kind[n]; bid[i] = bid[n]; flags[i] = flags[n]
 		else:
 			i += 1
@@ -375,7 +381,7 @@ func clear_radius(cx: float, cy: float, r: float) -> void:
 			n -= 1
 			pos_x[i] = pos_x[n]; pos_y[i] = pos_y[n]
 			vel_x[i] = vel_x[n]; vel_y[i] = vel_y[n]
-			acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]; fuse[i] = fuse[n]
+			acc_x[i] = acc_x[n]; acc_y[i] = acc_y[n]; fuse[i] = fuse[n]; born[i] = born[n]
 			kind[i] = kind[n]; bid[i] = bid[n]; flags[i] = flags[n]
 		else:
 			i += 1
