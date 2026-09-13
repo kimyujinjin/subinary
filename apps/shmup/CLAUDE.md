@@ -1070,3 +1070,43 @@ HP 는 플레이어의 사격과 무관한 장식이었다. `boss_runner` 가 "�
 **전방 그리디만으로는 못 잰다.** 코어에 붙어 있으려다 갇힌 채 "정렬 100%, 강제피격 958회"
 를 보고한다(첫 판). 생존만 보는 그리디도 갇힌다(951틱 안전칸 0) — 한 틱만 보는 정책은
 탄막에서 하한조차 되지 못한다. 판정은 반드시 시간 전체를 보는 DP 로 한다.
+
+## 실기에서만 죽는 오디오 — `loop_end` 는 프레임 **인덱스**다
+
+증상: 기기에서 앱이 소리 없이 사라진다. Godot 로그는 Vulkan 초기화 직후 끊기고
+GDScript 에러는 **한 줄도 없다**. 데스크톱·헤드리스는 5분 내내 멀쩡하다.
+
+`adb logcat -b crash` 의 tombstone 이 원인을 통째로 준다.
+
+```
+tid: 17939, name: AudioTrack  >>> dev.subinary.lumendrift <<<
+signal 11 (SIGSEGV), SEGV_ACCERR, fault addr 0xb4000073a125b000 (read)
+x22 b4000073a1204de0                     ← 버퍼 base
+ #04 libgodot_android.so                 ← Godot OpenSL 콜백
+ #05 libwilhelm.so AudioTrackCallback::onMoreData(...)
+Process uptime: 12s
+```
+
+`0xa1204de0 + 0x56220 = 0xa125b000`. `0x56220` = 352800 = `n*2`
+(8초 × 22050Hz × 16bit). **폴트 주소 = 데이터 끝 바로 다음 바이트**다.
+`uptime 12s` 는 타이틀 진입 뒤 8초 트랙이 **첫 바퀴를 도는 순간**.
+
+원인: `w.loop_end = n` 으로 뒀다. `n` 은 프레임 **개수**이고 유효 인덱스는 `n-1` 까지다.
+리샘플러는 보간을 위해 현재 프레임 **다음** 을 읽으므로 루프 지점에서 버퍼 밖으로 나간다.
+
+**왜 데스크톱에서만 안 죽는가**: 같은 오버리드가 CoreAudio 에서는 힙 안쪽이라 조용히
+지나간다. Android 의 scudo 는 큰 할당의 끝을 페이지 경계에 맞추고 가드 페이지를 두므로
+그 한 바이트가 정확히 SIGSEGV 다. **"데스크톱에서 5분 돌았다" 는 오디오의 증거가 아니다.**
+
+수정(`src/core/audio.gd`): `loop_end = n - 1`, 그리고 모든 스트림 버퍼 뒤에
+`PAD(16)` 프레임 여유 — 루프 트랙은 그 자리에 앞머리를 복사해 소리도 이어지게 한다.
+`_bake_music()` 에 불변식 2줄(`loop_end < n`, 버퍼에 PAD 여유)을 박아 뒀다.
+
+## 파이프 뒤의 `grep` 은 "실행조차 못 했다" 를 "통과" 로 바꾼다
+
+`timeout 25 $GODOT ... 2>&1 | grep -i error; echo "parse-exit=$?"` 가 `parse-exit=0` 을
+찍었는데 실제로는 `$GODOT` 경로가 없어 **127 로 죽어 있었다**. `$?` 는 파이프 마지막
+명령의 것이다. 파스 체크·빌드처럼 "돌았다" 자체가 결론인 명령은 **리다이렉트로 파일에
+받고 그 줄의 `$?` 를 찍은 뒤**, 파일을 따로 grep 한다. (`| tail` 이 실패를 삼키는 것과 같은 병)
+
+이 저장소의 Godot 은 `/Applications` 가 아니라 **`~/Applications/Godot.app`** 에 있다.

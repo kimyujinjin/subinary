@@ -16,6 +16,13 @@ const SFX_N := 8
 const RATE := 22050
 const VOICES := 8               ## 동시 발성 — 넘치면 가장 오래된 것을 뺏는다
 
+## 리샘플러 보간 여유. Godot 은 프레임을 섞을 때 **현재 프레임 다음** 을 읽는다.
+## 이 여유가 없으면 마지막 프레임에서 data 바로 바깥을 읽는다 — 데스크톱은 힙 안이라
+## 조용히 지나가지만 Android(scudo) 는 큰 할당의 끝을 페이지 경계에 맞추고 가드 페이지를
+## 두므로 그 자리에서 SIGSEGV 로 죽는다. 실기 tombstone(2026-09-13):
+##   tid name=AudioTrack / fault addr = buf base + 0x56220(= n*2) / libwilhelm→libgodot
+const PAD := 16
+
 static var _ready_done := false
 static var _enabled := true
 static var _streams: Array[AudioStreamWAV] = []
@@ -144,7 +151,7 @@ static func _bake(id: int) -> AudioStreamWAV:
 static func _tone(sec: float, f0: float, f1: float, amp: float, noise: float) -> AudioStreamWAV:
 	var n := int(RATE * sec)
 	var buf := PackedByteArray()
-	buf.resize(n * 2)
+	buf.resize((n + PAD) * 2)   # 뒤 PAD 프레임은 0 — 감쇠가 끝난 뒤라 들리지 않는다
 	var ph := 0.0
 	var seed := 12345
 	for i in n:
@@ -173,7 +180,7 @@ static func _bake_music() -> AudioStreamWAV:
 	var sec := 8.0
 	var n := int(RATE * sec)
 	var buf := PackedByteArray()
-	buf.resize(n * 2)
+	buf.resize((n + PAD) * 2)
 	for i in n:
 		var t := float(i) / float(RATE)
 		# 55Hz 기음 + 82.5Hz(완전5도). 0.125Hz 로 천천히 숨 쉰다 — 조류 주기(8초)와 같다.
@@ -183,6 +190,9 @@ static func _bake_music() -> AudioStreamWAV:
 		var s := int(clampf(v, -1.0, 1.0) * 32000.0)
 		buf[i * 2] = s & 0xFF
 		buf[i * 2 + 1] = (s >> 8) & 0xFF
+	# 보간이 루프 끝을 넘어가도 메모리 안이고 소리도 이어지도록 앞머리를 복사해 둔다.
+	for i in PAD * 2:
+		buf[n * 2 + i] = buf[i]
 	var w := AudioStreamWAV.new()
 	w.format = AudioStreamWAV.FORMAT_16_BITS
 	w.mix_rate = RATE
@@ -190,5 +200,8 @@ static func _bake_music() -> AudioStreamWAV:
 	w.data = buf
 	w.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	w.loop_begin = 0
-	w.loop_end = n
+	w.loop_end = n - 1          # **마지막 프레임의 인덱스**. n 으로 두면 data 밖을 읽는다
+	# 재발 방지 — 이 두 줄이 깨지면 실기의 오디오 스레드가 죽는다(데스크톱은 멀쩡하다)
+	assert(w.loop_end < n, "loop_end 는 프레임 인덱스다 — 프레임 개수가 아니다")
+	assert(buf.size() >= (w.loop_end + 1 + PAD) * 2, "루프 끝 뒤에 보간 여유가 없다")
 	return w
