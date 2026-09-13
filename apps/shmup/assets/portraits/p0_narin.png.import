@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cu72t134gvf4h"
-path="res://.godot/imported/p2.png-e15d93da7b63b36ce74c329e7c635b26.ctex"
+uid="uid://c8y87h0d8mfb7"
+path="res://.godot/imported/p0_narin.png-8d0c3a78efc4d6937d252a524c94e528.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/portraits/p2.png"
-dest_files=["res://.godot/imported/p2.png-e15d93da7b63b36ce74c329e7c635b26.ctex"]
+source_file="res://assets/portraits/p0_narin.png"
+dest_files=["res://.godot/imported/p0_narin.png-8d0c3a78efc4d6937d252a524c94e528.ctex"]
 
 [params]
 

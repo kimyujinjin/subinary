@@ -9,14 +9,19 @@ extends Node
 ## 화면만 망가뜨린다. 인물마다 다른 실루엣·발광 무늬를 그려서 **누가 누구인지 구분되게** 한다.
 ## 세계관(심해 생물발광)과 같은 언어로 그리므로 진짜 그림이 와도 톤이 튀지 않는다.
 
-const SIZE := 512
+## 규격(docs/ART_SPEC.md)과 같은 크기·비율로 굽는다. 자리표시자가 규격을 안 지키면
+## 레이아웃을 자리표시자에 맞춰 놓고 진짜 그림이 왔을 때 다시 틀어진다.
+const W := 768
+const H := 1024
+const MARGIN := 20.0        ## 가장자리 여백 — 모바일 텍스처 압축이 가장자리를 물어뜯는다
 const OUT := "res://assets/portraits"
+const FILES := ["p0_narin", "p1_haemu", "p2_tersa", "p3_corona"]
 
 func _ready() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT))
-	for i in 4:
+	for i in FILES.size():
 		var img := _bake(i)
-		var path := "%s/p%d.png" % [OUT, i]
+		var path := "%s/%s.png" % [OUT, FILES[i]]
 		var err := img.save_png(ProjectSettings.globalize_path(path))
 		print("  %s  %s" % [path, "ok" if err == OK else "err %d" % err])
 	print("== 초상화 4장 ==")
@@ -24,17 +29,23 @@ func _ready() -> void:
 
 ## 0 나린 · 1 해무 · 2 테르사(방추체) · 3 코로나(화륜종)
 func _bake(who: int) -> Image:
-	var img := Image.create(SIZE, SIZE, false, Image.FORMAT_RGBA8)
+	var img := Image.create(W, H, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
 	var hue: float = [0.46, 0.55, 0.10, 0.02][who]
 	var base := Color.from_hsv(hue, 0.55, 0.95)
 	var dark := Color.from_hsv(hue, 0.75, 0.16)
-	var c := Vector2(SIZE * 0.5, SIZE * 0.52)
-	for y in SIZE:
-		for x in SIZE:
+	# 얼굴이 위쪽 40%% 안에 오도록 중심을 위로 올린다(규격).
+	var c := Vector2(W * 0.5, H * 0.46)
+	var span := float(H) - MARGIN * 2.0
+	for y in H:
+		for x in W:
 			var p := Vector2(x, y)
-			var d := (p - c) / float(SIZE)
+			var d := (p - c) / span
 			var a := _shape(who, d)
+			# 가장자리 여백을 **굽는 쪽에서** 강제한다. 검사기가 자기 자리표시자를 잡는 것을
+			# 보고 고쳤다 — 규격을 만든 사람이 규격을 안 지키면 그 규격은 무시당한다.
+			a *= clampf(minf(minf(float(x), float(W - 1 - x)),
+					minf(float(y), float(H - 1 - y))) - MARGIN, 0.0, 8.0) / 8.0
 			if a <= 0.0:
 				continue
 			var glow := _glow(who, d)
@@ -75,4 +86,4 @@ func _glow(who: int, d: Vector2) -> float:
 
 ## 가장자리 1픽셀 안티에일리어싱. 계단이 보이면 자리표시자가 아니라 그냥 못 만든 것이다.
 func _edge(v: float) -> float:
-	return clampf(v * float(SIZE) * 0.06, 0.0, 1.0)
+	return clampf(v * float(H) * 0.05, 0.0, 1.0)

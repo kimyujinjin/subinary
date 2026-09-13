@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://vn6ojsdu3idr"
-path="res://.godot/imported/p3.png-18b107169083cebb69cffd614a7acccf.ctex"
+uid="uid://q6lg8v3nohox"
+path="res://.godot/imported/p1_haemu.png-a79fcd9839bcca69519c3b0a4ebbd439.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/portraits/p3.png"
-dest_files=["res://.godot/imported/p3.png-18b107169083cebb69cffd614a7acccf.ctex"]
+source_file="res://assets/portraits/p1_haemu.png"
+dest_files=["res://.godot/imported/p1_haemu.png-a79fcd9839bcca69519c3b0a4ebbd439.ctex"]
 
 [params]
 

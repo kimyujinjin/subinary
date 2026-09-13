@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dcxm76fvj8dgp"
-path="res://.godot/imported/p1.png-118c82974a119bed5e6624ab6b2ff40e.ctex"
+uid="uid://b1h3yx052t1l"
+path="res://.godot/imported/p2_tersa.png-2691f931f2c123372b89f51c43e17e21.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/portraits/p1.png"
-dest_files=["res://.godot/imported/p1.png-118c82974a119bed5e6624ab6b2ff40e.ctex"]
+source_file="res://assets/portraits/p2_tersa.png"
+dest_files=["res://.godot/imported/p2_tersa.png-2691f931f2c123372b89f51c43e17e21.ctex"]
 
 [params]
 

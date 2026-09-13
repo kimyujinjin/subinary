@@ -397,12 +397,12 @@ func _draw_pilot() -> void:
 		draw_string(_f(), Vector2(44.0, 120.0), "PILOT", HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC)
 	var y := 180.0
 	for i in Cast.PILOT_N:
-		var r := Rect2(40.0, y, view_w - 80.0, 180.0)
+		var r := Rect2(40.0, y, view_w - 80.0, 232.0)
 		_btns.append([r, i])
 		var sel := Cast.pilot == i
 		if not dry:
 			draw_rect(r, COL_ACC if sel else COL_FG, false, 2.0)
-			Portraits.draw_into(self, i, Rect2(r.position + Vector2(14.0, 14.0), Vector2(152.0, 152.0)))
+			Portraits.draw_into(self, i, Rect2(r.position + Vector2(14.0, 10.0), Vector2(160.0, 212.0)))
 			draw_string(_f(), r.position + Vector2(186.0, 52.0), Cast.NAMES[i],
 					HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC if sel else COL_FG)
 			draw_string(_f(), r.position + Vector2(186.0, 92.0), Cast.TAGLINE[i],
@@ -415,7 +415,7 @@ func _draw_pilot() -> void:
 						COL_ACC if sel else COL_DIM, 3.0)
 			draw_arc(Vector2(sx + 60.0, sy + 34.0), Cast.PICKUP_MULT[i] * 12.0, 0.0, TAU, 20,
 					COL_DIM, 1.5, true)
-		y += 196.0
+		y += 248.0
 	_btn(vh - 150.0, "BACK", -2)
 
 ## 전투 전 대사. 초상화 + 이름 + 한 줄.
@@ -432,8 +432,12 @@ func _draw_talk() -> void:
 	if dry:
 		return
 	var box := Rect2(30.0, vh - 340.0, view_w - 60.0, 260.0)
-	Portraits.draw_into(self, who, Rect2(Vector2(view_w * 0.5 - 130.0, box.position.y - 250.0),
-			Vector2(260.0, 260.0)))
+	# 반신은 글상자 **위에서 아래로** 세운다. 발밑이 상자에 살짝 물리는 것이 자연스럽다 —
+	# 3:4 그림을 정사각형 칸에 넣으면 인물이 작아지고 여백만 남는다.
+	var ph: float = minf(vh - 400.0, 520.0)
+	Portraits.draw_into(self, who, Rect2(
+			Vector2(view_w * 0.5 - ph * Portraits.ASPECT * 0.5, box.position.y + 24.0 - ph),
+			Vector2(ph * Portraits.ASPECT, ph)))
 	draw_rect(box, Color(0.03, 0.06, 0.08, 0.94))
 	draw_rect(box, COL_ACC, false, 2.0)
 	draw_string(_f(), box.position + Vector2(22.0, 42.0), name_,

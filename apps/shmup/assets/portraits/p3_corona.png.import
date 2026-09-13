@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dvsig6yw6g0em"
-path="res://.godot/imported/p0.png-93f327aa95bf009a8821b7dcdc950a0c.ctex"
+uid="uid://b7ovrq8ecmpgi"
+path="res://.godot/imported/p3_corona.png-22873670341bf47035d27b98c2237dcd.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/portraits/p0.png"
-dest_files=["res://.godot/imported/p0.png-93f327aa95bf009a8821b7dcdc950a0c.ctex"]
+source_file="res://assets/portraits/p3_corona.png"
+dest_files=["res://.godot/imported/p3_corona.png-22873670341bf47035d27b98c2237dcd.ctex"]
 
 [params]
 

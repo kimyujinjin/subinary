@@ -12,10 +12,14 @@ class_name Portraits
 ## 파일이 없어도 게임은 돈다. 없으면 그 자리에 링 실루엣을 그린다 —
 ## 초상화 하나가 없다고 화면이 깨지면 안 된다.
 
+## 규격은 docs/ART_SPEC.md 에 있다. 파일명이 계약이다 — 같은 이름으로 덮으면 끝난다.
 const PATHS := [
-	"res://assets/portraits/p0.png", "res://assets/portraits/p1.png",
-	"res://assets/portraits/p2.png", "res://assets/portraits/p3.png",
+	"res://assets/portraits/p0_narin.png", "res://assets/portraits/p1_haemu.png",
+	"res://assets/portraits/p2_tersa.png", "res://assets/portraits/p3_corona.png",
 ]
+## 규격 비율 3:4(반신). 이 비율에서 벗어난 그림도 **잘리지 않고** 들어간다 —
+## 잘라 내면 받은 그림이 화면에서 다르게 보이고, 그 차이를 그린 사람이 모른다.
+const ASPECT := 0.75
 
 static var _tex: Array[Texture2D] = []
 
@@ -32,6 +36,12 @@ static func get_tex(i: int) -> Texture2D:
 	if i < 0 or i >= _tex.size():
 		return null
 	return _tex[i]
+
+## 규격 비율로 맞춘 사각형. 주어진 폭·높이 안에 3:4 를 끼워 넣는다.
+static func fit(r: Rect2) -> Rect2:
+	var w: float = minf(r.size.x, r.size.y * ASPECT)
+	var h: float = w / ASPECT
+	return Rect2(r.get_center() - Vector2(w, h) * 0.5, Vector2(w, h))
 
 ## 주어진 사각형에 **비율을 지키며** 그린다. 없으면 대체 도형.
 static func draw_into(ci: CanvasItem, i: int, r: Rect2) -> void:
