@@ -62,10 +62,12 @@ func _draw_rescue_ring() -> void:
 	var f := float(SimClock.rescue_left) / float(Tune.RESCUE_TICKS)
 	var p: Vector2 = main.lesson_death_pos
 	var r := Tune.GRAZE_R + 130.0 * f
-	var col := Color(1.0, 0.85, 0.45, 0.35 + 0.5 * (1.0 - f))
+	var live: bool = main.rescue_live
+	var col := (Color(1.0, 0.85, 0.45, 0.35 + 0.5 * (1.0 - f)) if live
+			else Color(0.95, 0.30, 0.28, 0.30 + 0.4 * (1.0 - f)))
 	draw_arc(p, r, 0.0, TAU, 48, col, 5.0, true)
 	draw_arc(p, Tune.GRAZE_R + 4.0, -PI * 0.5, -PI * 0.5 + TAU * f, 32,
-			Color(1.0, 0.85, 0.45, 0.9), 3.0, true)
+			Color(1.0, 0.85, 0.45, 0.9) if live else Color(0.95, 0.30, 0.28, 0.75), 3.0, true)
 
 ## 소광침 — 위로 뻗는 기둥 + 주변. 기둥 밖이 남는다는 것이 폭탄의 대가이므로
 ## 연출도 정확히 그 모양이어야 한다(넓게 번쩍이면 전탄 소거로 오해된다).

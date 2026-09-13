@@ -114,5 +114,16 @@ func _ready() -> void:
 			and SimClock.state == SimClock.State.RUN,
 			"lives %d, bombs %d→%d, state=%d" % [_m.lives, bombs0, _m.bombs, SimClock.state])
 
+	# ── D. 재고가 없으면 창이 "죽은 창" 이라고 말한다 ────────────────────
+	# C 까지 오면 bombs=0 이다. 여기서 여는 창은 구할 수 없는 창인데, 지금까지
+	# 살릴 수 있는 창과 **똑같이 생겼었다** — 실기 사망 3건이 전부 이 경우였다.
+	await _open_window()
+	var said_dead := not _m.rescue_live
+	_touch(0, _m.player, false)            # 떼도 살아나지 않아야 한다(재고가 없다)
+	await _steps(4)
+	_check("D 재고 0 이면 창이 죽은 창이라고 말한다",
+			said_dead and _m.bombs == 0 and SimClock.state == SimClock.State.RESCUE,
+			"rescue_live=%s bombs=%d state=%d" % [str(_m.rescue_live), _m.bombs, SimClock.state])
+
 	print("rescue-regression: %s (%d fail)" % ["OK" if _fail == 0 else "FAIL", _fail])
 	get_tree().quit(_fail)

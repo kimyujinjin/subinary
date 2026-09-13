@@ -78,7 +78,11 @@ func _draw_rescue_window() -> void:
 	var f := float(SimClock.rescue_left) / float(Tune.RESCUE_TICKS)
 	var pulse := 0.55 + 0.45 * f
 	var edge := 16.0
-	var col := Color(1.0, 0.85, 0.45, 0.75 * pulse)
+	# 금색 = 살 수 있다 · 적색 = 재고가 없다(이 창은 사망 확정까지의 정지일 뿐이다).
+	# 색만 바꾸는 이유: 창의 **길이와 위치**를 바꾸면 두 경우의 리듬이 갈라져
+	# 피격 순간의 몸이 기억한 타이밍이 매번 어긋난다.
+	var col := (Color(1.0, 0.85, 0.45, 0.75 * pulse) if main.rescue_live
+			else Color(0.95, 0.30, 0.28, 0.62 * pulse))
 	draw_rect(Rect2(0.0, 0.0, view_w, edge), col, true)
 	draw_rect(Rect2(0.0, vh - edge, view_w, edge), col, true)
 	draw_rect(Rect2(0.0, 0.0, edge, vh), col, true)
@@ -86,7 +90,8 @@ func _draw_rescue_window() -> void:
 	# **화면 전역이 히트영역이다.** 덱만 밝히면 "저기를 눌러라" 로 읽히는데, 실기에서
 	# 유일했던 창 안 press 가 정확히 그 밖이었다(rzone=0). 위치를 가리키는 표현을 지우고
 	# 남은 시간만 남긴다 — 어디를 눌러도, 들고 있던 손을 떼도 구제된다.
-	draw_rect(Rect2(0.0, vh - 6.0, view_w * f, 6.0), Color(1.0, 0.85, 0.45, 0.9), true)
+	draw_rect(Rect2(0.0, vh - 6.0, view_w * f, 6.0),
+			Color(1.0, 0.85, 0.45, 0.9) if main.rescue_live else Color(0.95, 0.30, 0.28, 0.8), true)
 
 ## 폭탄 버튼 — 두 번째 손가락 press. 남은 수만큼 채운 원.
 func _draw_bomb_button() -> void:

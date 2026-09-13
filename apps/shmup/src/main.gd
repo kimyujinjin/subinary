@@ -37,6 +37,7 @@ var bomb_pos: Vector2 = Vector2.ZERO     # 폭탄 연출 중심 (ScreenOverlay·
 var motes: MoteField = null
 var _graze_seen: int = 0
 var _pending_death: bool = false          # 구제 창이 열려 있다 = 아직 확정되지 않은 사망
+var rescue_live: bool = false             # 이 창으로 정말 살 수 있는가(= 피격 시점의 재고)
 
 # 자탄 — 조류 영향 없음, 관통. SoA.
 var shot_x := PackedFloat32Array()
@@ -636,6 +637,7 @@ func _try_bomb() -> bool:
 	BulletField.clear_radius(player.x, player.y, Tune.BOMB_LOCAL_R)
 	invincible_left = maxi(invincible_left, Tune.BOMB_INVINCIBLE)
 	var rescued := SimClock.state == SimClock.State.RESCUE
+	var r_left := SimClock.rescue_left     # 아래에서 0 으로 지우므로 **먼저** 잡는다
 	if rescued:
 		_pending_death = false
 		SimClock.state = SimClock.State.RUN
@@ -647,16 +649,22 @@ func _try_bomb() -> bool:
 			TouchRouter.k, TouchRouter.focus, TouchRouter.regrip_count, 0,
 			BulletField.flow_c(SimClock.sim_tick), 0.0, BulletField.n,
 			int(Engine.get_frames_per_second()), "", 0.0, 0.0,
-			"rescue=%d;left=%d;bombs=%d" % [1 if rescued else 0, bombs, bombs]])
+			"rescue=%d;left=%d;bombs=%d" % [1 if rescued else 0, r_left, bombs]])
 	return true
 
 # ── 피격 · 사망 ─────────────────────────────────────────────────────────
 ## 피격 = 구제 창을 여는 것이지 사망이 아니다. 창 안에 폭탄을 누르면 취소된다.
 func _on_hit() -> void:
 	_pending_death = true
+	# 창을 여는 것은 "구할 수 있다" 는 약속이다. 재고가 없으면 그 약속을 지킬 수 없는데
+	# 지금까지 **똑같이 생긴 창**을 열었다 — 실기 사망 3건 전부 bombs=0 이었고,
+	# 플레이어는 살아난 창과 못 살아난 창을 구별할 방법이 없었다. 그러면 이 창에서
+	# 무엇을 배워야 하는지가 영영 학습되지 않는다. 정지 시간 자체는 사망에도 쓸모가
+	# 있으므로 창은 그대로 두고 **색과 소리로 갈라 말한다.**
+	rescue_live = bombs > 0
 	if stage_full:
 		_zone_hit_mask |= 1 << Stage.zone_of(SimClock.sim_tick)
-	Audio.play(Audio.Sfx.RESCUE)
+	Audio.play(Audio.Sfx.RESCUE if rescue_live else Audio.Sfx.HIT)
 	lesson_bid = BulletField.hit_bid
 	lesson_death_pos = player
 	SimClock.rescue(Tune.RESCUE_TICKS)
