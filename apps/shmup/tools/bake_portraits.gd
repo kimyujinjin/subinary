@@ -57,11 +57,19 @@ func _bake(who: int) -> Image:
 func _shape(who: int, d: Vector2) -> float:
 	match who:
 		0, 1:
-			# 조종사 — 머리 + 어깨. 나린은 둥글고 넓게, 해무는 길고 좁게.
-			var w: float = 0.30 if who == 0 else 0.24
-			var head: float = Vector2(d.x / (w * 0.62), (d.y + 0.24) / (w * 0.72)).length()
-			var body: float = Vector2(d.x / w, (d.y - 0.24) / (w * 1.5)).length()
-			return _edge(1.0 - minf(head, body))
+			# 조종사 — **머리 위 표식이 실루엣을 만든다**(장르 문법 1).
+			# 나린은 넓게 퍼진 테, 해무는 곧게 선 관. 얼굴이 안 보여도 둘이 안 섞인다.
+			var w: float = 0.26 if who == 0 else 0.20
+			var head: float = Vector2(d.x / (w * 0.66), (d.y + 0.20) / (w * 0.74)).length()
+			var body: float = Vector2(d.x / w, (d.y - 0.26) / (w * 1.6)).length()
+			var mark := 9.9
+			if who == 0:
+				# 넓은 테 — 머리 위를 가로지르는 납작한 타원
+				mark = Vector2(d.x / 0.30, (d.y + 0.34) / 0.045).length()
+			else:
+				# 높은 관 — 머리 위로 곧게 선 좁은 기둥
+				mark = Vector2(d.x / 0.035, (d.y + 0.40) / 0.17).length()
+			return _edge(1.0 - minf(minf(head, body), mark))
 		2:
 			# 테르사 — 세로 방추. 게임의 몸통과 같은 형태다.
 			var q: float = 1.0 - pow(clampf(d.y / 0.46, -1.0, 1.0), 2.0)
@@ -75,9 +83,11 @@ func _shape(who: int, d: Vector2) -> float:
 func _glow(who: int, d: Vector2) -> float:
 	match who:
 		0:
-			return 0.35 + 0.65 * absf(sin(d.x * 26.0 + d.y * 8.0))      # 넓게 퍼진 줄무늬
+			# **가로 줄** — 나린의 사격은 넓다. 무늬 방향이 곧 그 사람의 탄이다(규격 문법 3).
+			return 0.35 + 0.65 * absf(sin(d.y * 22.0))
 		1:
-			return 0.30 + 0.70 * absf(sin(d.y * 34.0))                  # 세로로 촘촘한 층
+			# **세로 줄** — 해무의 사격은 한 줄이다.
+			return 0.30 + 0.70 * absf(sin(d.x * 34.0))
 		2:
 			return 0.25 + 0.75 * absf(sin((d.x * 3.2 + d.y) * 18.0))    # 비틀린 나선
 		_:

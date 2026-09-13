@@ -400,11 +400,12 @@ func _draw_pilot() -> void:
 		var r := Rect2(40.0, y, view_w - 80.0, 232.0)
 		_btns.append([r, i])
 		var sel := Cast.pilot == i
+		var pc: Color = Cast.COLOR[i]
 		if not dry:
-			draw_rect(r, COL_ACC if sel else COL_FG, false, 2.0)
+			draw_rect(r, pc if sel else COL_FG, false, 2.0)
 			Portraits.draw_into(self, i, Rect2(r.position + Vector2(14.0, 10.0), Vector2(160.0, 212.0)))
 			draw_string(_f(), r.position + Vector2(186.0, 52.0), Cast.NAMES[i],
-					HORIZONTAL_ALIGNMENT_LEFT, -1, 30, COL_ACC if sel else COL_FG)
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 30, pc if sel else COL_FG)
 			draw_string(_f(), r.position + Vector2(186.0, 92.0), Cast.TAGLINE[i],
 					HORIZONTAL_ALIGNMENT_LEFT, -1, 17, COL_DIM)
 			# 사격 폭을 그대로 그린다 — 이것이 두 사람의 진짜 차이다.
@@ -412,9 +413,9 @@ func _draw_pilot() -> void:
 			var sy := r.position.y + 132.0
 			for s2 in [-Cast.COL_HALF[i], Cast.COL_HALF[i]]:
 				draw_line(Vector2(sx + 60.0 + s2, sy + 26.0), Vector2(sx + 60.0 + s2, sy),
-						COL_ACC if sel else COL_DIM, 3.0)
+						pc if sel else COL_DIM, 3.0)
 			draw_arc(Vector2(sx + 60.0, sy + 34.0), Cast.PICKUP_MULT[i] * 12.0, 0.0, TAU, 20,
-					COL_DIM, 1.5, true)
+					Cast.COLOR2[i] if sel else COL_DIM, 1.5, true)
 		y += 248.0
 	_btn(vh - 150.0, "BACK", -2)
 
