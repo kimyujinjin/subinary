@@ -63,7 +63,7 @@ API가 먼저 실행돼 있어야 합니다. 시작 시 로그인하고 401에�
 ### Dot에 붙여넣을 첫 조회 지시문
 
 ```text
-family-finance 도구로 이번 달 가계부를 확인해 줘.
+연결된 내 컴퓨터의 family-finance 도구로 이번 달 가계부를 확인해 줘.
 먼저 finance_quality와 finance_overview를 조회하고, finance_recurring으로 마지막 계산 시각을 확인해.
 1. 이번 달 카드 문자 기반 순지출과 예산 현황
 2. 파싱 실패·카드 연결 확인·미분류 등 내가 확인할 중요한 항목 3개

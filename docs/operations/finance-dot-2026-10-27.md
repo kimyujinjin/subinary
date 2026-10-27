@@ -2,18 +2,18 @@
 
 ## 상태
 
-이 문서는 구현과 검증을 운영 적용과 구분한다. 아래 상태는 작성 시점 기준이며 배포 담당자가 실제 실행 후 갱신한다.
+2026-10-28 00시대 운영 반영 결과다. 코드·운영 데이터·실제 MCP 조회를 검증했으며, Dot 대화 내부 실행과 카드 등록 구분은 사용자 확인을 기다린다.
 
 | 항목 | 확인 상태 |
 |---|---|
 | 카드 식별·취소/중복 경계·문자 파서·UI 개선 | 구현 및 로컬 검증 |
 | 운영 DB 백업 | 파일 생성, 격리 PostgreSQL 17 전체 복구 검증 |
 | 0062/0063 migration과 카드 65건 정정 | 격리 복구 DB에서 검증 완료 |
-| 운영 API/worker/web 신규 이미지 | 아직 배포 완료로 기록하지 않음 |
-| 운영 DB 카드 정정·문자 재처리 | 운영 쓰기 미실행 |
+| 운영 API/worker/web 신규 이미지 | 배포 완료, 세 서비스 healthy |
+| 운영 DB 카드 정정·문자 재처리 | 잘못된 연결 65건 해제, 실패 문자 6/6건 복구·검증 |
 | 사용자 로그인·인증 파일 | 완료, 파일 권한 600 확인 |
-| 실제 로컬 stdio MCP | 금융 12개·기억 0개 등록, 기존 조회 4종 성공 |
-| 신규 `finance_quality` 운영 호출 | 배포 후 검증 예정 |
+| 실제 로컬 stdio MCP | 금융 12개·기억 0개 등록, 조회 도구 9종 실제 성공. 쓰기 3종은 합성 회귀 검증 |
+| 신규 `finance_quality` 운영 호출 | 성공. 본인 문자 실패 0·카드 소유자 불일치 0 |
 | Codex MCP 등록 | `family-finance`, `finance-review`, 인증 파일 경로 방식으로 등록 완료 |
 | Dot 앱 내부 실제 호출 | 미확인 |
 | 등록 카드의 상품 별칭/카드사 구분 | 기존 삼성 문자 이력과 충돌하여 사용자 확인 대기 |
@@ -24,13 +24,13 @@
 
 추가 조회에서 본인의 현대카드 상품 별칭과 삼성 카드사 설정이 다르게 등록된 점을 확인했다. 이 카드에는 삼성 카드사 SMS 73건과 수동 내역 1건이 연결돼 있다. 따라서 본인 카드 누락으로 단정하거나 카드사만 바로 현대으로 바꾸지 않는다. 실제로 여러 카드를 사용하는지 확인한 뒤 상품 별칭·카드사·등록 구분을 정리한다. 자동으로 새 카드를 만들지 않는다.
 
-현재 검토 계획은 `.deploy-logs/card-ownership/plan-1793110373661.json`이다. 이 파일은 민감한 내부 식별·금액 스냅샷을 포함하므로 Git에 넣거나 채팅에 출력하지 않는다. 문서에는 집계만 남긴다.
+운영 적용 계획은 `.deploy-logs/card-ownership/plan-1793113383813.json`이다. 이 파일은 민감한 내부 식별·금액 스냅샷을 포함하므로 Git에 넣거나 채팅에 출력하지 않는다. 문서에는 집계만 남긴다.
 
 ```bash
 # 기본은 읽기 전용 계획. 새 계획의 건수와 영향 범위를 먼저 확인한다.
 node scripts/repair-card-ownership.mjs plan
 
-# 아래는 검토된 계획의 명시적 적용 형식이며, 이 문서 작성으로 실행된 것은 아니다.
+# 운영에서 검토한 65건에 이 형식으로 적용했으며 감사 파일을 보관했다.
 node scripts/repair-card-ownership.mjs apply <검토한-plan.json> --expected-count=65
 ```
 
@@ -44,7 +44,7 @@ CLI는 체크섬·건수·변경 전 스냅샷·원본 구성원·카드 소유�
 | 모임금고 저금 안내 | 2 | `ignored`, 원문 보존·거래 미생성 |
 | 금액 없는 해외원화 차단 승인거절 | 2 | `parsed` + `declined`, 거래 미승격 |
 
-합성 fixture로 재현했다. 파서 250개와 worker 47개 검증이 통과했다. 이 기록 시점에 운영 원문 재처리는 실행하지 않았다. `ignored` 사용 전 0062 migration이 필요하다. 재처리 후 성공·검토·무시·거절을 구분하고 거래 생성 여부를 확인한다.
+합성 fixture로 재현했다. 파서 250개와 worker 62개 검증이 통과했다. 운영 원문 6건도 수정 worker에서 결정적 파서만 사용해 재처리했고 6건 모두 verify를 통과했다. `ignored` 사용 전 0062 migration이 필요하다. 재처리 후 성공·검토·무시·거절을 구분하고 거래 생성 여부를 확인한다.
 
 ## UI 검토
 
@@ -98,6 +98,28 @@ CLI는 체크섬·건수·변경 전 스냅샷·원본 구성원·카드 소유�
 - 운영 health, 문자 수집·승격, 카드 연결, 신규 quality API, 정기지출 계산 시각, 모바일 주요 화면을 확인한다.
 - Dot에서는 도구 목록과 실제 조회 결과를 확인한다. 로컬 stdio 성공만으로 완료 처리하지 않는다.
 
-등록 설정과 첫 지시문은 [MCP README](../../apps/mcp/README.md)에 있다. 작성 시점 실제 stdio 검증은 `finance-review`의 금융 12개·기억 0개와 `finance_summary`, `finance_transactions`, `finance_recurring`, `finance_categories` 4종 조회다. 신규 quality 호출과 Dot 앱 내부 실행은 남아 있다.
+등록 설정과 첫 지시문은 [MCP README](../../apps/mcp/README.md)에 있다. 작성 시점 실제 stdio 검증은 `finance-review`의 금융 12개·기억 0개와 `finance_summary`, `finance_transactions`, `finance_recurring`, `finance_categories` 4종 조회다. 이후 quality·overview·upcoming·분류 이력·미리보기까지 조회 9종을 확인했다. Dot 앱 내부 실행은 남아 있다.
 
 고정 MCP 설치본은 `~/.local/share/family-memory-ai/mcp/main.cjs`다. 기존 Codex 예약 자동화는 변경하지 않았다. 등록 사실이 Dot 앱에서의 실제 도구 호출을 보장하지 않으므로 마지막 검증은 별도로 남긴다.
+
+
+## 최종 운영 결과와 재현 정보
+
+- 코드 커밋: `f67a549`(주요 구현), `210d838`(시작 시 pnpm 다운로드 제거).
+- 실행 이미지: `family-memory-ai/prod:finance-20261028`, ID `sha256:df4713d1c604326b9c6ba32c3ff07a2a71f279500ebedb00cc2a90f85d387195`. `prod:local`도 같은 이미지다.
+- 이전 이미지 보존: `family-memory-ai/prod:pre-card-quality-20261027`.
+- 배포 직전 추가 백업: `.deploy-logs/pre-finance-fix/20261028-000214.dump`, 1,272,470 bytes, SHA256 `dfd986b747c51ecab09c95ae7cf8655c72f6bacb5d37ed0e47e0aab4fac5665e`.
+- Compose에는 원본 저장소의 `.env`와 `.env.production`을 `--env-file`로 순서대로 전달했다. 현재 실행 환경과 세 서비스의 환경값 차이가 없음을 먼저 대조했다. 전체 config 출력이나 비밀값은 로그에 남기지 않았다.
+- 마이그레이션 이력 64개, `ignored` enum과 `recurring_recompute_state` 생성 확인.
+- 카드 정정 전후 기존 510건에서 `card_id`, `updated_at`을 제외한 전체 행 해시가 동일했다. 금액 불변식 위반 0건, 타인의 비공용 카드 연결 0건.
+- 문자 복구 후 거래는 512건, 문자 상태는 parsed 539건·ignored 2건·실패 0건이다. 복구 pipeline 6개 모두 성공, 해당 실행에 연결된 AI 호출 기록 0건.
+- 문자 계획과 적용·검증 영수증은 `.deploy-logs/sms-parsing/`에 600 권한으로 보관했다. 운영 복구에서는 재시도가 필요하지 않았다.
+- 복구 후 정기지출을 수동으로 한 번 더 재계산했다. 로그인 계정 조회 기준 후보 1건, 계산 상태 computed, provisional=false. 후보는 사용자 확정된 구독이나 청구 예정액을 뜻하지 않는다.
+- 전체 기간의 남은 검토 항목은 로그인 계정 조회 기준 미분류 31건·중복 의심 1건·미연결 취소 5건이다. 자동으로 분류·제외·취소 연결하지 않았다.
+- 웹 런타임을 네트워크 없는 임시 컨테이너에서 기동해 health/login/cards/transactions/devices 응답을 확인했고, 배포 후 공개 도메인의 주요 경로도 HTTP 200을 확인했다.
+- 모바일 OTA `f67a549`, SHA256 `148239d9d9bbba508124c581594ab654705d669a9e3759e8e0fb4d324f31aaef`를 게시하고 API 응답과 대조했다. 실제 휴대폰에서 새 번들을 적용한 상태는 미확인이다. 이전 manifest는 `.deploy-logs/ota/previous-manifest.json`에 보존했다.
+- 격리 DB·웹·Redis 검증 컨테이너는 제거했다. 운영 DB·Redis·터널 컨테이너는 재시작하지 않았다.
+
+표준 Dockerfile의 runtime 단계에도 빌드에서 검증한 Corepack 캐시를 복사하도록 보완했다. 기존 이미지는 앱 의존성은 갖고 있지만 컨테이너 최초 시작 때 pnpm을 내려받아야 했다. 배포 이미지는 기존 운영 컨테이너의 pnpm 9.15.4 캐시를 재사용했고, 외부 통신 없이 실제 서비스 명령으로 기동됨을 확인했다.
+
+현재 소스는 별도 worktree `/Users/soobeen/Desktop/Project/fma-dot-card-quality`, 브랜치 `fix/fma-dot-card-quality`에 커밋되어 있다. 원본 `/Users/soobeen/Desktop/Project/subinary`의 다른 작업과 staging은 건드리지 않았다. 이후 표준 재빌드는 이 수정 커밋을 포함한 소스에서 해야 한다.
