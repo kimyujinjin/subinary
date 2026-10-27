@@ -158,13 +158,15 @@ Phase 5는 정규화 거래(`card_transactions`)를 **읽기 전용 집계**(통
 | `GET /v1/budgets?householdId=&month=` | `200` | 활성 멤버 | 해당 월 계획 + 선택월 사용률 |
 | `POST /v1/budgets` | `201` | owner/admin | 예산 생성 |
 | `POST /v1/budgets/copy` | `200` | owner/admin | 선택월 계획을 바로 다음 달로 원자적 복사 |
-| `PATCH /v1/budgets/:id` | `200` | owner/admin | name/amount 수정 |
+| `PATCH /v1/budgets/:id` | `200` | owner/admin | name/amount 수정 또는 카드 범위 정정 |
 | `DELETE /v1/budgets/:id` | `204` | owner/admin | 예산 삭제 |
 
-- 스코프: `scopeType ∈ {household, member, category, card}`, `period='monthly'`.
-- `household`는 `scopeRefId` 없음(전체), 그 외는 해당 member/category/card id가 가족 소속이어야 함.
+- 스코프: `scopeType ∈ {household, member, category, card, card_group}`, `period='monthly'`.
+- `household`는 `scopeRefId` 없음(전체), `member/category/card`는 해당 ID가 가족 소속이어야 한다.
+- `card_group`은 `scopeRefId` 대신 `cardIds`를 사용한다. 같은 가구·소유자의 활성 비공용 카드 2~20개만 허용한다. 중복 ID를 거부하고 정렬한 배열로 저장한다.
 - `(householdId, effectiveMonth, scopeType, scopeRefId)`는 유일 — 중복 시 **409**.
-- 과거월은 읽기 전용이다. 현재월·미래월만 생성/수정/삭제할 수 있다.
+- 같은 월의 같은 카드 묶음도 배열 순서와 관계없이 유일하며 중복은 **409**다.
+- 과거월 이름·한도·삭제는 잠근다. 카드 범위 정정만 과거월에 허용하고, 실지출·달성률·3개월 평균은 새 범위로 계산한다. [ADR-0034](../adr/0034-card-group-budget-and-dot-local-execution.md) 참고.
 
 ### `POST /v1/budgets` (`budgetCreateRequestSchema`)
 
@@ -184,8 +186,9 @@ Phase 5는 정규화 거래(`card_transactions`)를 **읽기 전용 집계**(통
 |---|---|
 | `householdId` | 필수(uuid). 요청자는 이 가족의 **owner/admin**이어야 함(아니면 `403`). |
 | `name` | 선택(최대 100자). |
-| `scopeType` | `household`/`member`/`category`/`card`. |
-| `scopeRefId` | `household`는 생략. 그 외 필수(uuid, 가족 소속 검증). |
+| `scopeType` | `household`/`member`/`category`/`card`/`card_group`. |
+| `scopeRefId` | `household`/`card_group`는 생략. 나머지는 필수(uuid, 가족 소속 검증). |
+| `cardIds` | `card_group`에서만 필수. 서로 다른 카드 UUID 2~20개. |
 | `amount` | **양의 KRW 정수**. |
 | `effectiveMonth` | 선택(`YYYY-MM`). 생략하면 서울 기준 현재월. 과거월은 `400`. |
 
@@ -198,6 +201,7 @@ Phase 5는 정규화 거래(`card_transactions`)를 **읽기 전용 집계**(통
   "name": "가족 월 예산",
   "scopeType": "household",
   "scopeRefId": null,
+  "cardIds": [],
   "scopeLabel": "가족 전체",
   "effectiveMonth": "2026-08",
   "amount": 3000000,
@@ -217,7 +221,22 @@ Phase 5는 정규화 거래(`card_transactions`)를 **읽기 전용 집계**(통
 | `threeMonthAverageSpent` | 선택월을 포함한 최근 3개 회계월 실지출 평균. 저장하지 않는 파생값. |
 | `remaining` | `amount - spent`. |
 | `usageRate` | `spent / amount`(amount=0이면 0). |
-| `scopeLabel` | '가족 전체' / 구성원명 / 카테고리명 / 카드별칭. |
+| `scopeLabel` | '가족 전체' / 구성원명 / 카테고리명 / 카드별칭 / 묶음 카드별칭을 ` + `로 연결. |
+| `cardIds` | 묶음에 저장한 카드 목록. 다른 범위는 빈 배열. 이후 카드 상태 변경으로 과거 목록을 자동 변경하지 않는다. |
+
+### 카드 범위 정정
+
+기존 `card` 또는 `card_group` 예산에 다음을 `PATCH /v1/budgets/:id`로 보낸다. 한도를 유지하려면 `name`과 `amount`를 보내지 않는다.
+
+```json
+{
+  "scopeType": "card_group",
+  "cardIds": ["<삼성 카드 UUID>", "<본인 현대 카드 UUID>"],
+  "expectedCardIds": ["<직전 조회한 단일 카드 UUID>"]
+}
+```
+
+이미 묶음인 경우 `expectedCardIds`에는 직전 조회의 전체 카드 목록을 보낸다. 동시 변경으로 현재 범위와 다르면 **409**이며 다시 조회해야 한다. 과거월 정정에 이름·한도를 함께 보내면 **400**이다. 변경 전후 카드 목록·실행자·시각을 `budget_scope_corrections`에 같은 트랜잭션으로 기록한다. 새달 복사 때는 카드의 현재 가구·소유자·활성·비공용 상태를 다시 검사한다.
 
 > `household` 예산의 `spent`는 같은 달 `GET /v1/analytics/monthly`(같은 요청자)의 `totalNet`과
 > **정의상 동일**하다.
@@ -259,9 +278,9 @@ Phase 5는 정규화 거래(`card_transactions`)를 **읽기 전용 집계**(통
 { "name": "가족 월 예산(상향)", "amount": 3500000 }
 ```
 
-- `name`/`amount`만 수정 가능(스코프는 불변 — 변경하려면 삭제 후 재생성). owner/admin만. 응답은
-  갱신된 `budgetSummary`.
-- 과거월 행은 `400`(읽기 전용).
+- 현재·미래월은 `name`/`amount`를 수정할 수 있다. owner/admin만 가능하며 응답은 갱신된 `budgetSummary`다.
+- 카드 범위는 위의 `scopeType: card_group`, `cardIds`, `expectedCardIds` 계약으로 정정할 수 있다. `household/member/category`를 카드 묶음으로 바꾸는 요청은 거절한다.
+- 과거월 이름·한도 변경은 `400`이다. 과거월 카드 범위만 정정할 때는 `name`과 `amount`를 보내지 않는다.
 
 ### `DELETE /v1/budgets/:id`
 
@@ -281,7 +300,7 @@ Phase 5는 정규화 거래(`card_transactions`)를 **읽기 전용 집계**(통
 | 미인증(access token 없음/만료) | `401` |
 | 비멤버 조회 / member 의 예산 CRUD | `403` |
 | 예산 미존재(PATCH/DELETE) | `404` |
-| 같은 월의 `(householdId, scopeType, scopeRefId)` 중복 / 다른 키의 복사 target 충돌 | `409` |
+| 같은 월의 범위 또는 카드 묶음 중복 / 오래된 `expectedCardIds` / 다른 키의 복사 target 충돌 | `409` |
 
 ## 4. 웹 연동(CORS/인증)
 

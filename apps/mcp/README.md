@@ -2,7 +2,7 @@
 
 Dot이 대화와 판단을 맡고, family-memory-ai는 카드 문자 수집·거래 기록·집계와 권한을 맡습니다. 이 MCP 서버는 기존 HTTP API를 호출하는 **로컬 stdio 프로세스**이며 DB에 직접 접근하지 않습니다.
 
-2026-10-28 기준입니다. 사용자 로그인, 권한 600 인증 파일, 금융 도구 12개 등록, 조회 도구 9종의 실제 호출과 신규 API 운영 배포를 검증했습니다. **Dot 클라우드 대화에는 이 로컬 MCP가 직접 보이지 않았습니다.** 연결된 PC에서의 명령 실행은 확인했지만 최초 API 조회가 실패해 환경별 연결을 점검 중입니다. 배포·데이터 복구 결과는 [운영 기록](../../docs/operations/finance-dot-2026-10-27.md)을 확인하세요.
+2026-10-28 기준입니다. 사용자 로그인, 권한 600 인증 파일, 금융 도구 12개 등록, 조회 도구 9종의 실제 호출과 신규 API 운영 배포를 검증했습니다. **Dot 클라우드 대화에는 이 로컬 MCP가 직접 보이지 않았습니다.** 연결된 PC에서의 명령 실행은 확인했지만 API 로그인 전 DNS 조회가 `ENOTFOUND`로 실패했습니다. Dot 환경의 네트워크 접근·DNS 점검이 남아 있습니다. 카드 구분과 합산 예산은 [10/28 운영 기록](../../docs/operations/finance-dot-2026-10-28.md), 파싱 복구는 [10/27 기록](../../docs/operations/finance-dot-2026-10-27.md)을 확인하세요.
 
 ## 사용할 수 있는 범위
 
@@ -57,6 +57,8 @@ Dot 프로필의 **Computers → Your computer → Allow access**에서 이 PC �
 ```
 
 명령은 고정된 운영 API에서 로그인 계정의 품질 집계만 읽고 종료합니다. 거래 원문·금액·인증 값을 출력하지 않고, 쓰기나 임의 API 호출도 받지 않습니다. `check.cjs`는 `pnpm --filter @family/mcp build`의 `dist/check.js`를 독립 설치한 파일입니다. PC의 일반 실행 성공과 Dot 실행 성공을 각각 확인해야 합니다.
+
+실패 시 `stage`, `attemptedAt`, `proxyConfigured`, 허용된 `networkCode`로 구분합니다. 실제 Dot 재실행에서는 `stage=login`, `networkCode=ENOTFOUND`, `proxyConfigured=false`였습니다. 일반 PC 실행은 성공했으므로 Dot 작업의 네트워크 허용 여부·이름 해석을 먼저 확인합니다. 이 결과만으로 권한 차단이라고 확정하지 않습니다. 필요한 허용 절차가 있으면 대상 `app.subinary.cloud:443`에 한해 요청하며, IP 고정·보호 해제·다른 실행 환경으로 우회하지 않습니다.
 
 다음은 다른 로컬 MCP 클라이언트에 수동으로 등록할 때 사용하는 예시입니다. Dot에 같은 JSON 입력 화면이 있다고 가정하지 않습니다. GUI 앱에서 `node`를 찾지 못하면 `command -v node`의 결과를 `command`에 넣습니다. 모든 경로를 실제 절대경로로 바꾸세요. JSON의 `~`는 자동 확장되지 않습니다.
 
