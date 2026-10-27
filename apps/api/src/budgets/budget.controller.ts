@@ -103,7 +103,7 @@ export class BudgetController {
     });
   }
 
-  /** PATCH /v1/budgets/:id — update name/amount (owner/admin). */
+  /** 소유자/관리자가 이름·한도를 수정하거나 기존 카드 범위를 명시적으로 정정한다. */
   @Patch(':id')
   update(
     @CurrentUser() user: AuthenticatedUser,

@@ -2,7 +2,7 @@
 
 Dot이 대화와 판단을 맡고, family-memory-ai는 카드 문자 수집·거래 기록·집계와 권한을 맡습니다. 이 MCP 서버는 기존 HTTP API를 호출하는 **로컬 stdio 프로세스**이며 DB에 직접 접근하지 않습니다.
 
-2026-10-28 운영 반영 기준입니다. 사용자 로그인, 권한 600 인증 파일, 금융 도구 12개 등록, 조회 도구 9종의 실제 호출과 신규 API 운영 배포를 검증했습니다. **Dot 대화 내부의 실제 도구 호출은 아직 미확인입니다.** 배포·데이터 복구 결과는 [운영 기록](../../docs/operations/finance-dot-2026-10-27.md)을 확인하세요.
+2026-10-28 기준입니다. 사용자 로그인, 권한 600 인증 파일, 금융 도구 12개 등록, 조회 도구 9종의 실제 호출과 신규 API 운영 배포를 검증했습니다. **Dot 클라우드 대화에는 이 로컬 MCP가 직접 보이지 않았습니다.** 연결된 PC에서의 명령 실행은 확인했지만 최초 API 조회가 실패해 환경별 연결을 점검 중입니다. 배포·데이터 복구 결과는 [운영 기록](../../docs/operations/finance-dot-2026-10-27.md)을 확인하세요.
 
 ## 사용할 수 있는 범위
 
@@ -43,6 +43,20 @@ node scripts/setup-family-mcp.mjs
 이 PC에는 `family-finance`가 Codex MCP 설정에 `finance-review`로 등록되어 있습니다. 다시 등록하거나 비밀번호를 복사할 필요가 없습니다. [공식 안내](https://learn.chatgpt.com/docs/extend/mcp)는 ChatGPT 데스크톱과 Codex의 로컬 MCP 설정 공유를 설명합니다. 이것이 클라우드 Dot 대화의 직접 호출 성공을 뜻하지는 않습니다.
 
 Dot 프로필의 **Computers → Your computer → Allow access**에서 이 PC 연결을 확인하고, PC와 ChatGPT 데스크톱 앱을 켜 둡니다. 아래 지시문으로 연결된 컴퓨터의 도구를 사용하도록 요청하세요. 도구가 없다고 나오면 연결 컴퓨터에서의 실행 여부와 MCP 로딩 상태를 확인해야 합니다. [Dot 컴퓨터 연결 안내](https://learn.chatgpt.com/docs/dots/computers-and-apps)를 참고하세요.
+
+### Dot에서 도구가 보이지 않을 때
+
+로컬 MCP 설정과 Dot 클라우드의 플러그인 도구 목록은 같지 않습니다. 이 PC에는 품질 조회만 하는 독립 명령도 설치했습니다. Dot이 연결된 PC의 로컬 작업으로 실행하게 요청할 수 있습니다. 이것은 HTTP API 조회이며 MCP 연결 성공을 뜻하지 않습니다.
+
+```text
+연결된 내 PC에서 로컬 작업을 실행해 줘.
+/usr/local/bin/node /Users/soobeen/.local/share/family-memory-ai/mcp/check.cjs
+반환 JSON의 파싱 실패·카드 소유자 불일치 건수와 조회 시각을 알려줘.
+인증 파일은 열거나 출력하지 말고, 클라우드에서 실행하거나 파일을 복사하지 마.
+실패하면 결과를 0건으로 표시하지 말고 오류 코드와 실패 단계를 알려줘.
+```
+
+명령은 고정된 운영 API에서 로그인 계정의 품질 집계만 읽고 종료합니다. 거래 원문·금액·인증 값을 출력하지 않고, 쓰기나 임의 API 호출도 받지 않습니다. `check.cjs`는 `pnpm --filter @family/mcp build`의 `dist/check.js`를 독립 설치한 파일입니다. PC의 일반 실행 성공과 Dot 실행 성공을 각각 확인해야 합니다.
 
 다음은 다른 로컬 MCP 클라이언트에 수동으로 등록할 때 사용하는 예시입니다. Dot에 같은 JSON 입력 화면이 있다고 가정하지 않습니다. GUI 앱에서 `node`를 찾지 못하면 `command -v node`의 결과를 `command`에 넣습니다. 모든 경로를 실제 절대경로로 바꾸세요. JSON의 `~`는 자동 확장되지 않습니다.
 

@@ -1718,12 +1718,14 @@ export type NewCategoryRecategorizeItem =
  * - member: 특정 구성원(scopeRefId=householdMembers.id)
  * - category: 특정 카테고리(scopeRefId=expenseCategories.id)
  * - card: 특정 카드(scopeRefId=paymentCards.id)
+ * - card_group: 같은 구성원의 명시한 개인 카드 묶음(cardIds)
  */
 export const budgetScopeType = pgEnum('budget_scope_type', [
   'household',
   'member',
   'category',
   'card',
+  'card_group',
 ]);
 
 /** 예산 주기(MVP는 월 예산만). */
@@ -1750,6 +1752,8 @@ export const budgets = pgTable(
     name: text('name'),
     scopeType: budgetScopeType('scope_type').notNull(),
     scopeRefId: uuid('scope_ref_id'),
+    /** 카드 묶음의 정렬된 고정 목록. 카드 상태가 바뀌어도 과거 범위는 유지한다. */
+    cardIds: uuid('card_ids').array().notNull().default(sql`'{}'::uuid[]`),
     amount: integer('amount').notNull(),
     /** Asia/Seoul 회계월의 첫날(`YYYY-MM-01`). 순간이 아니므로 date로 저장한다. */
     effectiveMonth: date('effective_month', { mode: 'string' }).notNull(),
@@ -1777,6 +1781,15 @@ export const budgets = pgTable(
     uniqueIndex('budgets_household_month_scope_unique')
       .on(table.householdId, table.effectiveMonth)
       .where(sql`${table.scopeType} = 'household'`),
+    uniqueIndex('budgets_household_month_card_group_unique')
+      .on(table.householdId, table.effectiveMonth, table.cardIds)
+      .where(sql`${table.scopeType} NOT IN ('household', 'member', 'category', 'card')`),
+    check('budgets_card_group_shape_check', sql`(
+      (${table.scopeType} IN ('household', 'member', 'category', 'card') AND cardinality(${table.cardIds}) = 0)
+      OR (${table.scopeType} NOT IN ('household', 'member', 'category', 'card')
+        AND ${table.scopeRefId} IS NULL AND cardinality(${table.cardIds}) BETWEEN 2 AND 20
+        AND ${table.cardIds} = budget_card_ids_canonical(${table.cardIds}))
+    )`),
     index('budgets_household_effective_month_idx').on(
       table.householdId,
       table.effectiveMonth,
@@ -1790,6 +1803,17 @@ export const budgets = pgTable(
 
 export type Budget = typeof budgets.$inferSelect;
 export type NewBudget = typeof budgets.$inferInsert;
+
+/** 과거월을 포함한 카드 범위 정정 이력. 한도와 예산 ID는 별도 변경하지 않는다. */
+export const budgetScopeCorrections = pgTable('budget_scope_corrections', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  budgetId: uuid('budget_id').notNull().references(() => budgets.id, { onDelete: 'cascade' }),
+  previousCardIds: uuid('previous_card_ids').array().notNull(),
+  cardIds: uuid('card_ids').array().notNull(),
+  actorUserId: uuid('actor_user_id').notNull().references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index('budget_scope_corrections_budget_id_idx').on(table.budgetId)]);
+
 
 /**
  * 예산 월 복사 멱등 원장. 한 사용자 동작의 재시도는 최초에 생성한 budget ID 집합을

@@ -61,15 +61,65 @@ export interface MemoryDeleteResult {
   deleted: true;
 }
 
-/** Error carrying the HTTP status + a short, non-sensitive message. */
+/** 주소·인증 값 없이 공개할 수 있는 네트워크 오류 분류다. */
+export type ApiNetworkCode =
+  | 'ENOTFOUND' | 'EAI_AGAIN' | 'EPERM' | 'EACCES' | 'ECONNREFUSED'
+  | 'ECONNRESET' | 'ENETUNREACH' | 'EHOSTUNREACH' | 'EPIPE'
+  | 'TIMEOUT' | 'TLS' | 'ABORTED' | 'SOCKET';
+
+/** API 오류에서 별도로 전달할 수 있는 안전한 진단 값이다. */
+export interface ApiErrorDiagnostics {
+  networkCode?: ApiNetworkCode;
+  reason?: 'HOUSEHOLD_NOT_FOUND';
+}
+
+const NETWORK_CODE_MAP: ReadonlyMap<string, ApiNetworkCode> = new Map([
+  ['ENOTFOUND', 'ENOTFOUND'], ['EAI_AGAIN', 'EAI_AGAIN'], ['EPERM', 'EPERM'], ['EACCES', 'EACCES'],
+  ['ECONNREFUSED', 'ECONNREFUSED'], ['ECONNRESET', 'ECONNRESET'], ['ENETUNREACH', 'ENETUNREACH'],
+  ['EHOSTUNREACH', 'EHOSTUNREACH'], ['EPIPE', 'EPIPE'], ['ETIMEDOUT', 'TIMEOUT'],
+  ['UND_ERR_CONNECT_TIMEOUT', 'TIMEOUT'], ['UND_ERR_HEADERS_TIMEOUT', 'TIMEOUT'], ['UND_ERR_BODY_TIMEOUT', 'TIMEOUT'],
+  ['ABORT_ERR', 'ABORTED'], ['UND_ERR_ABORTED', 'ABORTED'], ['UND_ERR_SOCKET', 'SOCKET'],
+  ['ERR_TLS_CERT_ALTNAME_INVALID', 'TLS'], ['CERT_HAS_EXPIRED', 'TLS'], ['DEPTH_ZERO_SELF_SIGNED_CERT', 'TLS'],
+  ['SELF_SIGNED_CERT_IN_CHAIN', 'TLS'], ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'TLS'],
+  ['UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'TLS'], ['ERR_SSL_WRONG_VERSION_NUMBER', 'TLS'],
+]);
+
+/** 중첩 cause·AggregateError에서 허용한 코드만 추출하며 순환·과도한 깊이를 제한한다. */
+export function extractApiNetworkCode(error: unknown): ApiNetworkCode | undefined {
+  const pending: unknown[] = [error];
+  const visited = new Set<object>();
+  for (let count = 0; pending.length > 0 && count < 32; count += 1) {
+    const value = pending.shift();
+    if (typeof value !== 'object' || value === null || visited.has(value)) continue;
+    visited.add(value);
+    const candidate = value as { code?: unknown; cause?: unknown; errors?: unknown; name?: unknown };
+    if (typeof candidate.code === 'string') {
+      const code = NETWORK_CODE_MAP.get(candidate.code);
+      if (code !== undefined) return code;
+    }
+    if (candidate.name === 'TimeoutError') return 'TIMEOUT';
+    if (candidate.name === 'AbortError') return 'ABORTED';
+    if (candidate.cause !== undefined) pending.push(candidate.cause);
+    if (Array.isArray(candidate.errors)) pending.push(...candidate.errors.slice(0, 32));
+  }
+  return undefined;
+}
+
+/** HTTP 상태와 안전한 진단을 보존하며 원시 네트워크 오류를 외부로 전달하지 않는다. */
 export class ApiError extends Error {
+  readonly networkCode?: ApiNetworkCode;
+  readonly reason?: ApiErrorDiagnostics['reason'];
+
   constructor(
     public readonly status: number,
     public readonly path: string,
     message: string,
+    diagnostics: ApiErrorDiagnostics = {},
   ) {
     super(message);
     this.name = 'ApiError';
+    this.networkCode = diagnostics.networkCode;
+    this.reason = diagnostics.reason;
   }
 }
 
@@ -131,7 +181,8 @@ export class FamilyApiClient {
       throw new ApiError(
         0,
         '/v1/auth/login',
-        `API 서버에 연결할 수 없습니다 (${this.baseUrl}): ${errMessage(err)}`,
+        'API 서버에 연결할 수 없습니다.',
+        { networkCode: extractApiNetworkCode(err) },
       );
     }
     if (!res.ok) {
@@ -202,7 +253,7 @@ export class FamilyApiClient {
       }
     } catch (err) {
       if (err instanceof ApiError) throw err;
-      throw new ApiError(0, path, `API 요청 실패: ${errMessage(err)}`);
+      throw new ApiError(0, path, 'API 요청에 실패했습니다.', { networkCode: extractApiNetworkCode(err) });
     }
 
     if (!res.ok) {
@@ -411,6 +462,7 @@ export class FamilyApiClient {
         0,
         '/v1/auth/me',
         '가구(household)를 찾을 수 없습니다. FAMILY_HOUSEHOLD_ID를 지정하거나 먼저 가구에 소속되세요.',
+        { reason: 'HOUSEHOLD_NOT_FOUND' },
       );
     }
     this.cachedHouseholdId = first.householdId;
@@ -475,8 +527,4 @@ export class FamilyApiClient {
       return res.statusText || `HTTP ${res.status}`;
     }
   }
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

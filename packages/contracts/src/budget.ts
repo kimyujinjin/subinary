@@ -6,6 +6,7 @@ export const budgetScopeTypeSchema = z.enum([
   'member',
   'category',
   'card',
+  'card_group',
 ]);
 export type BudgetScopeType = z.infer<typeof budgetScopeTypeSchema>;
 
@@ -20,6 +21,12 @@ export type BudgetMonth = z.infer<typeof budgetMonthSchema>;
 
 // --- Requests ---
 
+/** 중복 없는 개인 카드 묶음. 서버에서 같은 가구·소유자·활성 상태도 검증한다. */
+const budgetCardIdsSchema = z.array(z.string().uuid()).min(2).max(20).refine(
+  (ids) => new Set(ids.map((id) => id.toLowerCase())).size === ids.length,
+  '카드를 중복해서 선택할 수 없습니다.',
+);
+
 /**
  * `POST /v1/budgets` — create a monthly budget under a household (Phase 5 §5.2).
  * `scopeRefId` targets the member/category/card the budget applies to and is
@@ -31,16 +38,34 @@ export const budgetCreateRequestSchema = z.object({
   name: z.string().max(100).optional(),
   scopeType: budgetScopeTypeSchema,
   scopeRefId: z.string().uuid().optional(),
+  cardIds: budgetCardIdsSchema.optional(),
   amount: z.number().int().positive(),
   /** 생략하면 서울 기준 현재월. 과거월 생성은 서버가 거부한다. */
   effectiveMonth: budgetMonthSchema.optional(),
+}).superRefine((input, ctx) => {
+  if (input.scopeType === 'card_group') {
+    if (!input.cardIds) ctx.addIssue({ code: 'custom', path: ['cardIds'], message: '합산할 카드를 2개 이상 선택해 주세요.' });
+    if (input.scopeRefId) ctx.addIssue({ code: 'custom', path: ['scopeRefId'], message: '카드 묶음은 cardIds를 사용합니다.' });
+  } else if (input.cardIds !== undefined) {
+    ctx.addIssue({ code: 'custom', path: ['cardIds'], message: '카드 묶음 예산에서만 사용할 수 있습니다.' });
+  }
 });
 export type BudgetCreateRequest = z.infer<typeof budgetCreateRequestSchema>;
 
-/** `PATCH /v1/budgets/:id` — rename or re-limit a budget (owner/admin only). */
+/** 이름·한도 수정 또는 카드 범위 정정. 과거월은 범위만 정정할 수 있다. */
 export const budgetUpdateRequestSchema = z.object({
   name: z.string().max(100).optional(),
   amount: z.number().int().positive().optional(),
+  scopeType: z.literal('card_group').optional(),
+  cardIds: budgetCardIdsSchema.optional(),
+  /** 직전에 조회한 카드 범위. 단일 카드 예산은 [scopeRefId]를 보낸다. */
+  expectedCardIds: z.array(z.string().uuid()).min(1).max(20).optional(),
+}).superRefine((input, ctx) => {
+  if (input.scopeType !== undefined || input.cardIds !== undefined || input.expectedCardIds !== undefined) {
+    if (input.scopeType !== 'card_group' || !input.cardIds || !input.expectedCardIds) {
+      ctx.addIssue({ code: 'custom', path: ['cardIds'], message: '범위 정정에는 scopeType, cardIds, expectedCardIds가 모두 필요합니다.' });
+    }
+  }
 });
 export type BudgetUpdateRequest = z.infer<typeof budgetUpdateRequestSchema>;
 
@@ -79,6 +104,8 @@ export const budgetSummarySchema = z.object({
   name: z.string().nullable(),
   scopeType: budgetScopeTypeSchema,
   scopeRefId: z.string().nullable(),
+  /** 카드 묶음의 고정 범위. 기존 단일 범위 예산은 빈 배열이다. */
+  cardIds: z.array(z.string().uuid()).default([]),
   scopeLabel: z.string(),
   effectiveMonth: budgetMonthSchema,
   amount: z.number().int(),

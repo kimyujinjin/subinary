@@ -135,6 +135,7 @@ const SCOPE_LABEL: Record<BudgetScopeType, string> = {
   member: "구성원",
   category: "카테고리",
   card: "카드",
+  card_group: "여러 카드 합산",
 };
 
 // --- 페이지 -----------------------------------------------------------------
@@ -644,18 +645,16 @@ function DashboardView() {
                 // 이름이 있으면 대상까지("구성원 · 홍길동") 표시 — 어떤 구성원 예산인지
                 // 대시보드에서도 바로 보이게(/budgets 전체보기와 동일). 이름이 없으면
                 // label에 이미 scopeLabel이 나오므로 meta는 스코프 타입만.
-                const scope = b.name
+                const scope = b.name && b.scopeType !== "card_group"
                   ? `${SCOPE_LABEL[b.scopeType]} · ${b.scopeLabel}`
                   : SCOPE_LABEL[b.scopeType];
-                const href = budgetTransactionsHref(
-                  b.scopeType,
-                  b.scopeRefId,
-                  month,
-                );
+                const href = b.scopeType === "card_group"
+                  ? `/budgets?month=${encodeURIComponent(month)}`
+                  : budgetTransactionsHref(b.scopeType, b.scopeRefId, month);
                 return (
+                  <div key={b.id} className="min-w-0 space-y-1">
                   <UsageBar
-                    key={b.id}
-                    label={b.name ?? b.scopeLabel}
+                    label={b.name ?? (b.scopeType === "card_group" ? "카드 묶음 예산" : b.scopeLabel)}
                     {...(href ? { href, hrefLabel: "어디서 썼는지 보기" } : {})}
                     meta={
                       b.usageRate >= 1 ? (
@@ -671,6 +670,8 @@ function DashboardView() {
                     currency={b.currency}
                     usageRate={b.usageRate}
                   />
+                  {b.scopeType === "card_group" ? <p className="text-muted-foreground break-words text-[13px]">{b.scopeLabel}</p> : null}
+                  </div>
                 );
               })}
             </div>

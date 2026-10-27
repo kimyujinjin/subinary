@@ -10,7 +10,7 @@
  * - 상태 카피: usageRate 80%↑ 경고(text-warning-strong), 100%↑ 초과(text-destructive).
  * - 생성: 상단 우측 "예산 만들기" 주 CTA → Dialog("얼마까지 쓸까요?").
  *   scopeType + (member/category/card면) 대상 select + 월 예산 금액(KRW 정수).
- * - 수정(이름/금액) Dialog / 삭제 AlertDialog(질문형). CRUD는 owner/admin만
+ * - 수정(이름/금액/카드 묶음) Dialog / 삭제 AlertDialog(질문형). CRUD는 owner/admin만
  *   (PRD §7.2, 서버에서도 강제). 조건부 대상 필드가 있어 폼은 useState 유지.
  * ------------------------------------------------------------------------- */
 import { Suspense, useCallback, useMemo, useState, type FormEvent } from "react";
@@ -46,6 +46,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { BudgetCardPicker } from "@/components/budget-card-picker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -75,7 +76,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, MonthSwitcher, UsageBar } from "@/components/widgets";
 import { API_BASE_URL, ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
-import { budgetTransactionsHref } from "@/lib/deep-link";
+import { budgetTransactionsHref, transactionsHref } from "@/lib/deep-link";
+import { budgetCardGroupError, budgetCardGroupUpdate, budgetCardGroupUpdateError, budgetCardIds } from "@/lib/budget-card-group";
+import { cardIdentityLabel } from "@/lib/card-identity-label";
 import { useHousehold } from "@/lib/household-context";
 import { addMonths, isMonthKey } from "@/lib/month";
 import {
@@ -95,7 +98,8 @@ const SCOPE_TYPE_LABEL: Record<BudgetScopeType, string> = {
   household: "가족 전체",
   member: "구성원",
   category: "카테고리",
-  card: "카드",
+  card: "카드 한 장",
+  card_group: "여러 카드 합산",
 };
 
 /**
@@ -168,7 +172,7 @@ function copyFailureMessage(status: number): string {
 }
 
 const SCOPE_OPTIONS: ReadonlyArray<Option> = (
-  ["household", "member", "category", "card"] as const
+  ["household", "member", "category", "card", "card_group"] as const
 ).map((value) => ({ value, label: SCOPE_TYPE_LABEL[value] }));
 
 /** 사람이 읽을 에러 메시지. */
@@ -199,9 +203,8 @@ function parsePositiveInt(value: string): number | null {
  * (`cardId`), 카테고리·구성원은 알 수 없다. 카테고리는 사용자가 거래별로 바꾸므로
  * series 단위로 하나를 고를 수 없고, 그건 별도 결정이다.
  *
- * 그래서 `scope_type='card'`가 아닌 예산에는 **아무 말도 하지 않는다.** 틀린 경고보다
- * 침묵이 낫다. 근거 카드가 갈리는 series도 `cardId`가 null이라 자연히 빠진다 —
- * 실측에서 쿠팡은 카드 3장으로 결제됐다.
+ * 단일 카드·명시적 카드 묶음에 속하는 정기지출만 합산한다. 카드가 특정되지 않은
+ * series는 cardId가 null이므로 제외한다. 구성원·카테고리 예산으로 추정하지 않는다.
  *
  * ## 이미 넘은 예산에는 말하지 않는다
  *
@@ -219,12 +222,13 @@ function ProjectedOverLine({
 }) {
   // 과거 달에 "앞으로 나갈 돈"은 뜻이 없다.
   if (!isCurrentMonth || !upcoming?.enabled) return null;
-  if (budget.scopeType !== "card" || !budget.scopeRefId) return null;
+  const selectedCards = budgetCardIds(budget);
+  if (selectedCards.length === 0) return null;
   if (budget.usageRate >= 1) return null;
 
   // 이 카드로 나갈 정기 중 **금액을 예고할 수 있는 것만** 더한다(기획 D2).
   const mine = upcoming.items.filter(
-    (i) => i.cardId === budget.scopeRefId && i.amountForecastable,
+    (i) => i.cardId !== null && selectedCards.includes(i.cardId) && i.amountForecastable,
   );
   if (mine.length === 0) return null;
 
@@ -329,8 +333,7 @@ function BudgetsView() {
 
   const isPastMonth = month < thisMonth;
   const isFutureMonth = month > thisMonth;
-  // 과거월 예산은 **읽기 전용**이다. 예산액을 지금 바꾸면 그 달 달성률이 소급해서
-  // 달라지는데, 그건 기록이 아니라 조작이다(ADR-0026).
+  // 과거월의 이름·한도는 고정한다. 잘못 지정한 카드 범위만 별도 수정할 수 있다.
   const canEdit = canManage && !isPastMonth;
 
   const budgetsQuery = useBudgets(month);
@@ -356,6 +359,7 @@ function BudgetsView() {
   const [createOpen, setCreateOpen] = useState(false);
   const [scopeType, setScopeType] = useState<BudgetScopeType>("household");
   const [scopeRefId, setScopeRefId] = useState("");
+  const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
   const [amount, setAmount] = useState("");
   const [name, setName] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -364,6 +368,8 @@ function BudgetsView() {
   const [editing, setEditing] = useState<BudgetSummary | null>(null);
   const [editName, setEditName] = useState("");
   const [editAmount, setEditAmount] = useState("");
+  const [editCardGroup, setEditCardGroup] = useState(false);
+  const [editCardIds, setEditCardIds] = useState<string[]>([]);
   const [editError, setEditError] = useState<string | null>(null);
 
   // --- 삭제 확인 상태 -------------------------------------------------------
@@ -384,6 +390,7 @@ function BudgetsView() {
     onSuccess: () => {
       void invalidateBudgets();
       setScopeRefId("");
+      setSelectedCardIds([]);
       setAmount("");
       setName("");
       setFormError(null);
@@ -419,6 +426,8 @@ function BudgetsView() {
     },
   });
 
+  const memberNames = useMemo(() => new Map((membersQuery.data ?? []).map((member) => [member.memberId, member.name])), [membersQuery.data]);
+
   // 대상(scopeRef) 옵션은 scopeType에 따라 달라진다.
   const scopeRefOptions = useMemo<ReadonlyArray<Option>>(() => {
     switch (scopeType) {
@@ -434,16 +443,17 @@ function BudgetsView() {
       case "card":
         return (cardsQuery.data ?? []).map((c) => ({
           value: c.id,
-          label: c.alias,
+          label: cardIdentityLabel(c, memberNames),
         }));
       default:
         return [];
     }
-  }, [scopeType, membersQuery.data, categoriesQuery.data, cardsQuery.data]);
+  }, [scopeType, membersQuery.data, categoriesQuery.data, cardsQuery.data, memberNames]);
 
   function onScopeTypeChange(next: BudgetScopeType) {
     setScopeType(next);
     setScopeRefId("");
+    setSelectedCardIds([]);
   }
 
   function onCreate(event: FormEvent<HTMLFormElement>) {
@@ -456,9 +466,14 @@ function BudgetsView() {
       setFormError("예산 금액은 1원 이상의 정수로 입력해 주세요.");
       return;
     }
-    if (scopeType !== "household" && scopeRefId === "") {
+    if (scopeType !== "household" && scopeType !== "card_group" && scopeRefId === "") {
       setFormError("예산을 적용할 대상을 선택해 주세요.");
       return;
+    }
+
+    if (scopeType === "card_group") {
+      const selectionError = budgetCardGroupError(selectedCardIds, cardsQuery.data ?? []);
+      if (selectionError) { setFormError(selectionError); return; }
     }
 
     const body: BudgetCreateRequest = {
@@ -467,7 +482,7 @@ function BudgetsView() {
       amount: parsedAmount,
       effectiveMonth: month,
       ...(name.trim() !== "" ? { name: name.trim() } : {}),
-      ...(scopeType !== "household" ? { scopeRefId } : {}),
+      ...(scopeType === "card_group" ? { cardIds: selectedCardIds } : scopeType !== "household" ? { scopeRefId } : {}),
     };
     createMutation.mutate(body);
   }
@@ -476,7 +491,10 @@ function BudgetsView() {
     setEditing(budget);
     setEditName(budget.name ?? "");
     setEditAmount(String(budget.amount));
+    setEditCardGroup(budget.scopeType === "card_group");
+    setEditCardIds(budgetCardIds(budget));
     setEditError(null);
+    updateMutation.reset();
   }
 
   function onUpdate(event: FormEvent<HTMLFormElement>) {
@@ -489,10 +507,17 @@ function BudgetsView() {
       setEditError("예산 금액은 1원 이상의 정수로 입력해 주세요.");
       return;
     }
+    if (editCardGroup) {
+      const selectionError = budgetCardGroupUpdateError(editing, editCardIds, cardsQuery.data ?? []);
+      if (selectionError) { setEditError(selectionError); return; }
+    }
+    // 바뀐 값만 전송한다. 카드 범위 정정에 기존 한도를 다시 쓰지 않는다.
     const body: BudgetUpdateRequest = {
-      amount: parsedAmount,
-      ...(editName.trim() !== "" ? { name: editName.trim() } : {}),
+      ...(!isPastMonth && parsedAmount !== editing.amount ? { amount: parsedAmount } : {}),
+      ...(!isPastMonth && editName.trim() !== (editing.name ?? "") ? { name: editName.trim() } : {}),
+      ...(editCardGroup ? budgetCardGroupUpdate(editing, editCardIds) : {}),
     };
+    if (Object.keys(body).length === 0) { setEditing(null); return; }
     updateMutation.mutate({ id: editing.id, body });
   }
 
@@ -521,6 +546,7 @@ function BudgetsView() {
   }
 
   const items = budgetsQuery.data?.items ?? [];
+  const editGroupChanged = editing !== null && editCardGroup && Object.keys(budgetCardGroupUpdate(editing, editCardIds)).length > 0;
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
@@ -628,19 +654,20 @@ function BudgetsView() {
               <Card key={budget.id}>
                 <CardContent className="flex flex-col gap-3">
                   <UsageBar
-                    label={budget.name ?? budget.scopeLabel}
+                    label={budget.name ?? (budget.scopeType === "card_group" ? "카드 묶음 예산" : budget.scopeLabel)}
                     spent={budget.spent}
                     amount={budget.amount}
                     currency={budget.currency}
                     usageRate={budget.usageRate}
                     meta={
-                      budget.name
+                      budget.name && budget.scopeType !== "card_group"
                         ? `${SCOPE_TYPE_LABEL[budget.scopeType]} · ${
                             budget.scopeLabel
                           }`
                         : SCOPE_TYPE_LABEL[budget.scopeType]
                     }
                   />
+                  {budget.scopeType === "card_group" ? <p className="text-muted-foreground break-words text-[13px]">{budget.scopeLabel}</p> : null}
                   <BudgetStatusLine budget={budget} />
                   {/* 넘기 전에 알린다 — P1-22를 정보로 푸는 한 줄(D7). */}
                   <ProjectedOverLine
@@ -651,8 +678,8 @@ function BudgetsView() {
                   {/* 주 액션은 '어디서 썼는지 보기'다. 예산을 넘었다고 알린 뒤
                     줄 수 있는 게 '예산 늘리기'와 '예산 삭제'뿐이면 가계부가
                     최악의 조언을 하는 셈이다 — 수정·삭제는 ⋯로 내린다.
-                    딥링크에는 지금 보고 있는 달을 함께 싣는다(이 화면의 월은
-                    URL이 아니라 로컬 state라 그냥 두면 거래 화면이 이번 달을 연다). */}
+                    딥링크에는 지금 보고 있는 달을 함께 싣는다. 카드 묶음은
+                    단일 카드 필터 링크를 각각 제공해 다른 지출이 섞이지 않게 한다. */}
                   <div className="flex items-center gap-2">
                     {spentHref ? (
                       <Button
@@ -663,10 +690,20 @@ function BudgetsView() {
                       >
                         <Link href={spentHref}>어디서 썼는지 보기</Link>
                       </Button>
+                    ) : budget.scopeType === "card_group" ? (
+                      <div className="flex min-w-0 flex-1 flex-col gap-2">
+                        <p className="text-muted-foreground text-[12px]">카드별 사용 내역</p>
+                        {budget.cardIds.map((id) => {
+                          const card = cardsQuery.data?.find((item) => item.id === id);
+                          return <Button key={id} asChild variant="tint" size="sm" className="h-auto min-h-11 justify-start whitespace-normal py-2 text-left">
+                            <Link href={transactionsHref({ month, cardId: id })}>{card ? cardIdentityLabel(card, memberNames) : "등록 카드 내역 확인"}</Link>
+                          </Button>;
+                        })}
+                      </div>
                     ) : (
                       <span className="flex-1" />
                     )}
-                    {canEdit ? (
+                    {canManage && (!isPastMonth || budget.scopeType === "card" || budget.scopeType === "card_group") ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
@@ -683,15 +720,15 @@ function BudgetsView() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onSelect={() => openEdit(budget)}>
-                            예산 수정
+                            {isPastMonth ? "포함 카드 바로잡기" : "예산 수정"}
                           </DropdownMenuItem>
-                          <DropdownMenuItem
+                          {!isPastMonth ? <DropdownMenuItem
                             variant="destructive"
                             disabled={deleteMutation.isPending}
                             onSelect={() => setDeleteTarget(budget)}
                           >
                             예산 삭제
-                          </DropdownMenuItem>
+                          </DropdownMenuItem> : null}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     ) : null}
@@ -820,7 +857,7 @@ function BudgetsView() {
           setCreateOpen(o);
         }}
       >
-        <DialogContent>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>얼마까지 쓸까요?</DialogTitle>
             <DialogDescription>
@@ -847,7 +884,7 @@ function BudgetsView() {
               </Select>
             </div>
 
-            {scopeType !== "household" ? (
+            {scopeType !== "household" && scopeType !== "card_group" ? (
               <div className="flex flex-col gap-2">
                 <Label htmlFor="budget-scope-ref">대상</Label>
                 <Select value={scopeRefId} onValueChange={setScopeRefId}>
@@ -865,6 +902,9 @@ function BudgetsView() {
               </div>
             ) : null}
 
+            {scopeType === "card_group" ? (
+              <BudgetCardPicker cards={cardsQuery.data ?? []} selectedIds={selectedCardIds} memberNames={memberNames} onChange={setSelectedCardIds} disabled={createMutation.isPending || cardsQuery.isLoading} isLoading={cardsQuery.isLoading} loadError={cardsQuery.isError} />
+            ) : null}
             <div className="flex flex-col gap-2">
               <Label htmlFor="budget-name">예산 이름 (선택)</Label>
               <Input
@@ -912,7 +952,7 @@ function BudgetsView() {
                 type="submit"
                 size="lg"
                 className="w-full"
-                disabled={createMutation.isPending}
+                disabled={createMutation.isPending || (scopeType === "card_group" && (cardsQuery.isLoading || cardsQuery.isError))}
               >
                 {createMutation.isPending ? "만드는 중…" : "예산 만들기"}
               </Button>
@@ -934,13 +974,11 @@ function BudgetsView() {
         open={editing !== null}
         onOpenChange={(o) => !o && setEditing(null)}
       >
-        <DialogContent>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>예산을 수정해요</DialogTitle>
+            <DialogTitle>{isPastMonth ? "포함 카드를 바로잡아요" : "예산을 수정해요"}</DialogTitle>
             <DialogDescription>
-              {editing
-                ? `'${editing.scopeLabel}' 예산의 이름과 금액을 바꿀 수 있어요`
-                : ""}
+              {isPastMonth ? "그 달의 이름과 한도는 유지하고, 지출을 합산할 카드만 바로잡아요. 사용액과 달성률은 다시 계산돼요." : editing ? `'${editing.scopeLabel}' 예산을 수정해요. 선택한 카드의 지출만 합산해요.` : ""}
             </DialogDescription>
           </DialogHeader>
           <form className="flex flex-col gap-4" onSubmit={onUpdate} noValidate>
@@ -952,6 +990,7 @@ function BudgetsView() {
                 type="text"
                 maxLength={100}
                 value={editName}
+                disabled={isPastMonth || updateMutation.isPending}
                 onChange={(e) => setEditName(e.target.value)}
               />
             </div>
@@ -966,6 +1005,7 @@ function BudgetsView() {
                 step={1}
                 required
                 value={editAmount}
+                disabled={isPastMonth || updateMutation.isPending}
                 onChange={(e) => setEditAmount(e.target.value)}
               />
               {/* 실지출 평균은 거래에서 다시 계산한 참고값이다. 계획 금액을 자동으로
@@ -981,6 +1021,15 @@ function BudgetsView() {
                 </p>
               ) : null}
             </div>
+            {editing?.scopeType === "card" ? (
+              <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border p-3 text-sm">
+                <input type="checkbox" className="accent-primary size-4 shrink-0" checked={editCardGroup} disabled={updateMutation.isPending} onChange={(event) => { setEditCardGroup(event.target.checked); setEditCardIds(budgetCardIds(editing)); }} />
+                여러 카드를 한 예산에 묶기
+              </label>
+            ) : null}
+            {editCardGroup ? (
+              <BudgetCardPicker cards={cardsQuery.data ?? []} selectedIds={editCardIds} memberNames={memberNames} onChange={setEditCardIds} disabled={updateMutation.isPending || cardsQuery.isLoading} isLoading={cardsQuery.isLoading} loadError={cardsQuery.isError} />
+            ) : null}
             {editError ? (
               <p className="text-destructive text-sm" role="alert">
                 {editError}
@@ -998,7 +1047,7 @@ function BudgetsView() {
               <Button
                 type="submit"
                 className="h-11 w-full"
-                disabled={updateMutation.isPending}
+                disabled={updateMutation.isPending || (editGroupChanged && (cardsQuery.isLoading || cardsQuery.isError))}
               >
                 {updateMutation.isPending ? "저장 중…" : "저장하기"}
               </Button>

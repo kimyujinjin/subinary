@@ -1,18 +1,12 @@
 import { defineConfig } from 'tsup';
 
 /**
- * Build config for the stdio MCP server (Phase 10 spec §2.1).
- *
- * Output is a single self-contained CommonJS executable at `dist/main.js`
- * (the `bin` target). The `@modelcontextprotocol/sdk` is ESM-only, so we bundle
- * it (and `zod` + the workspace packages) into the CJS output via `noExternal`
- * rather than leaving them as runtime `require()`s. Node built-ins stay external.
- *
- * The `banner` prepends the shebang so `node dist/main.js` (and the `bin`) runs
- * directly. `dts` is off — this is an executable, not a library.
+ * stdio MCP 서버와 연결된 PC용 품질 조회 명령을 각각 독립 CJS 파일로 만든다.
+ * SDK·검증기·내부 패키지는 번들에 포함하고 Node 내장 모듈만 외부로 둔다.
+ * 실행 파일이므로 타입 선언 대신 소스맵과 shebang을 생성한다.
  */
 export default defineConfig({
-  entry: ['src/main.ts'],
+  entry: ['src/main.ts', 'src/check.ts'],
   format: ['cjs'],
   platform: 'node',
   target: 'node22',
@@ -20,7 +14,6 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   dts: false,
-  // Bundle the ESM-only SDK, zod, and the workspace packages so the built
-  // `dist/main.js` is a single self-contained CJS file.
+  // 두 실행 파일을 설치 디렉터리에 각각 복사해도 추가 의존성 없이 실행되게 한다.
   noExternal: [/@modelcontextprotocol\/sdk/, /^@family\//, 'zod'],
 });

@@ -973,6 +973,10 @@ export class TransactionPromotionService {
             eq(schema.budgets.scopeType, 'card'),
             eq(schema.budgets.scopeRefId, cardId),
           ),
+          and(
+            eq(schema.budgets.scopeType, 'card_group'),
+            sql`${cardId}::uuid = any(${schema.budgets.cardIds})`,
+          ),
         );
       }
 
@@ -1032,7 +1036,8 @@ export class TransactionPromotionService {
       }
     } catch (error) {
       this.logger.warn(
-        { err: error instanceof Error ? error.message : 'unknown' },
+        // DB 오류 메시지에는 카드 식별자·쿼리 인자가 포함될 수 있다.
+        { errorType: error instanceof Error ? error.name : 'unknown' },
         'budget alert check failed; skipped (best-effort)',
       );
     }
@@ -1067,6 +1072,10 @@ export class TransactionPromotionService {
       conditions.push(eq(schema.cardTransactions.categoryId, budget.scopeRefId));
     } else if (budget.scopeType === 'card' && budget.scopeRefId) {
       conditions.push(eq(schema.cardTransactions.cardId, budget.scopeRefId));
+    } else if (budget.scopeType === 'card_group') {
+      // 월별 계획에 저장한 카드 집합을 유지한다. 현재 카드 상태로 과거 범위를 바꾸지 않는다.
+      const cardIds = budget.cardIds ?? [];
+      conditions.push(cardIds.length > 0 ? inArray(schema.cardTransactions.cardId, cardIds) : sql`false`);
     }
     const [agg] = await this.db
       .select({
