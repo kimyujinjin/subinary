@@ -12,6 +12,7 @@ export const cardSmsParseStatusSchema = z.enum([
   'parse_failed',
   'pending_review',
   'quarantined',
+  'ignored',
 ]);
 export type CardSmsParseStatus = z.infer<typeof cardSmsParseStatusSchema>;
 

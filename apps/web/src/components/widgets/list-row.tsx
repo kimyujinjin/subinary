@@ -11,6 +11,8 @@ interface ListRowProps {
   iconClassName?: string;
   title: ReactNode;
   subtitle?: ReactNode;
+  /** 카드 식별 정보처럼 말줄임 대신 여러 줄을 써야 하는 부제의 스타일. */
+  subtitleClassName?: string;
   /** 우측 주 값(보통 금액). */
   value?: ReactNode;
   /** 우측 보조(상태 배지/시각 등). */
@@ -40,6 +42,7 @@ export function ListRow({
   iconClassName,
   title,
   subtitle,
+  subtitleClassName,
   value,
   valueSub,
   onClick,
@@ -71,7 +74,7 @@ export function ListRow({
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-[15px] font-medium">{title}</span>
         {subtitle ? (
-          <span className="text-muted-foreground truncate text-[13px]">
+          <span className={cn("text-muted-foreground truncate text-[13px]", subtitleClassName)}>
             {subtitle}
           </span>
         ) : null}

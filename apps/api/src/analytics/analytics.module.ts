@@ -14,10 +14,12 @@ import { Module } from '@nestjs/common';
 
 import { AnalyticsController } from './analytics.controller';
 import { AnalyticsService } from './analytics.service';
+import { FinanceQualityController } from './finance-quality.controller';
+import { FinanceQualityService } from './finance-quality.service';
 
 @Module({
-  controllers: [AnalyticsController],
-  providers: [AnalyticsService],
+  controllers: [AnalyticsController, FinanceQualityController],
+  providers: [AnalyticsService, FinanceQualityService],
   exports: [AnalyticsService],
 })
 export class AnalyticsModule {}

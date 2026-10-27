@@ -1,7 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { assertParseInvariants, parseCardSms } from '@family/card-parsers';
+import { parseCardSms } from '@family/card-parsers';
 import type { AppConfig } from '@family/config';
 import {
   schema,
@@ -10,9 +10,14 @@ import {
 } from '@family/database';
 import { createLogger, QUEUE_NAMES } from '@family/shared';
 import type { Job } from 'bullmq';
-import { eq } from 'drizzle-orm';
+import { and, eq, notExists } from 'drizzle-orm';
 
 import { LlmSpanExtractorService } from '../card-sms/llm-span-extractor.service';
+import {
+  isCardSmsParseResolved,
+  resolveCardSmsParseDisposition,
+  type CardSmsParseStatus,
+} from '../card-sms/parse-disposition';
 import {
   createParseQualityProbe,
   parseQualityMetrics,
@@ -23,28 +28,19 @@ import { DB } from '../database/database.module';
 import { MoneyRuntimeService } from '../promotion/money-runtime.service';
 import { TransactionPromotionService } from '../promotion/transaction-promotion.service';
 import { RealtimePublisherService } from '../realtime/realtime-publisher.service';
-
-/**
- * 워커가 기록하는 card_sms_events.parseStatus(cardSmsParseStatus enum) 부분집합.
- * 수집 직후 'pending'은 API가 넣으며, 파싱 워커는 아래 넷 중 하나로 전이시킨다.
- *
- * `quarantined`는 LLM(L2)이 추론한 결과 전용이다 — 승격 경로가 parsed·pending_review만
- * 허용하므로 사람이 확인해 승격 가능한 상태로 바꾸기 전까지 거래가 생기지 않는다(ADR-0023 §6).
- */
-type CardSmsParseStatus = 'parsed' | 'pending_review' | 'parse_failed' | 'quarantined';
+import { assertCardSmsRepairGuard, type CardSmsRepairGuard } from '../card-sms/repair-guard';
 
 /** card-sms-parse 잡 payload(스펙 §5.2: { cardSmsEventId }). */
 interface CardSmsParseJobData {
   cardSmsEventId: string;
+  /** 운영자가 검토한 과거 실패 건에 한해 L0·무과금·무알림으로 재처리한다. */
+  repair?: CardSmsRepairGuard;
 }
 
 /** 잡 결과. 정상 파싱은 parseStatus, 레코드 미존재는 skipped 로 구분한다. */
 type CardSmsParseJobResult =
   | { cardSmsEventId: string; parseStatus: CardSmsParseStatus }
   | { cardSmsEventId: string; skipped: true };
-
-/** parsed 판정 최소 신뢰도(0~100 정수). 미만이면 사람 검토(pending_review)로 보낸다. */
-const MIN_PARSED_CONFIDENCE = 70;
 
 @Processor(QUEUE_NAMES.CARD_SMS_PARSE)
 export class CardSmsParseProcessor extends WorkerHost {
@@ -148,6 +144,14 @@ export class CardSmsParseProcessor extends WorkerHost {
       return { cardSmsEventId, skipped: true };
     }
 
+    const repair = job.data.repair;
+    if (repair !== undefined) {
+      assertCardSmsRepairGuard(event, repair);
+      const [existing] = await this.db.select({ id: schema.cardTransactions.id })
+        .from(schema.cardTransactions).where(eq(schema.cardTransactions.sourceEventId, cardSmsEventId)).limit(1);
+      if (existing) throw new Error('repair_already_promoted');
+    }
+
     const input = {
       sender: event.sender,
       content: event.rawContent,
@@ -157,16 +161,14 @@ export class CardSmsParseProcessor extends WorkerHost {
     // L0 — 결정적 규칙 파서 + 액션 결박 금액 게이트(ADR-0027 6단계).
     // 게이트가 금액을 확정하지 못하면 amount를 비우고 내려보내므로, 아래 `parseable`이
     // 자연히 false가 되어 L1(레시피)→L2(LLM) 경로가 이어받는다.
-    let result = parseCardSms(input, { actionGate: this.actionGate });
-    const parseable = (candidate: typeof result): boolean =>
-      candidate.transactionType !== 'unknown' &&
-      candidate.amount !== undefined &&
-      candidate.currency !== undefined;
+    let result = parseCardSms(input, { actionGate: repair === undefined ? this.actionGate : true });
+    // 금액 없는 거절·비카드 안내는 이미 판정됐으므로 레시피나 유료 LLM으로 보내지 않는다.
+    const parseable = isCardSmsParseResolved;
 
     // L1 — 사람이 한 번 확정해 레시피가 생긴 레이아웃이면 LLM 없이 결정적으로 추출한다.
     // 지문 exact match라 "비슷한 템플릿"으로 잘못 보내는 오탐이 없다(ADR-0023 S4).
     let parseSource: 'rule' | 'recipe' | 'llm-span' = 'rule';
-    if (!parseable(result)) {
+    if (repair === undefined && !parseable(result)) {
       quality.recipeAttempted = true;
       const fromRecipe = await this.templateRecipe.extract(input);
       if (fromRecipe && parseable(fromRecipe.result)) {
@@ -179,7 +181,7 @@ export class CardSmsParseProcessor extends WorkerHost {
     // L2 — L0·L1이 모두 못 읽은 건만 LLM span 추출로 넘긴다(ADR-0023). LLM은 값을
     // 만들지 않고 원문 인용만 하며, 실패는 null 이라 기존 parse_failed 흐름이 유지된다.
     let fromLlm = false;
-    if (!parseable(result) && this.llmSpanExtractor.enabled) {
+    if (repair === undefined && !parseable(result) && this.llmSpanExtractor.enabled) {
       quality.llmAttempted = true;
       const extraction = await this.llmSpanExtractor.extract(
         input,
@@ -208,36 +210,16 @@ export class CardSmsParseProcessor extends WorkerHost {
       );
     }
 
-    // 승격 전 마지막 안전망. 도메인 규약을 깨는 결과는 경로와 무관하게 거래로 만들지
-    // 않는다 — 틀린 금액이 조용히 예산·알림까지 흘러가는 것보다 안전하다.
-    // (현재 운영 데이터 52건 전부 위반 0이라 기존 동작에는 영향이 없다.)
-    const violations = assertParseInvariants(result, event.receivedAt);
-
-    // 거래유형이 식별되고 금액+통화가 함께 있으면 신뢰도로 parsed/pending_review 분기.
-    // minor units에서 통화는 금액의 스케일/의미를 정하는 필수값이라, amount만 있고
-    // currency가 없으면(파서 결함) 승격 가능으로 보지 않는다. 미식별·금액/통화 결손은
-    // parse_failed 로 처리하고 warnings 를 parseError 에 남긴다.
-    let parseStatus: CardSmsParseStatus;
-    let parseError: string | null;
-    if (violations.length > 0) {
-      parseStatus = 'parse_failed';
-      parseError = `invariant violated: ${violations.join('; ')}`;
-    } else if (!parseable(result)) {
-      parseStatus = 'parse_failed';
-      parseError =
-        result.warnings.length > 0 ? result.warnings.join('; ') : 'no parseable card transaction';
-    } else if (fromLlm) {
-      // LLM 추론 결과는 사람 확인 전까지 승격 금지(quarantined는 승격 경로 밖).
-      parseStatus = 'quarantined';
-      parseError = result.warnings.length > 0 ? result.warnings.join('; ') : null;
-    } else {
-      parseStatus = result.confidence >= MIN_PARSED_CONFIDENCE ? 'parsed' : 'pending_review';
-      parseError = null;
-    }
+    // 같은 판정으로 안내·거절·금액 오류·LLM 격리와 승격 가능 여부를 함께 결정한다.
+    const { parseStatus, parseError, promotable } = resolveCardSmsParseDisposition(
+      result,
+      event.receivedAt,
+      fromLlm,
+    );
 
     const now = new Date();
 
-    await this.db
+    const [updated] = await this.db
       .update(schema.cardSmsEvents)
       .set({
         issuer: result.issuer ?? null,
@@ -257,7 +239,17 @@ export class CardSmsParseProcessor extends WorkerHost {
         parsedAt: now,
         updatedAt: now,
       })
-      .where(eq(schema.cardSmsEvents.id, cardSmsEventId));
+      .where(and(
+        eq(schema.cardSmsEvents.id, cardSmsEventId),
+        repair === undefined ? undefined : and(
+          eq(schema.cardSmsEvents.parseStatus, 'parse_failed'),
+          eq(schema.cardSmsEvents.updatedAt, event.updatedAt),
+          notExists(this.db.select({ id: schema.cardTransactions.id }).from(schema.cardTransactions)
+            .where(eq(schema.cardTransactions.sourceEventId, cardSmsEventId))),
+        ),
+      ))
+      .returning({ id: schema.cardSmsEvents.id });
+    if (repair !== undefined && !updated) throw new Error('repair_snapshot_changed_before_write');
 
     // 로그는 식별자/상태/발급사/신뢰도만(원문·금액·가맹점 등 PII 미기록, 스펙 §1.1/§6).
     this.logger.info(
@@ -280,11 +272,8 @@ export class CardSmsParseProcessor extends WorkerHost {
     // 승격하지 않는다 — 승격하면 소비 집계·목록에 유령 거래가 잡힌다.
     // quarantined(LLM 추론)도 여기서 자연히 제외된다 — 사람이 확인해 상태를 올리기
     // 전까지 거래를 만들지 않는다(ADR-0023 §6).
-    const promotable =
-      (parseStatus === 'parsed' || parseStatus === 'pending_review') &&
-      result.transactionType !== 'declined';
     if (promotable) {
-      await this.promotionService.promote(cardSmsEventId);
+      await this.promotionService.promote(cardSmsEventId, { repair: repair !== undefined });
     }
 
     // 실시간 무효화 힌트(best-effort, fire-and-forget) — parse_failed도 대시보드

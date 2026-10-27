@@ -767,10 +767,23 @@ export class TransactionService {
         );
         if (!outcome.ok) throw moneyRejectionToHttp(outcome.reason);
       }
-      await tx
+      // 분류 비교와 갱신을 한 SQL로 실행해 조회 이후의 다른 사용자 수정을 보존한다.
+      // 충돌은 같은 트랜잭션의 금액 변경까지 되돌리고 규칙·확정 라벨 기록 전에 종료한다.
+      const [updated] = await tx
         .update(schema.cardTransactions)
         .set(updates)
-        .where(eq(schema.cardTransactions.id, id));
+        .where(and(
+          eq(schema.cardTransactions.id, id),
+          input.expectedCategoryId === undefined
+            ? undefined
+            : input.expectedCategoryId === null
+              ? isNull(schema.cardTransactions.categoryId)
+              : eq(schema.cardTransactions.categoryId, input.expectedCategoryId),
+        ))
+        .returning({ id: schema.cardTransactions.id });
+      if (!updated) {
+        throw new ConflictException('직전 조회 이후 거래 분류가 변경됐습니다. 최신 거래를 확인하세요.');
+      }
 
       // 단일 거래 카테고리 수정도 사람 확정 라벨이다. 가맹점 원문은 저장하지
       // 않고 transaction id를 통해 권한/원본 데이터를 역추적한다.

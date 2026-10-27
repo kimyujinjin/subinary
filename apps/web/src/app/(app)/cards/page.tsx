@@ -77,6 +77,7 @@ import {
 import { ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { useHousehold } from "@/lib/household-context";
+import { cardOwnerLabel } from "@/lib/card-identity-label";
 import {
   invalidateTransactionScope,
   queryKeys,
@@ -276,6 +277,7 @@ export default function CardsPage() {
   >(null);
 
   const cards = cardsQuery.data ?? [];
+  const memberNames = new Map((membersQuery.data ?? []).map((member) => [member.memberId, member.name]));
 
   // 뒤 4자리 중복 감지(non-blocking 경고) — 활성 카드 대상, 자동연결이 섞일 수 있음.
   const maskedTail = lastFour(masked);
@@ -412,7 +414,7 @@ export default function CardsPage() {
         <CardHeader>
           <CardTitle>등록된 카드</CardTitle>
           <CardDescription>
-            뒤 4자리로 문자를 자동 연결하고, 공개 범위를 카드별로 정해요.
+            소유자·카드사·뒤 4자리로 카드를 구분하고, 공개 범위를 카드별로 정해요.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -444,9 +446,7 @@ export default function CardsPage() {
             <div className="flex flex-col">
               {cards.map((c) => {
                 const tail = lastFour(c.maskedNumber);
-                const subtitle = `${c.issuer} · ${
-                  tail ? `•••• ${tail}` : "뒤 4자리 미등록"
-                } · ${VISIBILITY_LABEL[c.visibility]}`;
+                const owner = cardOwnerLabel(c, memberNames);
                 return (
                   <div key={c.id} className="flex items-center gap-1">
                     <ListRow
@@ -457,7 +457,14 @@ export default function CardsPage() {
                         memberColorById.get(c.ownerMemberId),
                       )}
                       title={c.alias}
-                      subtitle={subtitle}
+                      subtitle={
+                        <>
+                          <span className="block">{owner}</span>
+                          <span className="block">{c.issuer} · {tail ? `•••• ${tail}` : "뒤 4자리 미등록"}</span>
+                          <span className="block">{VISIBILITY_LABEL[c.visibility]}</span>
+                        </>
+                      }
+                      subtitleClassName="whitespace-normal break-words"
                       valueSub={<StatusBadge status={c.status} />}
                     />
                     {canManage(c) ? (
@@ -468,7 +475,7 @@ export default function CardsPage() {
                             variant="ghost"
                             size="icon"
                             className="shrink-0"
-                            aria-label={`${c.alias} 관리 메뉴`}
+                            aria-label={`${c.alias} ${owner} ${tail} 관리 메뉴`}
                           >
                             <MoreHorizontal />
                           </Button>
@@ -577,7 +584,7 @@ export default function CardsPage() {
                 colorClassOf={ownerColorClass}
               />
               <p className="text-muted-foreground text-[13px]">
-                카드 아이콘 색이 소유자 색을 따라요.
+                같은 카드 상품을 각자 사용한다면 소유자와 뒤 4자리를 각각 등록해 주세요.
               </p>
             </div>
 
@@ -601,12 +608,11 @@ export default function CardsPage() {
                 </p>
               ) : maskedTail.length === 0 ? (
                 <p className="text-muted-foreground text-[13px]">
-                  비워 두면 이 카드로는 문자가 자동 연결되지 않아요.
+                  카드 식별에 사용해요. 등록하지 않으면 다른 카드와 구분하지 못할 수 있어요.
                 </p>
               ) : duplicateTail ? (
                 <p className="text-warning-strong text-[13px]">
-                  뒤 4자리가 같은 카드가 이미 있어요. 문자가 어느 카드에 연결될지
-                  섞일 수 있어요.
+                  뒤 4자리가 같은 카드가 있어요. 소유자를 확인해 주세요. 구분이 안 되는 문자는 자동 연결하지 않아요.
                 </p>
               ) : null}
             </div>
@@ -673,7 +679,7 @@ export default function CardsPage() {
           <DialogHeader>
             <DialogTitle>카드 수정</DialogTitle>
             <DialogDescription>
-              별칭과 공개 범위를 바꿀 수 있어요. 뒤 4자리는 변경할 수 없어요.
+              별칭·소유자·공동사용 여부를 바꿀 수 있어요. 뒤 4자리는 변경할 수 없어요.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onEditSubmit} className="flex flex-col gap-4" noValidate>
@@ -698,7 +704,7 @@ export default function CardsPage() {
                 colorClassOf={ownerColorClass}
               />
               <p className="text-muted-foreground text-[13px]">
-                소유자를 바꾸면 카드 아이콘 색도 바뀌어요.
+                카드 소유자와 거래에 기록된 구성원은 별도예요. 거래가 다른 사람으로 보이면 연결 카드도 확인해 주세요.
               </p>
             </div>
             <div className="flex flex-col gap-2">

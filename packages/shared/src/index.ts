@@ -24,6 +24,13 @@ export {
   MERCHANT_TRAINING_READINESS,
 } from './constants.js';
 export { createLogger } from './logger.js';
+export { resolvePaymentCardLink } from './card-link.js';
+export type {
+  PaymentCardLink,
+  PaymentCardLinkCandidate,
+  PaymentCardLinkSource,
+  PaymentCardVisibility,
+} from './card-link.js';
 export type { CreateLoggerOptions, Logger } from './logger.js';
 export {
   OUTBOX_EVENT_TYPES,

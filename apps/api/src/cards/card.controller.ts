@@ -54,7 +54,7 @@ export class CardController {
     return this.cardService.list(user.userId, query.householdId);
   }
 
-  /** POST /v1/cards — register a card (caller becomes its owner). */
+  /** POST /v1/cards — 지정한 가구 구성원의 카드를 등록한다(생략하면 본인). */
   @Post()
   @HttpCode(HttpStatus.CREATED)
   create(

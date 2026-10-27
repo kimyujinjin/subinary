@@ -417,6 +417,9 @@ export type {
   AnalyticsMonths,
 } from './analytics.js';
 
+export { financeQualityQuerySchema, financeQualitySchema } from './finance-quality.js';
+export type { FinanceQuality } from './finance-quality.js';
+
 export {
   budgetScopeTypeSchema,
   budgetMonthSchema,

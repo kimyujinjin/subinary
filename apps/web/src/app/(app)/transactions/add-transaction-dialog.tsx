@@ -33,10 +33,12 @@ import {
 } from "@/components/ui/select";
 import { ApiError } from "@/lib/api-client";
 import { formatMoney } from "@/lib/format";
+import { cardIdentityLabel } from "@/lib/card-identity-label";
 import {
   useCardList,
   useCategoryList,
   useManualFieldsEntry,
+  useHouseholdMembers,
   useManualTextEntry,
   useParsePreview,
 } from "@/lib/queries";
@@ -86,6 +88,8 @@ export function AddTransactionDialog({
   const fieldsEntry = useManualFieldsEntry();
   const categories = useCategoryList();
   const cards = useCardList();
+  const members = useHouseholdMembers();
+  const memberNames = new Map((members.data ?? []).map((member) => [member.memberId, member.name]));
 
   // 다이얼로그 열릴 때마다 초기화.
   useEffect(() => {
@@ -124,7 +128,12 @@ export function AddTransactionDialog({
   /** 미리보기 결과를 직접 입력 폼에 채우고 폼 모드로 전환. */
   function switchToFieldsPrefilled() {
     if (previewData) {
-      if (previewData.amount != null) setAmount(String(previewData.amount));
+      // 직접 입력 폼은 원화 전용이다. 외화의 저장 금액을 원화로 채우면 오계상된다.
+      if (previewData.amount != null && (previewData.currency ?? "KRW") === "KRW") {
+        setAmount(String(previewData.amount));
+      } else {
+        setAmount("");
+      }
       if (previewData.merchantRaw) setMerchant(previewData.merchantRaw);
       if (previewData.occurredAt) {
         const d = new Date(previewData.occurredAt);
@@ -145,12 +154,18 @@ export function AddTransactionDialog({
     try {
       const res = await textEntry.mutateAsync({ content: content.trim() });
       const status = res.detail.parseStatus;
-      if (status === "parsed" || status === "pending_review") {
-        toast.success("거래가 등록됐어요");
+      if (status === "parsed") {
+        toast.success(res.detail.transactionType === "declined" ? "승인 거절 문자로 정리했어요. 지출에는 포함하지 않아요." : "거래가 등록됐어요");
+        onOpenChange(false);
+      } else if (status === "pending_review" || status === "quarantined") {
+        toast.message("확인이 필요한 문자예요. 할 일에서 원문과 금액을 확인해 주세요.");
         onOpenChange(false);
       } else if (status === "parse_failed") {
         toast.error("자동 인식에 실패했어요. 직접 입력으로 등록해 주세요");
         switchToFieldsPrefilled();
+      } else if (status === "ignored") {
+        toast.message("결제 내역이 아닌 안내 문자예요. 거래 금액에는 반영하지 않았어요.");
+        onOpenChange(false);
       } else {
         // 폴링 시간 내 미완료(드묾) — 곧 목록에 반영됨.
         toast.message("등록 처리 중이에요. 잠시 후 목록에 반영됩니다");
@@ -366,8 +381,7 @@ export function AddTransactionDialog({
                   <SelectItem value={NONE}>선택 안 함</SelectItem>
                   {cardOptions.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
-                      {c.alias}
-                      {c.maskedNumber ? ` (${c.maskedNumber})` : ""}
+                      {cardIdentityLabel(c, memberNames)}
                     </SelectItem>
                   ))}
                 </SelectContent>

@@ -63,13 +63,11 @@ export default function TodoPage() {
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-5">
-      {/* 탭 루트가 된 뒤로 뒤로가기 화살표를 뗐다 — 하단 탭으로 직접 오는 화면에
-          "뒤로"는 갈 곳이 없고, 홈으로 되돌리는 화살표는 탭을 되돌리는 것처럼 읽힌다.
-          제목은 탭 라벨('할 일')과 중복이라 스크린리더용으로만 남긴다. */}
+      {/* 직접 링크로 들어와도 위치를 알 수 있도록 화면 제목을 표시한다. */}
       <div>
-        <h1 className="sr-only">할 일</h1>
+        <h1 className="text-xl font-semibold">확인할 내역</h1>
         <p className="text-muted-foreground text-sm">
-          확인이 필요한 것들을 기간 제한 없이 모아뒀어요
+          결제 실패·거래 확인·문자 검토를 기간 제한 없이 모아뒀어요.
         </p>
       </div>
 
@@ -174,8 +172,8 @@ export default function TodoPage() {
       {/* 3) 읽지 못한 문자 — **전 기간**. 홈의 3일 창이 여기서는 적용되지 않는다. */}
       <Section
         show={todo.smsError || todo.sms.length > 0}
-        title="읽지 못한 문자"
-        description="탭하면 원문을 보고 바로 확정할 수 있어요"
+        title="거래 반영 전 문자"
+        description="자동으로 읽지 못했거나 확인을 기다리는 문자예요. 결제 문자라면 원문과 금액을 확인해 주세요."
         countText={pendingCountText(
           todo.smsLoading,
           todo.smsError,

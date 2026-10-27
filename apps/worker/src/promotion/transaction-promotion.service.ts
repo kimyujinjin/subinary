@@ -10,11 +10,10 @@
  *   재승격/경합은 기존 레코드를 남기고 승인 잔액을 이중 반영하지 않는다.
  * - 금액은 KRW 정수(부동소수 금지). netAmount 규약(스펙 §1.2):
  *   approval → netAmount = amount - cancelledAmount, cancellation → netAmount = 0.
- * - 카드 자동연결: 파서 `maskedCardNumber` 뒤 4자리 ↔ 같은 household
- *   `payment_cards.maskedNumber` 뒤 4자리(스펙 §1.5). 매칭 없으면 cardId=null,
- *   visibility='household'. 뒤 4자리가 같은 활성 카드가 2장 이상이면 어느 카드인지
- *   확정 불가 → 임의 연결 대신 cardId=null + 후보 중 가장 제한적인 visibility(누출
- *   방지)로 두고, 승인은 pending_review로 표시해 사람 검토를 유도한다.
+ * - 카드 자동연결: 원본 구성원 소유 카드 또는 명시적 공용 카드만 후보로 삼는다.
+ *   발급사·뒤 4자리로 유일하게 식별한 경우만 연결하고, 카드번호가 없는 문자도
+ *   같은 구성원 범위를 지킨다. 모호하거나 타인 개인 카드만 일치하면 미연결·검토로
+ *   남기며 후보 중 가장 제한적인 공개범위를 유지한다.
  * - 카테고리: merchant_category_rules(household, merchantNormalized) →
  *   키워드(categorizeByKeyword → slug → 시스템 expense_categories) →
  *   LLM 제안(category-suggest 큐, 비동기 자가학습) → null (스펙 §1.3).
@@ -38,8 +37,10 @@ import {
   createLogger,
   currencyExponent,
   normalizeMerchant,
+  resolvePaymentCardLink,
   QUEUE_NAMES,
   type NotificationDispatchJob,
+  type PaymentCardLink as CardLink,
 } from '@family/shared';
 import type { Queue } from 'bullmq';
 import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql, type SQL } from 'drizzle-orm';
@@ -62,9 +63,6 @@ interface ConvertedAmount {
   exchangeRate: number | null;
 }
 
-/** 공개 범위(스펙 §2 cardVisibility enum). 카드 없으면 'household'로 상속. */
-type CardVisibility = 'private' | 'household' | 'summary_only';
-
 /** 거래 상태(스펙 §2 txnStatus enum). */
 type TransactionStatus =
   | 'approved'
@@ -78,24 +76,6 @@ type TransactionStatus =
  * 이 창 안에 이미 있으면 새 승인을 duplicate_suspected로 표시한다.
  */
 const DUPLICATE_TIME_WINDOW_MS = 5 * 60 * 1000;
-
-/** 카드 자동연결에 필요한 최소 식별 자릿수(뒤 4자리). */
-const CARD_TAIL_LENGTH = 4;
-
-/** 카드 자동연결 결과(뒤 4자리 매칭). */
-interface CardLink {
-  cardId: string | null;
-  visibility: CardVisibility;
-  /** 뒤 4자리가 같은 활성 카드가 2장 이상이라 카드를 확정하지 못한 경우. */
-  ambiguous: boolean;
-}
-
-/** visibility 제한 강도 순위(클수록 더 비공개). */
-const VISIBILITY_RANK: Record<CardVisibility, number> = {
-  household: 0,
-  summary_only: 1,
-  private: 2,
-};
 
 /** 취소 승격 결과(로깅용). */
 interface CancellationOutcome {
@@ -155,7 +135,7 @@ export class TransactionPromotionService {
    * 파싱 이벤트를 거래로 승격한다(스펙 §6 절차). 승격 대상이 아니거나 이미 승격된
    * 경우 조용히 skip한다(멱등). 예외는 상위(잡)로 전파해 재시도되게 둔다.
    */
-  async promote(cardSmsEventId: string): Promise<void> {
+  async promote(cardSmsEventId: string, options: { repair?: boolean } = {}): Promise<void> {
     if (!cardSmsEventId) {
       throw new Error('promote() called without cardSmsEventId');
     }
@@ -213,9 +193,24 @@ export class TransactionPromotionService {
       return;
     }
 
+    // 파싱 후 승격이 중단되어 스케줄러가 다시 호출해도 무과금·무알림 정책을 보존한다.
+    // 재처리 잡의 기존 pipeline 감사 이력이 원본 이벤트에 결박된 영속 근거다.
+    let repair = options.repair === true;
+    if (!repair) {
+      const [repairRun] = await this.db.select({ id: schema.pipelineRuns.id }).from(schema.pipelineRuns)
+        .where(and(
+          eq(schema.pipelineRuns.pipelineName, 'card-sms-parse'),
+          eq(schema.pipelineRuns.scopeType, 'card-sms-event'),
+          eq(schema.pipelineRuns.scopeId, event.id),
+          sql`starts_with(${schema.pipelineRuns.externalRunId}, ${`smsrepair_${event.id}_`})`,
+        )).limit(1);
+      repair = repairRun !== undefined;
+    }
+
     // 3. 카드 자동연결(뒤 4자리 → 없으면 발급사 폴백) → cardId, visibility 상속.
     const link = await this.resolveCard(
       event.householdId,
+      event.memberId,
       event.maskedCardNumber,
       event.issuer,
     );
@@ -255,11 +250,11 @@ export class TransactionPromotionService {
       // 승격 트랜잭션이 끝난 뒤 새 금액 계약과 대조한다(ADR-0027 3단계, 기록만).
       await this.moneyShadow.observe(transactionId, 'worker_promotion_approval');
       // 새로 승격됐고 미분류면 LLM 카테고리 제안을 enqueue(가맹점 단위 dedupe).
-      if (status !== 'already_promoted' && categoryId === null) {
+      if (!repair && status !== 'already_promoted' && categoryId === null) {
         await this.enqueueCategorySuggestion(event, merchantNormalized);
       }
       // 새로 승격된 거래는 푸시 알림을 enqueue(수신자/마스킹은 소비자가 결정).
-      if (status !== 'already_promoted' && transactionId) {
+      if (!repair && status !== 'already_promoted' && transactionId) {
         await this.enqueueNotification(event.householdId, transactionId);
         // 이 지출이 예산 임계(80/100%)를 새로 넘겼으면 예산 알림도 enqueue.
         await this.checkBudgetAlerts({
@@ -291,10 +286,10 @@ export class TransactionPromotionService {
     // 취소는 연결 대상까지 대조한다 — 새 후보 규칙(원통화 잔액·증거 필수)이 같은
     // 승인을 고르는지가 이 단계에서 재야 할 값이다.
     await this.moneyShadow.observe(outcome.transactionId, 'worker_promotion_cancellation');
-    if (!outcome.skipped && categoryId === null) {
+    if (!repair && !outcome.skipped && categoryId === null) {
       await this.enqueueCategorySuggestion(event, merchantNormalized);
     }
-    if (!outcome.skipped && outcome.transactionId) {
+    if (!repair && !outcome.skipped && outcome.transactionId) {
       await this.enqueueNotification(event.householdId, outcome.transactionId);
     }
   }
@@ -373,6 +368,7 @@ export class TransactionPromotionService {
       // 외화도 승격 시 KRW로 환산돼 저장되므로 중복 비교 통화는 항상 KRW.
       const isDuplicate = await this.isDuplicateApproval(
         event.householdId,
+        event.memberId,
         link.cardId,
         amount,
         converted.currency,
@@ -463,6 +459,7 @@ export class TransactionPromotionService {
    */
   private async isDuplicateApproval(
     householdId: string,
+    memberId: string,
     cardId: string | null,
     amount: number,
     currency: string,
@@ -486,11 +483,14 @@ export class TransactionPromotionService {
       gte(schema.cardTransactions.approvedAt, lower),
       lte(schema.cardTransactions.approvedAt, upper),
     ];
-    conditions.push(
-      cardId
-        ? eq(schema.cardTransactions.cardId, cardId)
-        : isNull(schema.cardTransactions.cardId),
-    );
+    if (cardId) {
+      conditions.push(eq(schema.cardTransactions.cardId, cardId));
+    } else {
+      conditions.push(
+        isNull(schema.cardTransactions.cardId),
+        eq(schema.cardTransactions.memberId, memberId),
+      );
+    }
     if (merchantNormalized) {
       conditions.push(eq(schema.cardTransactions.merchantNormalized, merchantNormalized));
     }
@@ -629,11 +629,14 @@ export class TransactionPromotionService {
         eq(schema.cardTransactions.currency, converted.currency),
         inArray(schema.cardTransactions.status, ['approved', 'partially_cancelled']),
       ];
-      candidateConditions.push(
-        link.cardId
-          ? eq(schema.cardTransactions.cardId, link.cardId)
-          : isNull(schema.cardTransactions.cardId),
-      );
+      if (link.cardId) {
+        candidateConditions.push(eq(schema.cardTransactions.cardId, link.cardId));
+      } else {
+        candidateConditions.push(
+          isNull(schema.cardTransactions.cardId),
+          eq(schema.cardTransactions.memberId, event.memberId),
+        );
+      }
       if (merchantNormalized) {
         candidateConditions.push(
           eq(schema.cardTransactions.merchantNormalized, merchantNormalized),
@@ -748,19 +751,12 @@ export class TransactionPromotionService {
   /* ---------------------------------------------------------------------- */
 
   /**
-   * 파서 maskedCardNumber 뒤 4자리로 같은 household의 활성 카드를 찾아 연결한다
-   * (스펙 §1.5). 저장 포맷 차이('1234' vs '****1234')를 흡수하려 양쪽에서 숫자만
-   * 추출해 뒤 4자리를 비교한다.
-   *
-   * - 매칭 0건: cardId=null, visibility='household'.
-   * - 매칭 1건: 그 카드에 연결하고 카드 visibility를 상속.
-   * - 매칭 2건 이상(뒤 4자리 중복): 어느 카드인지 확정 불가. 임의 카드에 붙이면
-   *   비결정적이고 private↔household 오상속(누출) 위험이 있으므로, 연결하지 않고
-   *   (cardId=null) 후보 중 가장 제한적인 visibility를 상속해 프라이버시 하향을
-   *   막는다. ambiguous=true로 표시해 승인 승격이 pending_review로 남긴다.
+   * 원본 구성원과 카드 식별 정보를 공통 규칙으로 판정한다. 카드 등록 시의
+   * 과거 거래 연결도 같은 함수를 사용해 서로 다른 소유자 판단을 하지 않는다.
    */
   private async resolveCard(
     householdId: string,
+    memberId: string,
     maskedCardNumber: string | null,
     issuer: string | null,
   ): Promise<CardLink> {
@@ -770,6 +766,8 @@ export class TransactionPromotionService {
         maskedNumber: schema.paymentCards.maskedNumber,
         issuer: schema.paymentCards.issuer,
         visibility: schema.paymentCards.visibility,
+        ownerMemberId: schema.paymentCards.ownerMemberId,
+        isShared: schema.paymentCards.isShared,
       })
       .from(schema.paymentCards)
       .where(
@@ -779,54 +777,14 @@ export class TransactionPromotionService {
         ),
       );
 
-    const tail = lastFourDigits(maskedCardNumber);
-    if (!tail) {
-      // 카드번호가 없는 문자(네이버 현대카드·모바일 결제 등) → 발급사 기준 폴백.
-      // 같은 발급사 활성 카드가 정확히 1장일 때만 연결(모호하면 종전대로 미연결
-      // approved). 발급사가 일반 '카드'(정규화 시 null)면 매칭하지 않는다.
-      const issuerKey = normalizeIssuer(issuer);
-      if (!issuerKey) {
-        return { cardId: null, visibility: 'household', ambiguous: false };
-      }
-      const issuerMatches = cards.filter(
-        (card) => normalizeIssuer(card.issuer) === issuerKey,
+    const result = resolvePaymentCardLink({ memberId, maskedCardNumber, issuer }, cards);
+    if (result.ambiguous) {
+      this.logger.warn(
+        { householdId },
+        'card auto-link unresolved: ownership or card identity requires review',
       );
-      if (issuerMatches.length === 1) {
-        return {
-          cardId: issuerMatches[0].id,
-          visibility: issuerMatches[0].visibility,
-          ambiguous: false,
-        };
-      }
-      // 0장 또는 2장 이상(어느 카드인지 모호) → 종전 동작(미연결, approved).
-      return { cardId: null, visibility: 'household', ambiguous: false };
     }
-
-    const matches = cards.filter(
-      (card) => lastFourDigits(card.maskedNumber) === tail,
-    );
-
-    if (matches.length === 0) {
-      return { cardId: null, visibility: 'household', ambiguous: false };
-    }
-    if (matches.length === 1) {
-      return {
-        cardId: matches[0].id,
-        visibility: matches[0].visibility,
-        ambiguous: false,
-      };
-    }
-
-    // 뒤 4자리 중복 → 확정 불가. 로그는 식별자/건수만(카드번호·PII 미기록).
-    this.logger.warn(
-      { householdId, matchCount: matches.length },
-      'card auto-link ambiguous: multiple active cards share the last 4 digits; left unlinked for review',
-    );
-    return {
-      cardId: null,
-      visibility: mostRestrictiveVisibility(matches.map((c) => c.visibility)),
-      ambiguous: true,
-    };
+    return result;
   }
 
   /**
@@ -1118,46 +1076,4 @@ export class TransactionPromotionService {
       .where(and(...conditions));
     return Number(agg?.spent ?? 0) || 0;
   }
-}
-
-/**
- * 후보 카드 visibility 중 가장 제한적인 값을 고른다(private > summary_only >
- * household). 뒤 4자리 모호 매칭 시 프라이버시 하향(예: private 지출이 household로
- * 노출)을 막기 위한 보수적 상속. `visibilities`는 비어 있지 않다고 가정한다.
- */
-function mostRestrictiveVisibility(
-  visibilities: readonly CardVisibility[],
-): CardVisibility {
-  return visibilities.reduce((acc, v) =>
-    VISIBILITY_RANK[v] > VISIBILITY_RANK[acc] ? v : acc,
-  );
-}
-
-/**
- * 마스킹 카드번호에서 숫자만 추출해 뒤 4자리를 반환한다. 4자리 미만이면 null
- * (신뢰할 수 없는 매칭 방지). 예: '****1234' → '1234', '1234' → '1234'.
- */
-function lastFourDigits(value: string | null): string | null {
-  if (!value) {
-    return null;
-  }
-  const digits = value.replace(/\D/g, '');
-  if (digits.length < CARD_TAIL_LENGTH) {
-    return null;
-  }
-  return digits.slice(-CARD_TAIL_LENGTH);
-}
-
-/**
- * 발급사 비교용 정규화 키. 파서/이벤트는 `현대카드`, 등록 카드는 `현대`처럼 '카드'
- * 접미사 유무가 달라 직접 비교가 안 되므로 공백·접미사를 제거해 맞춘다.
- * 파서가 발급사를 특정하지 못한 일반 `카드`는 정규화 시 빈 문자열이 되어(→ null)
- * 임의 카드에 잘못 붙지 않도록 매칭에서 제외된다.
- */
-function normalizeIssuer(value: string | null): string | null {
-  if (!value) {
-    return null;
-  }
-  const key = value.replace(/\s+/g, '').replace(/카드$/, '');
-  return key.length > 0 ? key : null;
 }

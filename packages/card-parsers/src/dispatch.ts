@@ -3,6 +3,7 @@ import { GenericCardParser } from './parsers/generic.parser.js';
 import { KookminCardParser } from './parsers/kookmin.parser.js';
 import { ShinhanCardParser } from './parsers/shinhan.parser.js';
 import { TossBankCardParser } from './parsers/toss.parser.js';
+import { isSavingsTransferNotice } from './parsers/non-card.js';
 
 import type { CardSmsInput, CardSmsParseResult, CardSmsParser } from './types.js';
 
@@ -129,6 +130,15 @@ export function parseCardSms(
   input: CardSmsInput,
   options: ParseCardSmsOptions = {},
 ): CardSmsParseResult {
+  if (isSavingsTransferNotice(input.content)) {
+    return {
+      issuer: '토스뱅크',
+      transactionType: 'unknown',
+      nonTransactionReason: 'savings_transfer',
+      confidence: 100,
+      warnings: [],
+    };
+  }
   const actionGate = options.actionGate ?? true;
   for (const parser of PARSERS) {
     if (parser.supports(input)) {

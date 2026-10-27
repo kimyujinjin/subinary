@@ -14,7 +14,7 @@
  * 홈에 있던 것을 C-8에서 여기로 옮겼다 — `/todo`(전 기간 백로그)와 홈(최근 3일)이
  * **같은 확정 UI**를 써야 어느 쪽에서 처리하든 결과가 같기 때문이다.
  * ------------------------------------------------------------------------- */
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -33,6 +33,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -40,9 +41,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { api, ApiError, apiFetch } from "@/lib/api-client";
+import { api, apiFetch } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { formatDate } from "@/lib/format";
+import { smsReviewAmountInput, smsReviewAmountMinorUnits } from "@/lib/sms-review-amount";
 
 export function ReviewInboxDialog({
   open,
@@ -84,8 +86,8 @@ export function ReviewInboxDialog({
         <DialogHeader>
           <DialogTitle>확인이 필요한 문자</DialogTitle>
           <DialogDescription>
-            자동으로 읽지 못했거나, 읽었지만 확인이 필요한 문자예요. 내용을
-            확인하고 맞으면 확정해 주세요.
+            아직 거래에 반영하지 않은 문자예요. 결제 문자라면 금액·가맹점·일시를
+            확인한 뒤 등록해 주세요.
           </DialogDescription>
         </DialogHeader>
         {detailsQuery.isLoading ? (
@@ -93,12 +95,23 @@ export function ReviewInboxDialog({
             불러오는 중…
           </p>
         ) : detailsQuery.isError ? (
-          <p className="text-muted-foreground py-6 text-center text-sm">
-            불러오지 못했어요.
-          </p>
+          <div className="space-y-3 py-6 text-center">
+            <p className="text-muted-foreground text-sm" role="alert">
+              문자 원문을 불러오지 못했어요. 아직 수정된 내용은 없어요.
+            </p>
+            <Button type="button" variant="outline" onClick={() => void detailsQuery.refetch()}>
+              다시 불러오기
+            </Button>
+          </div>
         ) : (
           <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto">
-            {details.map((d) => (
+            {details.map((d) => d.parseStatus === "ignored" ? (
+              <div key={d.id} className="bg-muted space-y-2 rounded-lg p-3">
+                <p className="text-sm font-medium">결제 내역이 아닌 안내 문자예요</p>
+                <p className="text-muted-foreground text-sm">거래 금액에 반영하지 않았어요. 원문은 보관돼 있어요.</p>
+                <p className="text-sm break-words whitespace-pre-wrap">{d.rawContent}</p>
+              </div>
+            ) : (
               <ReviewEventCard key={d.id} detail={d} onReviewed={onReviewed} />
             ))}
           </div>
@@ -132,6 +145,8 @@ function ReviewEventCard({
 }) {
   const { authedFetch } = useAuth();
   const queryClient = useQueryClient();
+  const inputId = useId();
+  const currency = detail.currency ?? "KRW";
   const [transactionType, setTransactionType] = useState<
     "approval" | "cancellation" | "declined"
   >(
@@ -141,37 +156,39 @@ function ReviewEventCard({
       : "approval",
   );
   const [amount, setAmount] = useState(
-    detail.amount != null ? String(detail.amount) : "",
+    smsReviewAmountInput(detail.amount, currency),
   );
   const [merchant, setMerchant] = useState(detail.merchantRaw ?? "");
   const [occurredAt, setOccurredAt] = useState(
-    toLocalInputValue(detail.occurredAt ?? detail.receivedAt),
+    toLocalInputValue(detail.occurredAt),
   );
 
   const declined = transactionType === "declined";
-  const parsedAmount = Number(amount);
+  const parsedAmount = smsReviewAmountMinorUnits(amount, currency);
+  const validOccurredAt = occurredAt !== "" && !Number.isNaN(new Date(occurredAt).getTime());
   const canSubmit =
     declined ||
-    (Number.isInteger(parsedAmount) &&
-      parsedAmount > 0 &&
+    (parsedAmount !== null &&
       merchant.trim().length > 0 &&
-      occurredAt !== "");
+      validOccurredAt);
 
   const reviewMutation = useMutation({
-    mutationFn: () =>
-      authedFetch((token) =>
-        api.cardSms.review(token, detail.id, {
-          transactionType,
-          currency: detail.currency ?? "KRW",
-          ...(declined
-            ? {}
-            : {
-                amount: parsedAmount,
-                merchantRaw: merchant.trim(),
-                occurredAt: new Date(occurredAt).toISOString(),
-              }),
-        }),
-      ),
+    mutationFn: () => {
+      if (!declined && (parsedAmount === null || !validOccurredAt || merchant.trim() === "")) {
+        throw new Error("결제 금액·가맹점·일시를 확인해 주세요.");
+      }
+      if (declined) {
+        return authedFetch((token) => api.cardSms.review(token, detail.id, { transactionType, currency }));
+      }
+      if (parsedAmount === null) throw new Error("결제 금액을 확인해 주세요.");
+      return authedFetch((token) => api.cardSms.review(token, detail.id, {
+        transactionType,
+        currency,
+        amount: parsedAmount,
+        merchantRaw: merchant.trim(),
+        occurredAt: new Date(occurredAt).toISOString(),
+      }));
+    },
     onSuccess: () => {
       toast.success(declined ? "거절 건으로 정리했어요" : "거래로 등록했어요");
       // 검토 목록·거래·집계가 함께 바뀐다.
@@ -183,7 +200,7 @@ function ReviewEventCard({
     },
     onError: (error) => {
       toast.error(
-        error instanceof ApiError ? error.message : "확정하지 못했어요",
+        error instanceof Error ? error.message : "확정하지 못했어요",
       );
     },
   });
@@ -200,20 +217,21 @@ function ReviewEventCard({
         {detail.rawContent}
       </p>
       {detail.parseError ? (
-        <p className="text-muted-foreground mt-1 text-xs">
-          {detail.parseStatus === "quarantined" ? "참고" : "실패 사유"}:{" "}
-          {detail.parseError}
-        </p>
+        <details className="text-muted-foreground mt-2 text-xs">
+          <summary className="cursor-pointer py-1">자동 인식 진단 보기</summary>
+          <p className="mt-1 break-words">{detail.parseError}</p>
+        </details>
       ) : null}
 
       <div className="mt-3 flex flex-col gap-2">
+        <Label htmlFor={`${inputId}-type`}>문자 유형</Label>
         <Select
           value={transactionType}
           onValueChange={(v) =>
             setTransactionType(v as "approval" | "cancellation" | "declined")
           }
         >
-          <SelectTrigger className="h-9">
+          <SelectTrigger id={`${inputId}-type`} className="h-11">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -229,30 +247,46 @@ function ReviewEventCard({
           </p>
         ) : (
           <>
+            <Label htmlFor={`${inputId}-amount`}>결제 금액 ({currency === "KRW" ? "원" : currency})</Label>
             <Input
-              className="h-9"
-              inputMode="numeric"
+              id={`${inputId}-amount`}
+              className="h-11"
+              inputMode={currency === "KRW" || currency === "JPY" ? "numeric" : "decimal"}
               placeholder="금액"
               value={amount}
-              onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ""))}
+              aria-invalid={amount.trim() !== "" && parsedAmount === null}
+              onChange={(e) => setAmount(e.target.value)}
             />
+            {amount.trim() !== "" && parsedAmount === null ? (
+              <p className="text-destructive text-xs" role="alert">문자에 표시된 결제 금액을 확인해 주세요.</p>
+            ) : null}
+            <Label htmlFor={`${inputId}-merchant`}>가맹점</Label>
             <Input
-              className="h-9"
+              id={`${inputId}-merchant`}
+              className="h-11"
               placeholder="가맹점"
               value={merchant}
               onChange={(e) => setMerchant(e.target.value)}
             />
+            <Label htmlFor={`${inputId}-date`}>결제 일시</Label>
             <Input
-              className="h-9"
+              id={`${inputId}-date`}
+              className="h-11"
               type="datetime-local"
               value={occurredAt}
               onChange={(e) => setOccurredAt(e.target.value)}
             />
+            {detail.occurredAt === null ? (
+              <p className="text-muted-foreground text-xs">
+                결제 일시를 읽지 못했어요. 문자 수신 시각({formatDate(detail.receivedAt)})과 다를 수 있으니 원문을 확인해 주세요.
+              </p>
+            ) : null}
           </>
         )}
 
         <Button
           size="sm"
+          className="min-h-11"
           disabled={!canSubmit || reviewMutation.isPending}
           onClick={() => reviewMutation.mutate()}
         >

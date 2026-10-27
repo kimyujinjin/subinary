@@ -1,9 +1,8 @@
 /**
- * 정기 지출 Radar 서비스 (C-5 최소 제품).
+ * 정기 지출 Radar 조회·사용자 판단·재계산 서비스.
  *
- * 세 가지만 한다: **후보 재계산** · **목록 조회** · **사용자 확정**.
- * 다음 결제 예상일 · 월 정기 지출 총액 · 알림 · 해지 CTA는 의도적으로 없다
- * (`recurring.constants.ts`의 `RECURRING_DEFERRED_SURFACES` 참고).
+ * 수동 요청과 자동 갱신이 같은 판별기·잠금·트랜잭션을 사용한다.
+ * 확정한 정기결제의 예정일은 여기 저장하고 기존 worker 알림이 같은 값을 읽는다.
  *
  * 공개범위는 `@family/database`의 {@link visibilityScope}를 **재사용**한다. 새로 짜지
  * 마라 — 이 저장소는 같은 조건을 5곳에 복붙했다가 네 번째 집계 API에서 통째로 누락해
@@ -51,6 +50,7 @@ import {
   spendPeriodWindow,
   visibilityScope,
   type Db,
+  type DbExecutor,
 } from '@family/database';
 import {
   buildMerchantAliasIndex,
@@ -67,9 +67,12 @@ import {
   type RecurringOccurrence,
 } from './detect';
 import { reconcileSeries, type DecidedSeries } from './reconcile';
+import { reconcileCandidateIdentity } from './candidate-identity';
+import { withRecurringTransaction } from './recurring-transaction';
 import { isAmountForecastable, summarizeUpcoming } from './upcoming-summary';
 import {
   RECURRING_LOOKBACK_MONTHS,
+  RECURRING_REFRESH_INTERVAL_MS,
   isRecurringRadarEnabled,
 } from './recurring.constants';
 
@@ -167,12 +170,12 @@ export class RecurringService {
         asc(schema.recurringSeries.merchantCanonical),
       );
 
-    const declines = await this.recentDeclines(householdId);
+    const declines = await this.recentDeclines(householdId, actorMemberId);
     // 한 응답 안에서는 같은 `now`로 판정한다 — 항목마다 시각이 달라지면 목록 안에서
     // 같은 주기의 두 series가 서로 다른 국면을 말한다.
     const now = new Date();
     const items: RecurringSeriesItem[] = rows.map((r) => {
-      const linked = declines.get(`${r.merchantCanonical}`);
+      const linked = r.memberId === actorMemberId ? declines.get(r.merchantCanonical) : undefined;
       // 예상일은 **확정된 series에만** 붙인다. 후보에 붙이면 예상 자체가 확정처럼 읽힌다.
       //
       // 저장된 `nextExpectedAt`을 읽고 국면만 계산한다 — 매번 다시 계산하면 월 주기의
@@ -218,10 +221,14 @@ export class RecurringService {
       };
     });
 
-    const computedAt = rows.reduce<Date | null>(
+    const legacyComputedAt = rows.reduce<Date | null>(
       (max, r) => (max === null || r.computedAt > max ? r.computedAt : max),
       null,
     );
+    const [state] = await this.db.select({ computedAt: schema.recurringRecomputeState.computedAt })
+      .from(schema.recurringRecomputeState)
+      .where(eq(schema.recurringRecomputeState.householdId, householdId)).limit(1);
+    const computedAt = state?.computedAt ?? legacyComputedAt;
     return {
       enabled: true,
       // ADR-0027이 8단계까지 끝났으므로(전량 v2 + 제약 VALIDATE) 이 값은 이제
@@ -236,6 +243,7 @@ export class RecurringService {
       ),
       items,
       computedAt: computedAt ? computedAt.toISOString() : null,
+      calculationStatus: computedAt ? 'computed' : 'not_computed',
     };
   }
 
@@ -415,52 +423,51 @@ export class RecurringService {
       .limit(1);
     if (!series) throw new NotFoundException('recurring series not found');
 
-    const actorMemberId = await this.requireMembership(
-      series.householdId,
-      actorUserId,
-    );
+    return withRecurringTransaction(this.db, series.householdId, async (tx) => {
+      const actorMemberId = await this.requireMembership(series.householdId, actorUserId, tx);
 
-    const now = new Date();
-    // `still_active`("계속 써요")는 **상태를 바꾸지 않는다.** 상태를 건드리면 그 series가
-    // `/upcoming`(confirmed만 조회)에서 빠져 이번 달 예상 총액이 줄어드는데, 사용자는
-    // "계속 쓴다"고 답했을 뿐이다 — 기획 D4가 막으려던 바로 그 일이다. 기록하는 것은
-    // "물어봤고 답을 받았다"는 사실뿐이고, 그 뒤 한 주기 동안 다시 묻지 않는다.
-    const patch =
-      decision === 'still_active'
-        ? {
-            status: 'confirmed' as const,
-            stoppedDismissedAt: now,
-            needsReviewReason: null,
-            updatedAt: now,
-          }
-        : {
-            status: decision,
-            statusChangedAt: now,
-            statusChangedBy: actorUserId,
-            // 사용자가 다시 판단했으므로 재검토 표시는 걷는다(CHECK: reason은 needs_review 전용).
-            needsReviewReason: null,
-            // 해지·재확정은 이전 "계속 써요" 답을 무의미하게 만든다 — 남겨 두면 나중에
-            // 다시 confirmed가 됐을 때 오래된 답이 묻기를 막는다.
-            stoppedDismissedAt: null,
-            updatedAt: now,
-          };
+      const now = new Date();
+      // `still_active`("계속 써요")는 **상태를 바꾸지 않는다.** 상태를 건드리면 그 series가
+      // `/upcoming`(confirmed만 조회)에서 빠져 이번 달 예상 총액이 줄어드는데, 사용자는
+      // "계속 쓴다"고 답했을 뿐이다 — 기획 D4가 막으려던 바로 그 일이다. 기록하는 것은
+      // "물어봤고 답을 받았다"는 사실뿐이고, 그 뒤 한 주기 동안 다시 묻지 않는다.
+      const patch =
+        decision === 'still_active'
+          ? {
+              status: 'confirmed' as const,
+              stoppedDismissedAt: now,
+              needsReviewReason: null,
+              updatedAt: now,
+            }
+          : {
+              status: decision,
+              statusChangedAt: now,
+              statusChangedBy: actorUserId,
+              // 사용자가 다시 판단했으므로 재검토 표시는 걷는다(CHECK: reason은 needs_review 전용).
+              needsReviewReason: null,
+              // 해지·재확정은 이전 "계속 써요" 답을 무의미하게 만든다 — 남겨 두면 나중에
+              // 다시 confirmed가 됐을 때 오래된 답이 묻기를 막는다.
+              stoppedDismissedAt: null,
+              updatedAt: now,
+            };
 
-    const [updated] = await this.db
-      .update(schema.recurringSeries)
-      .set(patch)
-      .where(
-        and(
-          eq(schema.recurringSeries.id, seriesId),
-          this.visibleToActor(actorMemberId),
-        ),
-      )
-      .returning({
-        id: schema.recurringSeries.id,
-        status: schema.recurringSeries.status,
-      });
-    // 볼 수 없는 series는 "권한 없음"이 아니라 "없음"이다 — 존재를 알리지 않는다.
-    if (!updated) throw new NotFoundException('recurring series not found');
-    return { id: updated.id, status: updated.status };
+      const [updated] = await tx
+        .update(schema.recurringSeries)
+        .set(patch)
+        .where(
+          and(
+            eq(schema.recurringSeries.id, seriesId),
+            this.visibleToActor(actorMemberId, tx),
+          ),
+        )
+        .returning({
+          id: schema.recurringSeries.id,
+          status: schema.recurringSeries.status,
+        });
+      // 볼 수 없는 series는 "권한 없음"이 아니라 "없음"이다 — 존재를 알리지 않는다.
+      if (!updated) throw new NotFoundException('recurring series not found');
+      return { id: updated.id, status: updated.status };
+    });
   }
 
   /* ---------------------------------------------------------------------- */
@@ -470,9 +477,9 @@ export class RecurringService {
   /**
    * 후보 전량 재계산.
    *
-   * 미확정 후보(`candidate`)는 **폐기·재생성 가능한 projection**이라 통째로 지우고 다시
-   * 만든다. 사용자가 판단한 series는 근거 거래 ID의 **교집합**으로 이어 붙이고, 근거가
-   * 사라졌거나 합쳐/갈라졌으면 `needs_review`로 남긴다 — 조용히 지우지 않는다.
+   * 미확정 후보도 근거가 1:1로 이어지면 ID를 보존한다. 자동 갱신이 사용자가 보고 있는
+   * 후보를 없애면 확인 버튼이 404가 되기 때문이다. 사용자 판단은 기존 교집합 규칙을
+   * 따르며, 거절·해지 판단은 자동 계산으로 다시 확인 상태에 올리지 않는다.
    *
    * 별칭 등록·해제가 과거 거래의 canonical 신원을 바꾸므로, 그 뒤에는 이 재계산을
    * 한 번 돌려야 후보가 현재 신원과 맞는다.
@@ -485,102 +492,143 @@ export class RecurringService {
     householdId: string,
   ): Promise<RecurringRecomputeResponse> {
     await this.requireMembership(householdId, actorUserId);
+    return withRecurringTransaction(this.db, householdId, async (tx) => {
+      await this.requireMembership(householdId, actorUserId, tx);
+      return this.recomputeLocked(tx, householdId, new Date());
+    });
+  }
 
-    const occurrences = await this.loadOccurrences(householdId);
+  /** 활성 가구의 오래된 계산만 갱신한다. 외부 API 없이 기존 판별기를 재사용한다. */
+  async recomputeIfDue(householdId: string): Promise<RecurringRecomputeResponse | null> {
+    if (!isRecurringRadarEnabled()) return null;
+    return withRecurringTransaction(this.db, householdId, async (tx, state) => {
+      const [active] = await tx.select({ id: schema.households.id }).from(schema.households)
+        .where(and(
+          eq(schema.households.id, householdId),
+          isNull(schema.households.deletedAt),
+          exists(tx.select({ id: schema.householdMembers.id }).from(schema.householdMembers).where(and(
+            eq(schema.householdMembers.householdId, householdId),
+            eq(schema.householdMembers.status, 'active'),
+          ))),
+        )).limit(1);
+      if (!active) return null;
+      const now = new Date();
+      if (state.computedAt && now.getTime() - state.computedAt.getTime() < RECURRING_REFRESH_INTERVAL_MS) return null;
+      return this.recomputeLocked(tx, householdId, now);
+    });
+  }
+
+  /** 잠금과 동일 스냅샷을 확보한 호출부에서만 계산·근거·성공시각을 함께 저장한다. */
+  private async recomputeLocked(tx: DbExecutor, householdId: string, computedAt: Date): Promise<RecurringRecomputeResponse> {
+    const occurrences = await this.loadOccurrences(tx, householdId, computedAt);
     const candidates = detectRecurringCandidates(occurrences);
-
-    const decided = await this.loadDecidedSeries(householdId);
+    const existing = await this.loadExistingSeries(tx, householdId);
+    const decided = existing.filter((series) => series.status !== 'candidate');
     const plan = reconcileSeries(decided, candidates);
-    const computedAt = new Date();
+    const candidatePlan = reconcileCandidateIdentity(
+      existing.filter((series) => series.status === 'candidate'), candidates, plan.inserts,
+    );
 
-    await this.db.transaction(async (tx) => {
-      // 1. 미확정 후보는 통째로 버린다(evidence는 FK cascade).
+    // 1. 사라지거나 병합·분할된 후보만 지운다. 변하지 않은 후보는 UUID를 유지한다.
+    if (candidatePlan.deletes.length > 0) {
       await tx
         .delete(schema.recurringSeries)
         .where(
           and(
             eq(schema.recurringSeries.householdId, householdId),
             eq(schema.recurringSeries.status, 'candidate'),
+            inArray(schema.recurringSeries.id, candidatePlan.deletes),
           ),
         );
+    }
 
-      // 2. 이어 붙일 것 — 신원(id)과 상태를 그대로 두고 계산값만 갱신한다.
-      for (const { seriesId, candidateIndex } of plan.updates) {
+    // 2. 이어 붙일 것 — 신원(id)과 상태를 그대로 두고 계산값만 갱신한다.
+    for (const { seriesId, candidateIndex } of [...plan.updates, ...candidatePlan.updates]) {
+      await this.applyCandidate(
+        tx,
+        seriesId,
+        candidates[candidateIndex],
+        computedAt,
+        null,
+      );
+    }
+
+    // 3. 재검토가 필요해진 것.
+    let needsReview = 0;
+    for (const { seriesId, reason, candidateIndex } of plan.needsReview) {
+      const previous = decided.find((series) => series.id === seriesId);
+      if (previous?.status === 'rejected' || previous?.status === 'ended') {
+        // 사람이 아니라고 했거나 해지한 결제를 오래됐다는 이유로 되살리지 않는다.
+        await tx.update(schema.recurringSeries).set({ computedAt, updatedAt: computedAt })
+          .where(eq(schema.recurringSeries.id, seriesId));
+        continue;
+      }
+      needsReview += 1;
+      if (candidateIndex !== null) {
         await this.applyCandidate(
           tx,
           seriesId,
           candidates[candidateIndex],
           computedAt,
-          null,
+          reason,
         );
+        continue;
       }
+      // 근거를 건드리지 않는다 — 거래가 잠시 안 보이는 것과 영영 사라진 것을
+      // 이 시점에 구별할 수 없고, 지워 버리면 되돌릴 근거가 없다.
+      await tx
+        .update(schema.recurringSeries)
+        .set({
+          status: 'needs_review',
+          needsReviewReason: reason,
+          statusChangedAt: computedAt,
+          // 시스템이 바꾼 것이므로 사람 id를 남기지 않는다.
+          statusChangedBy: null,
+          computedAt,
+          updatedAt: computedAt,
+        })
+        .where(eq(schema.recurringSeries.id, seriesId));
+    }
 
-      // 3. 재검토가 필요해진 것.
-      for (const { seriesId, reason, candidateIndex } of plan.needsReview) {
-        if (candidateIndex !== null) {
-          await this.applyCandidate(
-            tx,
-            seriesId,
-            candidates[candidateIndex],
-            computedAt,
-            reason,
-          );
-          continue;
-        }
-        // 근거를 건드리지 않는다 — 거래가 잠시 안 보이는 것과 영영 사라진 것을
-        // 이 시점에 구별할 수 없고, 지워 버리면 되돌릴 근거가 없다.
-        await tx
-          .update(schema.recurringSeries)
-          .set({
-            status: 'needs_review',
-            needsReviewReason: reason,
-            statusChangedAt: computedAt,
-            // 시스템이 바꾼 것이므로 사람 id를 남기지 않는다.
-            statusChangedBy: null,
-            computedAt,
-            updatedAt: computedAt,
-          })
-          .where(eq(schema.recurringSeries.id, seriesId));
-      }
-
-      // 4. 새 후보.
-      for (const index of plan.inserts) {
-        const candidate = candidates[index];
-        const [inserted] = await tx
-          .insert(schema.recurringSeries)
-          .values({
-            householdId,
-            memberId: candidate.memberId,
-            merchantCanonical: candidate.merchantCanonical,
-            amountMin: candidate.amountMin,
-            amountMax: candidate.amountMax,
-            amountMedian: candidate.amountMedian,
-            currency: candidate.currency,
-            intervalDays: candidate.intervalDays,
-            cadence: candidate.cadence,
-            occurrenceCount: candidate.occurrenceCount,
-            firstSeenAt: candidate.firstSeenAt,
-            lastSeenAt: candidate.lastSeenAt,
-            status: 'candidate',
-            algorithmVersion: candidate.algorithmVersion,
-            moneyContractVersion: candidate.moneyContractVersion,
-            ...forecastColumns(candidate, computedAt),
-            computedAt,
-          })
-          .returning({ id: schema.recurringSeries.id });
-        await tx.insert(schema.recurringSeriesEvidence).values(
-          candidate.transactionIds.map((transactionId) => ({
-            seriesId: inserted.id,
-            transactionId,
-          })),
-        );
-      }
-    });
+    // 4. 새 후보.
+    for (const index of candidatePlan.inserts) {
+      const candidate = candidates[index];
+      const [inserted] = await tx
+        .insert(schema.recurringSeries)
+        .values({
+          householdId,
+          memberId: candidate.memberId,
+          merchantCanonical: candidate.merchantCanonical,
+          amountMin: candidate.amountMin,
+          amountMax: candidate.amountMax,
+          amountMedian: candidate.amountMedian,
+          currency: candidate.currency,
+          intervalDays: candidate.intervalDays,
+          cadence: candidate.cadence,
+          occurrenceCount: candidate.occurrenceCount,
+          firstSeenAt: candidate.firstSeenAt,
+          lastSeenAt: candidate.lastSeenAt,
+          status: 'candidate',
+          algorithmVersion: candidate.algorithmVersion,
+          moneyContractVersion: candidate.moneyContractVersion,
+          ...forecastColumns(candidate, computedAt),
+          computedAt,
+        })
+        .returning({ id: schema.recurringSeries.id });
+      await tx.insert(schema.recurringSeriesEvidence).values(
+        candidate.transactionIds.map((transactionId) => ({
+          seriesId: inserted.id,
+          transactionId,
+        })),
+      );
+    }
+    await tx.update(schema.recurringRecomputeState).set({ computedAt, updatedAt: computedAt })
+      .where(eq(schema.recurringRecomputeState.householdId, householdId));
 
     return {
-      created: plan.inserts.length,
-      updated: plan.updates.length,
-      needsReview: plan.needsReview.length,
+      created: candidatePlan.inserts.length,
+      updated: plan.updates.length + candidatePlan.updates.length,
+      needsReview,
       computedAt: computedAt.toISOString(),
     };
   }
@@ -600,13 +648,14 @@ export class RecurringService {
    * **실패 신호**로만 붙인다({@link recentDeclines}).
    */
   private async loadOccurrences(
+    tx: DbExecutor,
     householdId: string,
+    to: Date,
   ): Promise<RecurringOccurrence[]> {
-    const to = new Date();
     const from = new Date(to);
     from.setUTCMonth(from.getUTCMonth() - RECURRING_LOOKBACK_MONTHS);
 
-    const rows = await this.db
+    const rows = await tx
       .select({
         id: schema.cardTransactions.id,
         memberId: schema.cardTransactions.memberId,
@@ -637,7 +686,7 @@ export class RecurringService {
       );
 
     const aliasIndex = buildMerchantAliasIndex(
-      await this.db
+      await tx
         .select({
           householdId: schema.merchantAliases.householdId,
           alias: schema.merchantAliases.alias,
@@ -670,13 +719,15 @@ export class RecurringService {
     return occurrences;
   }
 
-  /** 사용자가 이미 판단한(또는 재검토 대기 중인) series와 그 근거. */
-  private async loadDecidedSeries(
+  /** 기존 후보·사용자 판단·재검토 상태와 각각의 근거를 같은 스냅샷에서 읽는다. */
+  private async loadExistingSeries(
+    tx: DbExecutor,
     householdId: string,
-  ): Promise<DecidedSeries[]> {
-    const rows = await this.db
+  ): Promise<Array<DecidedSeries & { status: typeof schema.recurringSeries.$inferSelect.status }>> {
+    const rows = await tx
       .select({
         id: schema.recurringSeries.id,
+        status: schema.recurringSeries.status,
         transactionId: schema.recurringSeriesEvidence.transactionId,
       })
       .from(schema.recurringSeries)
@@ -687,25 +738,21 @@ export class RecurringService {
       .where(
         and(
           eq(schema.recurringSeries.householdId, householdId),
-          ne(schema.recurringSeries.status, 'candidate'),
         ),
       );
 
-    const byId = new Map<string, string[]>();
+    const byId = new Map<string, { status: typeof schema.recurringSeries.$inferSelect.status; transactionIds: string[] }>();
     for (const r of rows) {
-      const list = byId.get(r.id) ?? [];
-      if (r.transactionId) list.push(r.transactionId);
-      byId.set(r.id, list);
+      const item = byId.get(r.id) ?? { status: r.status, transactionIds: [] };
+      if (r.transactionId) item.transactionIds.push(r.transactionId);
+      byId.set(r.id, item);
     }
-    return [...byId.entries()].map(([id, transactionIds]) => ({
-      id,
-      transactionIds,
-    }));
+    return [...byId.entries()].map(([id, item]) => ({ id, ...item }));
   }
 
   /** series의 계산값·근거를 후보로 덮어쓴다. `reason`이 있으면 재검토 표시도 남긴다. */
   private async applyCandidate(
-    tx: Db,
+    tx: DbExecutor,
     seriesId: string,
     candidate: RecurringCandidate,
     computedAt: Date,
@@ -762,6 +809,7 @@ export class RecurringService {
    */
   private async recentDeclines(
     householdId: string,
+    actorMemberId: string,
   ): Promise<Map<string, { attempts: number; reason: string | null }>> {
     const since = new Date(
       Date.now() - DECLINE_LINK_WINDOW_DAYS * 24 * 60 * 60 * 1000,
@@ -778,6 +826,7 @@ export class RecurringService {
       .where(
         and(
           eq(schema.cardSmsEvents.householdId, householdId),
+          eq(schema.cardSmsEvents.memberId, actorMemberId),
           eq(schema.cardSmsEvents.transactionType, 'declined'),
           gte(schema.cardSmsEvents.createdAt, since),
         ),
@@ -827,9 +876,13 @@ export class RecurringService {
    * `visibilityScope()`를 그대로 부정해서 쓴다. 여기에 조건을 손으로 다시 적으면
    * 규칙이 갈라지고, 갈라진 순간이 곧 유출이다(P0-6).
    */
-  private visibleToActor(actorMemberId: string) {
-    return notExists(
-      this.db
+  private visibleToActor(actorMemberId: string, executor: DbExecutor = this.db) {
+    return and(
+      // 근거가 모두 삭제되면 부정 조건만으로는 타인의 개인 지출이 노출된다.
+      exists(executor.select({ one: sql`1` }).from(schema.recurringSeriesEvidence).where(
+        eq(schema.recurringSeriesEvidence.seriesId, schema.recurringSeries.id),
+      )),
+      notExists(executor
         .select({ one: sql`1` })
         .from(schema.recurringSeriesEvidence)
         .innerJoin(
@@ -848,7 +901,7 @@ export class RecurringService {
             not(visibilityScope(actorMemberId)),
           ),
         ),
-    );
+    ));
   }
 
   /** 타인의 `summary_only` 근거가 있는가 — 있으면 금액은 두고 이름만 가린다. */
@@ -880,15 +933,18 @@ export class RecurringService {
   private async requireMembership(
     householdId: string,
     userId: string,
+    executor: DbExecutor = this.db,
   ): Promise<string> {
-    const [member] = await this.db
+    const [member] = await executor
       .select({ id: schema.householdMembers.id })
       .from(schema.householdMembers)
+      .innerJoin(schema.households, eq(schema.households.id, schema.householdMembers.householdId))
       .where(
         and(
           eq(schema.householdMembers.householdId, householdId),
           eq(schema.householdMembers.userId, userId),
           eq(schema.householdMembers.status, 'active'),
+          isNull(schema.households.deletedAt),
         ),
       )
       .limit(1);

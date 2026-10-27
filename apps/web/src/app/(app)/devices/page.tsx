@@ -106,6 +106,7 @@ export default function DevicesPage() {
   // 거기서 오면 캐시가 재사용된다). 소유자는 이 응답 없이도 판정되므로 목록이
   // 늦거나 실패해도 소유자가 자기 장치에서 잠기지 않는다.
   const membersQuery = useHouseholdMembers();
+  const memberNames = new Map((membersQuery.data ?? []).map((member) => [member.memberId, member.name]));
   const permission = useMemo(
     () => ({
       role: activeMembership?.role ?? null,
@@ -281,10 +282,12 @@ export default function DevicesPage() {
                     className="min-w-0 flex-1"
                     icon={d.platform === "other" ? <Bot /> : <Smartphone />}
                     title={d.name}
+                    subtitleClassName="whitespace-normal break-words"
                     subtitle={
                       /* 두 신호를 한 줄로 합치지 않는다 — 인증만 성공하고 문자가
                          끊긴 상태가 정상으로 보이던 것이 이 화면의 버그였다. */
                       <span className="flex flex-col gap-0.5">
+                        <span>문자 귀속: {memberNames.get(d.memberId) ?? "구성원 확인 필요"}</span>
                         <span>
                           {PLATFORM_LABEL[d.platform]} · 연결 확인{" "}
                           {d.lastSeenAt ? formatDate(d.lastSeenAt) : "아직 없어요"}

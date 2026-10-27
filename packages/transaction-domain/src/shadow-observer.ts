@@ -225,6 +225,7 @@ export class TransactionMoneyShadowObserver {
 
     const match = selectCancellationParent(
       {
+        memberId: row.memberId,
         cardId: row.cardId,
         currency: (row.originalCurrency ?? row.currency).toUpperCase(),
         minorUnits: row.originalAmount ?? row.amount,

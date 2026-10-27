@@ -435,6 +435,20 @@
       "when": 1788645600000,
       "tag": "0061_play_states",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1793109600000,
+      "tag": "0062_card_sms_ignored_notice",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1793113200000,
+      "tag": "0063_recurring_recompute_state",
+      "breakpoints": true
     }
   ]
 }

@@ -1,14 +1,13 @@
 import { z } from 'zod';
 
 /**
- * 정기 지출 Radar 계약 (C-5 최소 제품).
+ * 정기 지출 Radar 계약.
  *
- * 이번 범위는 **후보 표시와 사용자 확정까지**다(로드맵 5-1절). 다음 결제 예상일 ·
- * 월 정기 지출 총액 · 알림 · 해지/카드교체 CTA는 계약에도 넣지 않는다 — 필드를 먼저
- * 만들어 두면 "곧 채워질 것"으로 읽혀 ADR-0027 enforce 전에 켜질 압력이 생긴다.
+ * 후보 표시·사용자 판단·확정 결제의 예정을 제공한다. 자동 계산은 사용자의 판단을
+ * 대신하지 않으며 미계산과 후보 0건은 계산 시각으로 구분한다.
  *
- * ⚠️ 모든 금액은 `provisional`이다. 금액 계약(ADR-0027)이 enforce 전이라
- * `card_transactions.net_amount`가 아직 확정이 아니고, 이 후보는 그 위에 서 있다.
+ * 금액의 확정 여부는 근거 거래의 계약 버전과 `provisional`/`amountForecastable`로
+ * 판정한다. 미확정 후보를 확정된 예정 지출로 취급하지 않는다.
  */
 
 export const recurringSeriesStatusSchema = z.enum([
@@ -111,6 +110,8 @@ export const recurringSeriesListResponseSchema = z.object({
   items: z.array(recurringSeriesItemSchema),
   /** 마지막 재계산 시각. 한 번도 계산하지 않았으면 null. */
   computedAt: z.string().nullable(),
+  /** 후보 0건과 미계산을 구분한다. 이전 서버 응답과 호환되도록 선택 필드다. */
+  calculationStatus: z.enum(['not_computed', 'computed']).optional(),
 });
 export type RecurringSeriesListResponse = z.infer<
   typeof recurringSeriesListResponseSchema
@@ -156,7 +157,7 @@ export type RecurringRecomputeRequest = z.infer<
 export const recurringRecomputeResponseSchema = z.object({
   /** 새로 만들어진 미확정 후보 수. */
   created: z.number().int(),
-  /** 기존 결정에 근거를 이어 붙인 수. */
+  /** 기존 후보 또는 사용자 판단에 근거를 이어 붙인 수. */
   updated: z.number().int(),
   /** 재검토가 필요해진 수(근거 소실·병합·분할). */
   needsReview: z.number().int(),

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { readFileSync, statSync } from 'node:fs';
 
 /**
  * MCP server configuration loaded from environment variables (Phase 10 spec §2.2).
@@ -37,6 +38,7 @@ const envSchema = z.object({
     .string()
     .uuid('UUID 형식이어야 합니다')
     .optional(),
+  FAMILY_TOOL_MODE: z.enum(['finance-readonly', 'finance-review', 'all']).default('finance-readonly'),
 });
 
 /** Validated, normalized configuration for the MCP server. */
@@ -49,6 +51,8 @@ export interface McpConfig {
   readonly workspaceId?: string;
   /** Default household id or undefined for auto-resolution. */
   readonly householdId?: string;
+  /** 기본값은 금융 조회 전용이다. 기억/유료 검색은 all에서만 등록한다. */
+  readonly toolMode: 'finance-readonly' | 'finance-review' | 'all';
 }
 
 /**
@@ -56,12 +60,27 @@ export interface McpConfig {
  * message when validation fails (the caller logs it to stderr and exits).
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): McpConfig {
+  let credentials: { email?: string; password?: string } = {};
+  if (env.FAMILY_CREDENTIALS_FILE) {
+    try {
+      const stat = statSync(env.FAMILY_CREDENTIALS_FILE);
+      if (!stat.isFile() || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)) {
+        throw new Error('permissions');
+      }
+      credentials = z.object({ email: z.string(), password: z.string() }).parse(
+        JSON.parse(readFileSync(env.FAMILY_CREDENTIALS_FILE, 'utf8')) as unknown,
+      );
+    } catch {
+      throw new Error('FAMILY_CREDENTIALS_FILE: 소유자만 읽을 수 있는 유효한 인증 파일이 필요합니다 (권한 600).');
+    }
+  }
   const parsed = envSchema.safeParse({
     FAMILY_API_URL: emptyToUndefined(env.FAMILY_API_URL),
-    FAMILY_EMAIL: env.FAMILY_EMAIL,
-    FAMILY_PASSWORD: env.FAMILY_PASSWORD,
+    FAMILY_EMAIL: env.FAMILY_EMAIL ?? credentials.email,
+    FAMILY_PASSWORD: env.FAMILY_PASSWORD ?? credentials.password,
     FAMILY_WORKSPACE_ID: emptyToUndefined(env.FAMILY_WORKSPACE_ID),
     FAMILY_HOUSEHOLD_ID: emptyToUndefined(env.FAMILY_HOUSEHOLD_ID),
+    FAMILY_TOOL_MODE: emptyToUndefined(env.FAMILY_TOOL_MODE),
   });
 
   if (!parsed.success) {
@@ -82,5 +101,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): McpConfig {
     password: data.FAMILY_PASSWORD,
     workspaceId: data.FAMILY_WORKSPACE_ID,
     householdId: data.FAMILY_HOUSEHOLD_ID,
+    toolMode: data.FAMILY_TOOL_MODE,
   };
 }

@@ -12,6 +12,34 @@ import type {
 } from '@family/contracts';
 
 import type { McpConfig } from './config';
+import {
+  budgetListResponseSchema,
+  categoryBreakdownSchema,
+  categorySummarySchema,
+  recategorizeBatchListSchema,
+  recategorizePreviewSchema,
+  recategorizeResponseSchema,
+  recategorizeRevertResponseSchema,
+  transactionListResponseSchema,
+  transactionSummarySchema,
+  financeQualitySchema,
+  recurringSeriesListResponseSchema,
+  recurringUpcomingResponseSchema,
+  type RecategorizeRequest,
+  type RecategorizePreview,
+  type RecategorizeResponse,
+  type RecategorizeRevertResponse,
+  type RecategorizeBatchList,
+  type BudgetListResponse,
+  type CategoryBreakdown,
+  type CategorySummary,
+  type TransactionListResponse,
+  type TransactionSummary,
+  type TransactionStatus,
+  type FinanceQuality,
+  type RecurringSeriesListResponse,
+  type RecurringUpcomingResponse,
+} from '@family/contracts';
 
 /**
  * HTTP client for the Family Memory API (Phase 10 spec §2.3).
@@ -47,8 +75,24 @@ export class ApiError extends Error {
 
 type QueryParams = Record<string, string | number | undefined>;
 
+/** 서버의 공개범위를 유지하는 거래 검색 조건. 원문 문자 조회는 포함하지 않는다. */
+export interface FinanceTransactionQuery {
+  householdId: string;
+  memberId?: string;
+  cardId?: string;
+  type?: 'approval' | 'cancellation';
+  status?: TransactionStatus;
+  categoryId?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+  attribution?: 'shared';
+  limit?: number;
+  cursor?: string;
+}
+
 interface FetchOptions {
-  method?: 'GET' | 'POST' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
   query?: QueryParams;
 }
@@ -254,6 +298,71 @@ export class FamilyApiClient {
   /** GET /v1/auth/me — current user + active memberships. */
   me(): Promise<MeResponse> {
     return this.authedFetch<MeResponse>('/v1/auth/me');
+  }
+
+  /** 선택월의 예산·사용액을 조회한다. 모델 API를 호출하지 않는다. */
+  async budgets(householdId: string, month?: string): Promise<BudgetListResponse> {
+    return budgetListResponseSchema.parse(await this.authedFetch<unknown>('/v1/budgets', { query: { householdId, month } }));
+  }
+
+  /** 선택월의 카테고리별 순지출을 조회한다. */
+  async categorySpending(householdId: string, month?: string): Promise<CategoryBreakdown> {
+    return categoryBreakdownSchema.parse(await this.authedFetch<unknown>('/v1/analytics/categories', { query: { householdId, month } }));
+  }
+
+  /** 거래 공개범위와 본인 문자 수집 범위를 구분한 전 기간 검토 현황. */
+  async financeQuality(householdId: string): Promise<FinanceQuality> {
+    return financeQualitySchema.parse(await this.authedFetch<unknown>('/v1/analytics/quality', { query: { householdId } }));
+  }
+
+  /** 사용자 판단과 마지막 계산 시각을 보존하는 정기지출 목록을 조회한다. */
+  async recurringSeries(householdId: string): Promise<RecurringSeriesListResponse> {
+    return recurringSeriesListResponseSchema.parse(await this.authedFetch<unknown>('/v1/recurring/series', { query: { householdId } }));
+  }
+
+  /** 명시한 시각까지의 확정 정기지출 예상치를 조회한다. 실제 청구액을 뜻하지 않는다. */
+  async recurringUpcoming(householdId: string, until: string): Promise<RecurringUpcomingResponse> {
+    return recurringUpcomingResponseSchema.parse(await this.authedFetch<unknown>('/v1/recurring/upcoming', { query: { householdId, until } }));
+  }
+
+  /** 검색 결과와 다음 페이지 커서를 함께 반환한다. */
+  async transactions(input: FinanceTransactionQuery): Promise<TransactionListResponse> {
+    return transactionListResponseSchema.parse(await this.authedFetch<unknown>('/v1/transactions', { query: { ...input } }));
+  }
+
+  /** 사용 가능한 분류 ID를 조회한다. */
+  async categories(householdId: string): Promise<CategorySummary[]> {
+    return categorySummarySchema.array().parse(await this.authedFetch<unknown>('/v1/categories', { query: { householdId } }));
+  }
+
+  /** 과거 거래 재분류의 건수·금액·예산 영향을 미리 확인한다. */
+  async recategorizePreview(input: Omit<RecategorizeRequest, 'expectedCount'>): Promise<RecategorizePreview> {
+    return recategorizePreviewSchema.parse(await this.authedFetch<unknown>('/v1/transactions/recategorize/preview', { query: { ...input } }));
+  }
+
+  /** 미리 확인한 건수에 한해 과거 거래를 재분류한다. 향후 규칙은 변경하지 않는다. */
+  async recategorize(input: RecategorizeRequest): Promise<RecategorizeResponse> {
+    return recategorizeResponseSchema.parse(await this.authedFetch<unknown>('/v1/transactions/recategorize', { method: 'POST', body: input }));
+  }
+
+  /** 결과가 불명일 때도 재전송 전에 확인할 수정 이력. */
+  async recategorizeHistory(householdId: string): Promise<RecategorizeBatchList> {
+    return recategorizeBatchListSchema.parse(await this.authedFetch<unknown>('/v1/transactions/recategorize/batches', { query: { householdId } }));
+  }
+
+  /** 이후 사용자 수정을 보존하는 기존 되돌리기 API를 호출한다. */
+  async recategorizeRevert(batchId: string): Promise<RecategorizeRevertResponse> {
+    return recategorizeRevertResponseSchema.parse(await this.authedFetch<unknown>(`/v1/transactions/recategorize/${encodeURIComponent(batchId)}/revert`, { method: 'POST' }));
+  }
+
+  /** 거래를 재조회해 분류 적용과 공개범위를 확인한다. */
+  async transaction(id: string): Promise<TransactionSummary> {
+    return transactionSummarySchema.parse(await this.authedFetch<unknown>(`/v1/transactions/${encodeURIComponent(id)}`));
+  }
+
+  /** 분류와 명시적으로 선택한 향후 규칙만 수정한다. 금액·소유자 수정은 노출하지 않는다. */
+  async classifyTransaction(id: string, categoryId: string, applyRule: boolean, expectedCategoryId: string | null): Promise<TransactionSummary> {
+    return transactionSummarySchema.parse(await this.authedFetch<unknown>(`/v1/transactions/${encodeURIComponent(id)}`, { method: 'PATCH', body: { categoryId, applyRule, expectedCategoryId } }));
   }
 
   /* ---------------------------------------------------------------------- */

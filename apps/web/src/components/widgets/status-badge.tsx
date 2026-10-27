@@ -30,6 +30,7 @@ const STATUS_TONES: Record<string, BadgeTone> = {
   pending: "info",
   accepted: "success",
   expired: "neutral",
+  ignored: "neutral",
 };
 
 /** 상태값 → 한국어 라벨. */
@@ -46,6 +47,7 @@ const STATUS_LABELS: Record<string, string> = {
   pending: "대기",
   accepted: "수락됨",
   expired: "만료",
+  ignored: "결제 내역 아님",
 };
 
 interface StatusBadgeProps {

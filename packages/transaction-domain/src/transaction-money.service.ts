@@ -122,6 +122,7 @@ export interface ChainOutcome {
 export interface MoneyRow {
   id: string;
   householdId: string;
+  memberId: string;
   cardId: string | null;
   transactionType: string;
   status: string;
@@ -146,6 +147,7 @@ export interface MoneyRow {
 export const MONEY_ROW_COLUMNS = {
   id: schema.cardTransactions.id,
   householdId: schema.cardTransactions.householdId,
+  memberId: schema.cardTransactions.memberId,
   cardId: schema.cardTransactions.cardId,
   transactionType: schema.cardTransactions.transactionType,
   status: schema.cardTransactions.status,
@@ -289,6 +291,7 @@ export class TransactionMoneyService {
       }
 
       const evidence: CancellationEvidence = {
+        memberId: command.metadata.memberId,
         cardId: command.metadata.cardId,
         currency: command.currency.toUpperCase(),
         minorUnits: command.minorUnits,
@@ -748,6 +751,7 @@ function metadataValues(metadata: TransactionMetadata) {
 export function toCandidate(row: MoneyRow): CancellationCandidate {
   return {
     id: row.id,
+    memberId: row.memberId,
     cardId: row.cardId,
     currency: row.currency,
     originalCurrency: row.originalCurrency,

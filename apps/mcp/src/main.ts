@@ -52,12 +52,12 @@ async function main(): Promise<void> {
     name: 'family-memory-ai',
     version: '0.1.0',
   });
-  registerAllTools(server, client);
+  registerAllTools(server, client, config.toolMode);
 
   // 4) Connect over stdio and stay alive.
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  logError('stdio MCP 서버 준비 완료 (도구 6개 등록됨)');
+  logError(`stdio MCP 서버 준비 완료 (${config.toolMode})`);
 
   // Graceful shutdown on termination signals.
   const shutdown = (signal: string): void => {

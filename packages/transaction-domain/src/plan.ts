@@ -371,6 +371,8 @@ function deriveStatus(
 /** 후보 판정에 필요한 승인 행의 사실. */
 export interface CancellationCandidate {
   readonly id: string;
+  /** 카드 미연결 시 다른 구성원의 승인과 구분하는 원본 구성원. */
+  readonly memberId: string;
   readonly cardId: string | null;
   readonly currency: string;
   readonly originalCurrency: string | null;
@@ -386,6 +388,7 @@ export interface CancellationCandidate {
 
 /** 후보를 찾을 취소 행의 사실. */
 export interface CancellationEvidence {
+  readonly memberId: string;
   readonly cardId: string | null;
   /** 원통화(외화) 또는 `'KRW'`. */
   readonly currency: string;
@@ -444,6 +447,9 @@ export function selectCancellationParent(
     // 미연결이면 양쪽 모두 null이어야 한다(ADR §4). null을 와일드카드로 보면
     // 카드 미연결 취소가 아무 카드 승인에나 붙는다.
     if ((candidate.cardId ?? null) !== (cancellation.cardId ?? null)) return false;
+    // null은 카드 식별자가 아니다. 카드가 없으면 최소한 원본 구성원이 같아야 한다.
+    // 실제 카드가 확인된 공용 카드의 승인·취소는 구성원이 달라도 같은 카드로 묶는다.
+    if (cancellation.cardId === null && candidate.memberId !== cancellation.memberId) return false;
     if (candidateCurrency(candidate) !== currency) return false;
     // 승인이 취소보다 **나중**이면 부모가 될 수 없다. 같은 시각은 허용한다 —
     // 카드 문자의 시각은 분 단위(`08/23 20:05`)라 같은 분에 일어난 승인과 취소는

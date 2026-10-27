@@ -36,6 +36,8 @@ export type TransactionStatus = z.infer<typeof transactionStatusSchema>;
  */
 export const transactionUpdateRequestSchema = z.object({
   categoryId: z.string().uuid().optional(),
+  /** 직전 조회한 분류. null은 미분류이며, 생략하면 기존 클라이언트 동작을 유지한다. */
+  expectedCategoryId: z.string().uuid().nullable().optional(),
   merchantNormalized: z.string().min(1).max(200).optional(),
   cardId: z.string().uuid().nullable().optional(),
   memberId: z.string().uuid().optional(),

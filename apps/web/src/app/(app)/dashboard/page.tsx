@@ -64,7 +64,6 @@ import {
   type BarListItem,
   type TodoCounts,
 } from "@/components/widgets";
-import { MonthlyInsightsCard } from "@/components/monthly-insights-card";
 import { UpcomingSpendCard } from "./upcoming-card";
 import { AddTransactionDialog } from "../transactions/add-transaction-dialog";
 import { ApiError } from "@/lib/api-client";
@@ -601,8 +600,7 @@ function DashboardView() {
         monthlyNet={monthly?.totalNet ?? null}
       />
 
-      {/* AI 인사이트(있을 때만 렌더). 자연어 질의는 하단 탭 중앙 'AI'(/ai)로 분리. */}
-      <MonthlyInsightsCard month={month} />
+      {/* 홈은 기존 통계만 조회한다. 화면을 열 때 별도 모델 호출을 만들지 않는다. */}
       </>
       )}
 

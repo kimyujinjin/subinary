@@ -258,6 +258,7 @@ describe('체인 거부 조건 (ADR §2: 위반이면 수정 전체 거부)', ()
 function approval(overrides: Partial<CancellationCandidate> = {}): CancellationCandidate {
   return {
     id: 'a1',
+    memberId: 'member-self',
     cardId: 'card-1',
     currency: 'KRW',
     originalCurrency: null,
@@ -276,6 +277,7 @@ function approval(overrides: Partial<CancellationCandidate> = {}): CancellationC
 const CANCELLED_AT = new Date('2026-08-02T00:00:00Z');
 
 const evidence = {
+  memberId: 'member-self',
   cardId: 'card-1',
   currency: 'KRW',
   minorUnits: 10_000,
@@ -285,6 +287,27 @@ const evidence = {
 };
 
 describe('취소 후보 판정 (ADR §4)', () => {
+  it('카드 미연결 취소는 다른 구성원의 미연결 승인에 붙이지 않는다', () => {
+    expect(selectCancellationParent(
+      { ...evidence, cardId: null },
+      [approval({ cardId: null, memberId: 'member-other' })],
+    )).toEqual({ kind: 'none' });
+  });
+
+  it('동일한 미연결 승인이 다른 구성원에게 있어도 본인 승인만 후보로 삼는다', () => {
+    const own = approval({ cardId: null });
+    expect(selectCancellationParent(
+      { ...evidence, cardId: null },
+      [approval({ id: 'other', cardId: null, memberId: 'member-other' }), own],
+    )).toEqual({ kind: 'unique', approval: own });
+  });
+
+  it('실제 카드가 식별된 공용 카드의 취소는 구성원이 달라도 카드로 연결한다', () => {
+    const shared = approval({ memberId: 'member-other' });
+    expect(selectCancellationParent(evidence, [shared]))
+      .toEqual({ kind: 'unique', approval: shared });
+  });
+
   it('유일 후보만 자동 연결한다', () => {
     expect(selectCancellationParent(evidence, [approval()])).toEqual({
       kind: 'unique',

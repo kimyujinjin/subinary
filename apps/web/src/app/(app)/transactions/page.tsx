@@ -20,6 +20,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type {
+  CardSummary,
   CardVisibility,
   MemberColor,
   TransactionSummary,
@@ -64,6 +65,7 @@ import { ListRow, Money, StatusBadge } from "@/components/widgets";
 import { ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { categoryIcon } from "@/lib/category-icon";
+import { cardIdentityLabel } from "@/lib/card-identity-label";
 import {
   formatDate,
   formatMoney,
@@ -416,8 +418,8 @@ function TransactionsView() {
     attributedMemberId(txn, sharedCardIds);
 
   const cardById = useMemo(() => {
-    const map = new Map<string, { alias: string; issuer: string }>();
-    for (const c of cards) map.set(c.id, { alias: c.alias, issuer: c.issuer });
+    const map = new Map<string, CardSummary>();
+    for (const c of cards) map.set(c.id, c);
     return map;
   }, [cards]);
 
@@ -432,7 +434,7 @@ function TransactionsView() {
     .map((m) => ({ value: m.memberId, label: m.name }));
   const cardOptions: Option[] = cards.map((c) => ({
     value: c.id,
-    label: `${c.alias} · ${c.issuer}`,
+    label: cardIdentityLabel(c, memberNameById),
   }));
   const categoryFilterOptions: Option[] = categories.map((c) => ({
     value: c.id,
@@ -580,6 +582,7 @@ function TransactionsView() {
       detailFallbackQuery.data ??
       null)
     : null;
+  const detailCard = detailTxn?.cardId ? cardById.get(detailTxn.cardId) : undefined;
 
   // 폴백까지 실패한 경우 = 열 수 없는 딥링크. 이유(없음/막힘/오류)를 구분해 알린다.
   const detailFallbackError =
@@ -714,7 +717,7 @@ function TransactionsView() {
     return cardById.get(txn.cardId)?.alias ?? "카드";
   };
 
-  // 색과 동일하게 카드 소유자 기준 이름(미연결이면 거래 귀속 구성원).
+  // 이름과 색은 거래 구성원 기준이다. 연결된 카드 소유자와 혼동하지 않는다.
   /**
    * 아이콘 색. 공용 카드는 사람 색을 쓰지 않는다 — 색이 곧 "누구"를 뜻하므로, 귀속을
    * 보류한 거래에 특정 색을 주면 화면이 이름(공용)과 다른 답을 말한다.
@@ -1125,8 +1128,12 @@ function TransactionsView() {
         <TransactionDetailDialog
           txn={detailTxn}
           busy={mutation.isPending || deleteMutation.isPending}
-          cardLabel={cardLabelOf(detailTxn)}
+          cardLabel={detailCard
+            ? cardIdentityLabel(detailCard, memberNameById)
+            : detailTxn.cardId ? "카드 정보 확인 불가" : "카드 미연결"}
           memberName={memberNameOf(detailTxn)}
+          ownershipMismatch={detailCard != null && !detailCard.isShared
+            && detailCard.ownerMemberId !== detailTxn.memberId}
           cardOptions={cardOptions}
           categoryOptions={categoryFilterOptions}
           applyRule={applyRule}
@@ -1223,6 +1230,7 @@ function TransactionDetailDialog({
   busy,
   cardLabel,
   memberName,
+  ownershipMismatch,
   cardOptions,
   categoryOptions,
   applyRule,
@@ -1244,6 +1252,7 @@ function TransactionDetailDialog({
   busy: boolean;
   cardLabel: string;
   memberName: string;
+  ownershipMismatch: boolean;
   cardOptions: ReadonlyArray<Option>;
   categoryOptions: ReadonlyArray<Option>;
   applyRule: boolean;
@@ -1330,9 +1339,18 @@ function TransactionDetailDialog({
         <DialogHeader>
           <DialogTitle>{merchantLabel(txn)}</DialogTitle>
           <DialogDescription>
-            {formatDate(occurredAt(txn))} · {cardLabel} · {memberName}
+            {formatDate(occurredAt(txn))} · 지출 구분: {memberName}
           </DialogDescription>
         </DialogHeader>
+
+        <div className="space-y-1 text-sm">
+          <p className="text-muted-foreground">연결 카드: {cardLabel}</p>
+          {ownershipMismatch ? (
+            <p className="text-warning-strong" role="status">
+              거래 구성원과 카드 소유자가 달라요. 아래 카드 선택에서 올바른 카드에 연결됐는지 확인해 주세요.
+            </p>
+          ) : null}
+        </div>
 
         {/* 금액 요약 — 평소엔 읽기 뷰, '수정' 탭 시 인라인 편집으로 전환 */}
         <div className="bg-muted relative flex flex-col items-center gap-1 rounded-xl px-4 py-4">

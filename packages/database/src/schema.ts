@@ -591,6 +591,8 @@ export const cardSmsParseStatus = pgEnum('card_sms_parse_status', [
   'parse_failed',
   'pending_review',
   'quarantined',
+  // 모임금고 저금 등 카드 결제가 아닌 안내. 원문은 보존하고 거래는 만들지 않는다.
+  'ignored',
 ]);
 
 /** 카드 거래 종류(승인/취소/거절/미상). declined=승인거절·거부·실패(체결 안 됨, 미승격). */
@@ -4341,7 +4343,7 @@ export type NewModelTrafficPolicy = typeof modelTrafficPolicies.$inferInsert;
 /**
  * 정기 지출 series의 사용자 상태.
  *
- * - `candidate`: 엔진이 만든 **미확정 후보**. 폐기·재생성 가능한 projection이다.
+ * - `candidate`: 엔진이 만든 **미확정 후보**. 근거가 1:1로 이어지면 자동 갱신에서도 ID를 유지한다.
  * - `confirmed` / `rejected`: 사용자의 판단. **조용히 지우지 않는다.**
  * - `needs_review`: 재계산 결과 근거가 사라졌거나 series가 합쳐/갈라져 기존 판단을
  *   그대로 이어 붙일 수 없는 상태. 시스템이 사용자의 결정을 임의로 폐기하는 대신
@@ -4567,6 +4569,13 @@ export type RecurringSeriesEvidence =
   typeof recurringSeriesEvidence.$inferSelect;
 export type NewRecurringSeriesEvidence =
   typeof recurringSeriesEvidence.$inferInsert;
+
+/** 후보가 0건이어도 성공한 계산 시각을 남기는 가구별 갱신 상태(`0063`). */
+export const recurringRecomputeState = pgTable('recurring_recompute_state', {
+  householdId: uuid('household_id').primaryKey().references(() => households.id, { onDelete: 'cascade' }),
+  computedAt: timestamp('computed_at', { withTimezone: true }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
 
 /**
  * 플레이그라운드 미니앱의 진행 상태(`0061`).
