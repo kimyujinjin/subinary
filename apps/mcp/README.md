@@ -2,7 +2,7 @@
 
 Dot이 대화와 판단을 맡고, family-memory-ai는 카드 문자 수집·거래 기록·집계와 권한을 맡습니다. 이 MCP 서버는 기존 HTTP API를 호출하는 **로컬 stdio 프로세스**이며 DB에 직접 접근하지 않습니다.
 
-2026-10-28 기준입니다. 사용자 로그인, 권한 600 인증 파일, 금융 도구 12개 등록, 조회 도구 9종의 실제 호출과 신규 API 운영 배포를 검증했습니다. **Dot 클라우드 대화에는 이 로컬 MCP가 직접 보이지 않았습니다.** 연결된 PC에서의 명령 실행은 확인했지만 API 로그인 전 DNS 조회가 `ENOTFOUND`로 실패했습니다. Dot 환경의 네트워크 접근·DNS 점검이 남아 있습니다. 카드 구분과 합산 예산은 [10/28 운영 기록](../../docs/operations/finance-dot-2026-10-28.md), 파싱 복구는 [10/27 기록](../../docs/operations/finance-dot-2026-10-27.md)을 확인하세요.
+2026-10-28 08:39 KST 기준, **Dot → 연결된 Mac → `check.cjs` → FMA API의 품질 조회에 성공했습니다.** 네트워크 승인 후 파싱 실패 0건·카드 소유자 불일치 0건을 확인했습니다. 로컬 stdio MCP의 조회 9종 검증은 별도이며, Dot 클라우드 대화에서 직접 MCP 도구를 호출하거나 분류를 수정·예약 실행하는 단계까지 확인한 것은 아닙니다. 카드 구분과 합산 예산은 [10/28 운영 기록](../../docs/operations/finance-dot-2026-10-28.md), 파싱 복구는 [10/27 기록](../../docs/operations/finance-dot-2026-10-27.md)을 확인하세요.
 
 ## 사용할 수 있는 범위
 
@@ -58,7 +58,7 @@ Dot 프로필의 **Computers → Your computer → Allow access**에서 이 PC �
 
 명령은 고정된 운영 API에서 로그인 계정의 품질 집계만 읽고 종료합니다. 거래 원문·금액·인증 값을 출력하지 않고, 쓰기나 임의 API 호출도 받지 않습니다. `check.cjs`는 `pnpm --filter @family/mcp build`의 `dist/check.js`를 독립 설치한 파일입니다. PC의 일반 실행 성공과 Dot 실행 성공을 각각 확인해야 합니다.
 
-실패 시 `stage`, `attemptedAt`, `proxyConfigured`, 허용된 `networkCode`로 구분합니다. 실제 Dot 재실행에서는 `stage=login`, `networkCode=ENOTFOUND`, `proxyConfigured=false`였습니다. 일반 PC 실행은 성공했으므로 Dot 작업의 네트워크 허용 여부·이름 해석을 먼저 확인합니다. 이 결과만으로 권한 차단이라고 확정하지 않습니다. 필요한 허용 절차가 있으면 대상 `app.subinary.cloud:443`에 한해 요청하며, IP 고정·보호 해제·다른 실행 환경으로 우회하지 않습니다.
+실패 시 `stage`, `attemptedAt`, `proxyConfigured`, 허용된 `networkCode`로 구분합니다. 초기 Dot 실행은 `login/ENOTFOUND`, `proxyConfigured=false`로 실패했습니다. 이후 사용자가 같은 Mac에서 네트워크 접근을 승인한 뒤 DNS·TCP 443·TLS 검증과 조회 명령이 성공했습니다. 사용자 보고와 해당 작업의 완료 기록이 일치합니다. 향후 실행에서 승인이 유지되는지는 별도이므로 실패하면 해당 작업의 허용 절차를 확인합니다. IP 고정·보호 해제·인증 파일 복사로 우회하지 않습니다.
 
 다음은 다른 로컬 MCP 클라이언트에 수동으로 등록할 때 사용하는 예시입니다. Dot에 같은 JSON 입력 화면이 있다고 가정하지 않습니다. GUI 앱에서 `node`를 찾지 못하면 `command -v node`의 결과를 `command`에 넣습니다. 모든 경로를 실제 절대경로로 바꾸세요. JSON의 `~`는 자동 확장되지 않습니다.
 
@@ -80,7 +80,9 @@ Dot 프로필의 **Computers → Your computer → Allow access**에서 이 PC �
 
 API가 먼저 실행돼 있어야 합니다. 시작 시 로그인하고 401에는 한 번 토큰을 갱신합니다. 위 예시는 조회부터 시작할 때의 기본 모드입니다. 이 PC의 `finance-review` 설정에는 조회 9개와 분류 쓰기 3개가 등록되어 있고, 인증 파일 경로만 전달합니다. Codex 등록이나 로컬 stdio 검증만으로 Dot 앱의 연결 성공까지 확인했다고 보지 않습니다.
 
-### Dot에 붙여넣을 첫 조회 지시문
+### 연결된 작업에서 MCP 도구가 확인된 경우의 확장 조회 지시문
+
+아래 월 지출·정기지출 조회는 품질 전용 `check.cjs`의 확인 범위를 넘어섭니다. 해당 작업에서 MCP 도구를 실제로 사용할 수 있는지 먼저 확인해야 합니다.
 
 ```text
 연결된 내 컴퓨터의 family-finance 도구로 이번 달 가계부를 확인해 줘.
