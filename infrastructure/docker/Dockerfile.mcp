@@ -1,0 +1,8 @@
+# 먼저 pnpm --filter @family/mcp build를 실행한다. 런타임은 추가 패키지가 필요 없다.
+ARG MCP_RUNTIME_BASE=node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+FROM ${MCP_RUNTIME_BASE}
+WORKDIR /app
+COPY apps/mcp/dist/remote.js /app/apps/mcp/dist/remote.js
+ENV NODE_ENV=production
+USER 1000:1000
+CMD ["node", "/app/apps/mcp/dist/remote.js"]

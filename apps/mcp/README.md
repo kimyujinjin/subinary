@@ -1,10 +1,14 @@
 # @family/mcp — Dot에서 가족 가계부 사용하기
 
-Dot이 대화와 판단을 맡고, family-memory-ai는 카드 문자 수집·거래 기록·집계와 권한을 맡습니다. 이 MCP 서버는 기존 HTTP API를 호출하는 **로컬 stdio 프로세스**이며 DB에 직접 접근하지 않습니다.
+Dot이 대화와 판단을 맡고, family-memory-ai는 카드 문자 수집·거래 기록·집계와 권한을 맡습니다. **원격 HTTPS 금융 MCP와 기존 로컬 stdio MCP** 모두 기존 HTTP API를 호출하며 가계부 DB에 직접 접근하지 않습니다.
+
+2026-10-28 09:09 KST에 **`https://app.subinary.cloud/mcp` 원격 서버의 실제 계정 조회를 검증**했습니다. OAuth 연결 후 금융 조회 9개 도구 발견, 품질 조회와 두 카드 합산 예산 조회를 확인했습니다. 파싱 실패·카드 소유자 불일치는 각각 0건이며 검증용 연결은 즉시 해제했습니다. **ChatGPT 플러그인 설치·사용자 연결 및 Dot 직접 호출은 아직 확인 전**입니다. [연결 안내](https://app.subinary.cloud/mcp/connect), [연결 관리](https://app.subinary.cloud/mcp/connections), [원격 운영 기록](../../docs/operations/finance-remote-mcp-2026-10-28.md)을 참고하세요.
 
 2026-10-28 08:39 KST 기준, **Dot → 연결된 Mac → `check.cjs` → FMA API의 품질 조회에 성공했습니다.** 네트워크 승인 후 파싱 실패 0건·카드 소유자 불일치 0건을 확인했습니다. 로컬 stdio MCP의 조회 9종 검증은 별도이며, Dot 클라우드 대화에서 직접 MCP 도구를 호출하거나 분류를 수정·예약 실행하는 단계까지 확인한 것은 아닙니다. 카드 구분과 합산 예산은 [10/28 운영 기록](../../docs/operations/finance-dot-2026-10-28.md), 파싱 복구는 [10/27 기록](../../docs/operations/finance-dot-2026-10-27.md)을 확인하세요.
 
 ## 사용할 수 있는 범위
+
+원격 서버는 아래 모드 선택과 관계없이 **`finance-readonly` 9개만** 제공합니다. 로그인 계정의 권한을 유지하며 분류 미리보기 결과를 실제 적용할 수는 없습니다. 아래 `FAMILY_TOOL_MODE`는 기존 로컬 stdio 프로세스 설정입니다.
 
 | `FAMILY_TOOL_MODE` | 노출 도구 | 용도 |
 |---|---|---|
@@ -26,7 +30,15 @@ pnpm --filter @family/mcp build
 
 빌드 실행 파일은 `apps/mcp/dist/main.js`입니다. 이 PC의 고정 설치본은 `~/.local/share/family-memory-ai/mcp/main.cjs`에 있으며, 연결 설정에는 이동·삭제될 수 있는 작업 디렉터리 대신 이 설치본을 사용합니다. MCP 클라이언트가 프로세스를 시작하며 Docker compose 서비스는 아닙니다. stdout은 프로토콜 전용이고 서버 로그는 stderr로 보냅니다.
 
-## 1. 이 PC에 로그인 정보 저장
+## 원격 MCP 연결
+
+ChatGPT 플러그인에서 사용자 지정 MCP 서버를 추가합니다. 이름은 `가족 가계부`, 주소는 `https://app.subinary.cloud/mcp`, 인증은 OAuth입니다. 동적 클라이언트 등록(DCR)과 S256 PKCE를 사용하므로 수동으로 비밀번호나 API 키를 ChatGPT에 입력하지 않습니다. 실제 연결 화면은 가계부 서버에서 열립니다.
+
+반환 주소는 현재 `https://chatgpt.com/connector_platform_oauth_redirect`만 허용합니다. ChatGPT가 다른 주소를 표시한다면 해당 연결의 정확한 주소를 확인해 운영 allowlist에 추가하고 다시 검증해야 합니다. 와일드카드는 사용하지 않습니다.
+
+원격 실행 파일은 `dist/remote.js`, Docker 확장은 루트 `docker-compose.mcp.yml`입니다. 로컬 자격증명 파일은 원격 서비스에서 읽지 않습니다. 연결 세션은 별도 볼륨에 암호화 저장하고 키는 별도 파일로 둡니다. 기본 access 만료는 1시간, 연결 절대 만료는 30일이며 연결 관리에서 즉시 해제할 수 있습니다.
+
+## 1. 기존 로컬 MCP용 로그인 정보 저장
 
 ```bash
 node scripts/setup-family-mcp.mjs

@@ -147,8 +147,30 @@ interface FetchOptions {
   query?: QueryParams;
 }
 
+/** 신뢰된 연결 계층이 보관하는 FMA 세션이다. 도구 결과나 로그에 포함하지 않는다. */
+export interface FamilyApiSessionSnapshot {
+  accessToken: string;
+  /** Cookie 헤더 형식의 `refresh_token=...` 값이다. */
+  refreshCookie: string;
+}
+
+/** 원격 연결 계층에서 검증한 세션으로 요청별 API 클라이언트를 만든다. */
+export interface FamilyApiSessionOptions extends FamilyApiSessionSnapshot {
+  apiUrl: string;
+  timeoutMs?: number;
+}
+
+interface SessionClientConfig {
+  apiUrl: string;
+  session: FamilyApiSessionSnapshot;
+  timeoutMs: number;
+}
+
 export class FamilyApiClient {
   private readonly baseUrl: string;
+  private readonly localConfig: McpConfig | null;
+  private readonly requestTimeoutMs: number | undefined;
+  private refreshPending: Promise<void> | null = null;
   /** In-memory access token (never persisted, never logged). */
   private accessToken: string | null = null;
   /** Manual cookie jar (name -> value); holds the refresh cookie. */
@@ -157,8 +179,50 @@ export class FamilyApiClient {
   private cachedWorkspaceId: string | null = null;
   private cachedHouseholdId: string | null = null;
 
-  constructor(private readonly config: McpConfig) {
+  /** 기존 로컬 설정 또는 fromSession이 검증한 내부 세션 설정을 받는다. */
+  constructor(config: McpConfig | SessionClientConfig) {
     this.baseUrl = config.apiUrl;
+    if ('session' in config) {
+      this.localConfig = null;
+      this.requestTimeoutMs = config.timeoutMs;
+      this.accessToken = config.session.accessToken;
+      this.cookies.set('refresh_token', config.session.refreshCookie.slice('refresh_token='.length));
+    } else {
+      this.localConfig = config;
+    }
+  }
+
+  /** 비밀번호를 받지 않고, 인증 계층이 검증한 FMA 세션만 요청별로 주입한다. */
+  static fromSession(options: FamilyApiSessionOptions): FamilyApiClient {
+    let url: URL;
+    try { url = new URL(options.apiUrl); }
+    catch { throw new Error('API 연결 주소 형식이 올바르지 않습니다.'); }
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+      throw new Error('API 연결 주소 형식이 올바르지 않습니다.');
+    }
+    const tokenPattern = /^[^\s;,\u0000-\u001f\u007f]+$/;
+    if (!options.accessToken || options.accessToken.length > 16384 || !tokenPattern.test(options.accessToken)
+      || !options.refreshCookie.startsWith('refresh_token=')
+      || options.refreshCookie.length > 16384
+      || !tokenPattern.test(options.refreshCookie.slice('refresh_token='.length))) {
+      throw new Error('유효한 API 세션이 필요합니다. 다시 연결하세요.');
+    }
+    const timeoutMs = options.timeoutMs ?? 15_000;
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
+      throw new Error('API 요청 제한 시간은 1~60000밀리초여야 합니다.');
+    }
+    return new FamilyApiClient({
+      apiUrl: url.toString().replace(/\/$/, ''),
+      session: { accessToken: options.accessToken, refreshCookie: options.refreshCookie },
+      timeoutMs,
+    });
+  }
+
+  /** 갱신된 세션을 신뢰된 연결 저장소에 돌려준다. 반환값을 사용자에게 출력하지 않는다. */
+  getSessionSnapshot(): FamilyApiSessionSnapshot {
+    const refreshToken = this.cookies.get('refresh_token');
+    if (!this.accessToken || !refreshToken) throw new Error('저장할 API 세션이 없습니다. 다시 연결하세요.');
+    return { accessToken: this.accessToken, refreshCookie: `refresh_token=${refreshToken}` };
   }
 
   /* ---------------------------------------------------------------------- */
@@ -167,14 +231,15 @@ export class FamilyApiClient {
 
   /** Log in with the configured credentials; stores access token + refresh cookie. */
   async login(): Promise<void> {
+    if (!this.localConfig) throw new Error('원격 세션은 비밀번호 로그인을 사용할 수 없습니다. 다시 연결하세요.');
     let res: Response;
     try {
       res = await fetch(`${this.baseUrl}/v1/auth/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          email: this.config.email,
-          password: this.config.password,
+          email: this.localConfig.email,
+          password: this.localConfig.password,
         }),
       });
     } catch (err) {
@@ -206,6 +271,8 @@ export class FamilyApiClient {
     const res = await fetch(`${this.baseUrl}/v1/auth/refresh`, {
       method: 'POST',
       headers,
+      ...(this.requestTimeoutMs === undefined ? {} : { signal: AbortSignal.timeout(this.requestTimeoutMs) }),
+      ...(this.localConfig === null ? { redirect: 'error' as const } : {}),
     });
     if (!res.ok) {
       throw new ApiError(
@@ -215,8 +282,19 @@ export class FamilyApiClient {
       );
     }
     const data = (await res.json()) as AuthResult;
+    if (this.localConfig === null && (typeof data?.tokens?.accessToken !== 'string' || !data.tokens.accessToken)) {
+      throw new ApiError(502, '/v1/auth/refresh', 'API 인증 응답을 확인하지 못했습니다. 다시 연결하세요.');
+    }
     this.accessToken = data.tokens.accessToken;
     this.storeCookies(res);
+  }
+
+  /** 같은 요청에서 병렬로 만료를 발견해도 회전형 refresh 쿠키를 한 번만 사용한다. */
+  private async refreshOnce(): Promise<void> {
+    if (!this.refreshPending) {
+      this.refreshPending = this.refresh().finally(() => { this.refreshPending = null; });
+    }
+    await this.refreshPending;
   }
 
   /* ---------------------------------------------------------------------- */
@@ -234,21 +312,27 @@ export class FamilyApiClient {
       const headers: Record<string, string> = {};
       if (this.accessToken) headers.authorization = `Bearer ${this.accessToken}`;
       const cookie = this.cookieHeader();
-      if (cookie) headers.cookie = cookie;
+      // 원격 조회에는 access token만 보내고 refresh 쿠키는 갱신 경로에만 사용한다.
+      if (cookie && this.localConfig !== null) headers.cookie = cookie;
       let body: string | undefined;
       if (opts.body !== undefined) {
         headers['content-type'] = 'application/json';
         body = JSON.stringify(opts.body);
       }
-      return fetch(url, { method: opts.method ?? 'GET', headers, body });
+      return fetch(url, {
+        method: opts.method ?? 'GET', headers, body,
+        ...(this.requestTimeoutMs === undefined ? {} : { signal: AbortSignal.timeout(this.requestTimeoutMs) }),
+        ...(this.localConfig === null ? { redirect: 'error' as const } : {}),
+      });
     };
 
     let res: Response;
     try {
+      const attemptedToken = this.accessToken;
       res = await run();
       if (res.status === 401) {
-        // Single refresh + retry (spec §2.3).
-        await this.refresh();
+        // 병렬 요청이 이미 갱신했다면 최신 토큰으로 한 번만 재시도한다.
+        if (this.accessToken === attemptedToken) await this.refreshOnce();
         res = await run();
       }
     } catch (err) {
@@ -262,7 +346,11 @@ export class FamilyApiClient {
     if (res.status === 204) {
       return undefined as T;
     }
-    return (await res.json()) as T;
+    try { return (await res.json()) as T; }
+    catch (error: unknown) {
+      if (this.localConfig !== null) throw error;
+      throw new ApiError(0, path, 'API 응답을 확인하지 못했습니다. 다시 조회하세요.', { networkCode: extractApiNetworkCode(error) });
+    }
   }
 
   /* ---------------------------------------------------------------------- */
@@ -427,7 +515,7 @@ export class FamilyApiClient {
    */
   async resolveWorkspaceId(arg?: string): Promise<string> {
     if (arg && arg.trim() !== '') return arg;
-    if (this.config.workspaceId) return this.config.workspaceId;
+    if (this.localConfig?.workspaceId) return this.localConfig.workspaceId;
     if (this.cachedWorkspaceId) return this.cachedWorkspaceId;
 
     const workspaces = await this.listWorkspaces();
@@ -452,7 +540,7 @@ export class FamilyApiClient {
    */
   async resolveHouseholdId(arg?: string): Promise<string> {
     if (arg && arg.trim() !== '') return arg;
-    if (this.config.householdId) return this.config.householdId;
+    if (this.localConfig?.householdId) return this.localConfig.householdId;
     if (this.cachedHouseholdId) return this.cachedHouseholdId;
 
     const me = await this.me();
@@ -495,7 +583,7 @@ export class FamilyApiClient {
       if (eq <= 0) continue;
       const name = pair.slice(0, eq).trim();
       const value = pair.slice(eq + 1).trim();
-      if (name) this.cookies.set(name, value);
+      if (name && (this.localConfig !== null || name === 'refresh_token')) this.cookies.set(name, value);
     }
   }
 
@@ -513,6 +601,10 @@ export class FamilyApiClient {
    * could contain secrets.
    */
   private async safeErrorMessage(res: Response): Promise<string> {
+    if (this.localConfig === null) {
+      await res.body?.cancel().catch(() => undefined);
+      return `API가 요청을 처리하지 못했습니다 (HTTP ${res.status}).`;
+    }
     try {
       const text = await res.text();
       if (!text) return res.statusText || `HTTP ${res.status}`;

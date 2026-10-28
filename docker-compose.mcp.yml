@@ -1,0 +1,45 @@
+# docker-compose.prod.yml과 함께 적용하는 금융 MCP 확장이다.
+# 암호화 키는 별도 0600 파일, 세션 저장소는 별도 Docker 볼륨에 둔다.
+services:
+  finance-mcp:
+    image: family-memory-ai/mcp:local
+    command: ["node", "/app/apps/mcp/dist/remote.js"]
+    user: "${FINANCE_MCP_UID:-1000}:${FINANCE_MCP_GID:-1000}"
+    init: true
+    environment:
+      REMOTE_MCP_PUBLIC_URL: https://app.subinary.cloud
+      REMOTE_MCP_API_URL: http://api:3001
+      REMOTE_MCP_PORT: "3002"
+      REMOTE_MCP_DATABASE_PATH: /data/finance-mcp.sqlite
+      REMOTE_MCP_KEY_FILE: /run/secrets/finance-mcp.key
+      REMOTE_MCP_TRUST_PROXY_IP: "true"
+    volumes:
+      - finance-mcp-data:/data
+      - type: bind
+        source: ${FINANCE_MCP_KEY_FILE:?MCP 암호화 키 경로를 설정하세요}
+        target: /run/secrets/finance-mcp.key
+        read_only: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('node:http').get('http://127.0.0.1:3002/mcp/health',{headers:{host:'app.subinary.cloud'}},r=>{r.resume();process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    restart: unless-stopped
+  caddy:
+    volumes:
+      - ${FINANCE_MCP_CADDY_FILE:?MCP 프록시 설정 경로를 지정하세요}:/etc/caddy/Caddyfile:ro
+volumes:
+  finance-mcp-data:
+    external: true
+    name: family-memory-ai_finance-mcp-data

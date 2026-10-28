@@ -6,10 +6,12 @@ import { defineConfig } from 'tsup';
  * 실행 파일이므로 타입 선언 대신 소스맵과 shebang을 생성한다.
  */
 export default defineConfig({
-  entry: ['src/main.ts', 'src/check.ts'],
+  entry: ['src/main.ts', 'src/check.ts', 'src/remote.ts'],
   format: ['cjs'],
   platform: 'node',
   target: 'node22',
+  // node:sqlite는 접두사 없는 sqlite 이름으로 불러올 수 없다.
+  removeNodeProtocol: false,
   banner: { js: '#!/usr/bin/env node' },
   clean: true,
   sourcemap: true,

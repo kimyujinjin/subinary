@@ -1,6 +1,12 @@
 # MCP 서버 명세
 
-2026-10-27 코드 기준. `apps/mcp`는 stdio 서버이며 기존 `/v1/*` HTTP API만 호출한다. DB 직접 접근, 문자 원문 전달, 금융 금액·소유자 수정·삭제 도구는 없다. [등록 안내](../../apps/mcp/README.md) · [ADR-0033](../adr/0033-finance-identity-and-dot-boundary.md) · [운영 상태](../operations/finance-dot-2026-10-27.md).
+2026-10-28 코드 기준. `apps/mcp`는 로컬 stdio 및 원격 Streamable HTTP 서버이며 기존 `/v1/*` HTTP API를 호출한다. 가계부 DB 직접 접근, 문자 원문 전달, 금융 금액·소유자 수정·삭제 도구는 없다. 원격 OAuth 연결 메타데이터와 암호화 세션은 별도 SQLite에 저장한다. [등록 안내](../../apps/mcp/README.md) · [원격 연결 결정](../adr/0035-dot-remote-finance-mcp.md) · [운영 상태](../operations/finance-remote-mcp-2026-10-28.md).
+
+## 원격 전송과 인증
+
+`POST https://app.subinary.cloud/mcp`는 stateless Streamable HTTP JSON 응답을 제공한다. `Authorization: Bearer`에는 해당 서비스의 `finance:read` OAuth 토큰만 허용한다. FMA API 세션·비밀번호는 클라이언트에서 전달하지 않는다. 익명·만료 요청은 401과 protected resource discovery challenge를 반환한다.
+
+OAuth discovery는 `/.well-known/oauth-protected-resource/mcp`, `/.well-known/oauth-authorization-server`에 있다. 로그인·DCR·토큰 교환·철회는 `/mcp/oauth/{authorize,register,token,revoke}`를 사용한다. S256 PKCE, 정확한 resource와 redirect, 연결별 access/refresh 회전, 사용자 연결 해제를 적용한다. 원격은 항상 읽기 9개 도구만 노출하며 아래 모드 선택은 로컬 stdio에만 해당한다.
 
 ## 모드와 기존 명세의 관계
 
