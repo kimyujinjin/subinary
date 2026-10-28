@@ -1,7 +1,7 @@
 # ADR-0035: Dot의 원격 금융 MCP 연결
 
 - 날짜: 2026-10-28
-- 상태: 구현·운영 배포·실제 API 조회·ChatGPT 플러그인 생성·무기한 연결 배포 완료, 기존 인증 설정 확인 후 실제 가계부 로그인·ChatGPT OAuth 연결·9개 도구 발견 완료, Dot 직접 호출 대기
+- 상태: 구현·운영 배포·실제 API 조회·ChatGPT 플러그인 생성·무기한 연결 배포 완료, 기존 인증 설정 확인 후 실제 가계부 로그인·ChatGPT OAuth 연결·9개 도구 발견 완료, Dot 본 대화의 품질·10월 합산 용돈 직접 조회 완료
 - 사용자 승인: 기존 금융 MCP를 Dot에서 원격 호출하도록 진행
 - 관련: ADR-0033, ADR-0034
 
@@ -21,7 +21,7 @@ OAuth 인증 코드+S256 PKCE, 정확한 반환 주소 allowlist, resource·scop
 
 ## 검증 경계
 
-OAuth discovery, PKCE, 토큰 회전·재사용·철회, CSRF·Origin·Host·본문 크기, 사용자 격리, 실제 HTTP MCP initialize/list/call, 기존 로컬 테스트를 검증한다. 공개 HTTPS 도달, 실제 사용자 데이터 조회, ChatGPT 플러그인 등록, Dot 대화 호출은 각각 별도 단계로 기록한다. 사용자 대신 Dot에 메시지를 보내지 않는다.
+OAuth discovery, PKCE, 토큰 회전·재사용·철회, CSRF·Origin·Host·본문 크기, 사용자 격리, 실제 HTTP MCP initialize/list/call, 기존 로컬 테스트를 검증한다. 공개 HTTPS 도달, 실제 사용자 데이터 조회, ChatGPT 플러그인 등록, Dot 대화 호출은 각각 별도 단계로 기록한다. 사용자 지시 없이 Dot에 메시지를 보내지 않는다. 10/28 연결 완료 후 사용자의 후속 진행 요청에 따라 Dot 본 대화에 품질·합산 용돈 조회 한 건을 전달했고, 예약·변경 권한은 추가하지 않았다.
 
 Memory/context7/sequential-thinking MCP는 현재 제공되지 않아 기존 ADR의 학습을 읽고 이 문서에 결정을 기록한다. MCP SDK와 인증 요구사항은 공식 MCP·OpenAI 문서로 확인한다.
 
@@ -46,3 +46,5 @@ OAuth discovery 성공과 DCR 성공은 별개다. 실제 ChatGPT 생성 오류 
 105개 테스트와 Node 22 번들 실행, 공개 HTTPS OAuth 품질·두 카드 예산 조회를 검증했다. OAuth 폼의 callback CSP, 정확한 관리 경로, 사용자별 제한, upstream 만료의 401 전환과 실패 후 회전 세션 보존을 리뷰에서 수정했다. 결과·남은 사용자 연결·운영 복구 절차는 [운영 기록](../operations/finance-remote-mcp-2026-10-28.md)에 남긴다.
 
 사용자 요청으로 기존 로컬 인증 설정을 확인하고 유효한 자격증명으로 연결을 마쳤다. 자격증명은 출력·문서화·새 파일 복사 없이 로그인에만 사용했고 기존 파일은 변경하지 않았다. 오래된 실패 POST 대신 ChatGPT의 새 연결 요청에서 시작해 callback과 도구 9개를 확인했다.
+
+Dot의 웹 본 대화에서 원격 플러그인을 직접 사용한 조회와 Dot이 만든 별도 로컬 Codex 작업을 구분한다. 이번 완료 근거는 도구명·응답 필드·조회 시각이 포함된 Dot 응답과 동일 시각의 원격 grant 접근 기록이다. 설치 도구 9개를 발견한 것과 2개 조회 도구의 실제 호출을 각각 기록한다.
