@@ -4,7 +4,17 @@
 
 09:09 KST 공개 HTTPS 경로에서 실제 계정 OAuth 연결, MCP 초기화, 도구 9개 발견, `finance_quality`와 `finance_overview` 조회에 성공했다. 파싱 실패 0건, 카드 소유자 불일치 0건, 2026-10월 두 카드 합산 예산을 확인했다. 검증용 연결은 즉시 철회했다. 거래·분류·예산 데이터를 변경하지 않았다.
 
-ChatGPT 플러그인 페이지는 현재 로그인 전이다. 사용자에게 Pro 계정 로그인을 요청했으며, **플러그인 생성·설치·실제 사용자 연결 및 Dot 대화 호출은 아직 미검증**이다. 예약 자동화도 생성하지 않았다. 기존 Codex 오전 9시 자동화는 중지 상태를 유지한다.
+Aside에서 ChatGPT 로그인을 완료했다. 첫 플러그인 생성은 Cloudflare Bot Fight 모드가 OAuth 등록 요청을 차단해 실패했지만, 사용자의 실행 승인을 받아 해당 모드만 끈 뒤 DCR 등록과 **‘가족 가계부’ 플러그인 생성에 성공했다.** ChatGPT의 설치된 플러그인 목록에 항목이 나타났고, 실제 OAuth 로그인·읽기 허용 화면으로 이동했다. **가계부 사용자 연결 승인 및 Dot 대화 호출은 아직 미검증**이다. 예약 자동화도 생성하지 않았다. 기존 Codex 오전 9시 자동화는 중지 상태를 유지한다.
+
+## ChatGPT 등록 차단 진단
+
+- ChatGPT 생성 요청 응답: `Dynamic client registration failed: registration endpoint returned 403`.
+- Cloudflare 보안 이벤트의 2026-10-28 09:32:32 KST 요청은 `app.subinary.cloud`의 `POST /mcp/oauth/register`, 사용자 에이전트 `Python/3.14 aiohttp/3.14.4`였다. 적용 서비스는 **Bot Fight 모드**, 작업은 **관리 챌린지**로 확인됐다.
+- 등록 UI의 반환 주소는 서버 허용 목록과 동일한 `https://chatgpt.com/connector_platform_oauth_redirect`다. 한국어 표시 이름이나 OAuth 반환 주소 문제로 추정해 수정하지 않았다.
+- 무료 Bot Fight 모드는 경로별 예외 및 WAF Skip 규칙을 지원하지 않는다. IP/ASN 전체 허용은 다른 방어까지 우회하므로 적용하지 않았다. [Cloudflare 공식 문서](https://developers.cloudflare.com/bots/get-started/bot-fight-mode/)
+- 사용자가 도메인 전체의 Bot Fight 모드 해제를 승인했고 Aside의 해당 스위치를 `off`로 변경했다. 다른 Cloudflare 보안 설정은 변경하지 않았다. 변경 후 서버에 `ChatGPT` DCR 클라이언트가 등록됐고 ChatGPT 생성 절차가 OAuth 로그인 화면까지 진행됐다.
+- 변경 후 독립 검사에서 `/mcp/health`는 200, 인증 없는 `/mcp` 초기화는 401이었다. 봇 챌린지를 해제해도 금융 도구의 OAuth 인증은 필수다.
+- 별도 Python urllib GET에서 발생한 `error code: 1010`은 Browser Integrity Check 관련 현상이다. 실제 ChatGPT 등록을 차단한 Bot Fight 모드 이벤트와 구분한다.
 
 - MCP: `https://app.subinary.cloud/mcp`
 - 연결 안내: `https://app.subinary.cloud/mcp/connect`
