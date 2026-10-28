@@ -36,6 +36,7 @@ services:
         max-size: "5m"
         max-file: "3"
     restart: unless-stopped
+    stop_grace_period: 65s
   caddy:
     volumes:
       - ${FINANCE_MCP_CADDY_FILE:?MCP 프록시 설정 경로를 지정하세요}:/etc/caddy/Caddyfile:ro

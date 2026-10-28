@@ -16,6 +16,8 @@ export interface RemoteHttpOptions {
   secureCookies?: boolean;
   /** Cloudflare→Caddy 전용 내부망에서 Caddy가 덮어쓴 IP 헤더만 신뢰한다. */
   trustProxyClientIp?: boolean;
+  /** 조회와 내부 세션 갱신이 동일한 연결의 refresh를 동시에 소비하지 않도록 공유한다. */
+  grantQueue?: GrantQueue;
 }
 
 interface BrowserSession {
@@ -124,7 +126,7 @@ export function createRemoteHttpServer(options: RemoteHttpOptions): Server {
   const host = new URL(origin).host;
   const resource = `${origin}/mcp`;
   const store = options.store;
-  const queues = new GrantQueue();
+  const queues = options.grantQueue ?? new GrantQueue();
   const browserSessions = new Map<string, BrowserSession>();
   const rates = new Map<string, { count: number; expiresAt: number }>();
   const secure = options.secureCookies !== false;
@@ -190,7 +192,7 @@ export function createRemoteHttpServer(options: RemoteHttpOptions): Server {
 
   function sendConnections(res: ServerResponse, session: BrowserSession): void {
     const grants = store.listGrants(session.userId!);
-    const items = grants.filter((grant) => grant.revokedAt === null && grant.expiresAt > Date.now()).map((grant) => `<article><strong>${escapeHtml(grant.clientName)}</strong><p class="muted">금융 내역 읽기 연결</p><form method="post" action="/mcp/connections/revoke"><input type="hidden" name="csrf" value="${escapeHtml(session.csrf)}"><input type="hidden" name="grant_id" value="${escapeHtml(grant.id)}"><button class="secondary">이 연결 해제</button></form></article>`).join('');
+    const items = grants.filter((grant) => grant.revokedAt === null && (grant.expiresAt === null || grant.expiresAt > Date.now())).map((grant) => `<article><strong>${escapeHtml(grant.clientName)}</strong><p class="muted">금융 내역 읽기 연결 · ${grant.expiresAt === null ? '직접 해제할 때까지 유지' : '기존 연결 기한 적용'}</p><form method="post" action="/mcp/connections/revoke"><input type="hidden" name="csrf" value="${escapeHtml(session.csrf)}"><input type="hidden" name="grant_id" value="${escapeHtml(grant.id)}"><button class="secondary">이 연결 해제</button></form></article>`).join('');
     html(res, 200, '연결된 금융 도구', `<p>${escapeHtml(session.name ?? '')} 님의 연결입니다.</p>${items || '<p class="note">현재 활성화된 연결이 없습니다.</p>'}<form method="post" action="/mcp/connections/logout"><input type="hidden" name="csrf" value="${escapeHtml(session.csrf)}"><button class="secondary">관리 화면 로그아웃</button></form>`);
   }
 
@@ -231,7 +233,7 @@ export function createRemoteHttpServer(options: RemoteHttpOptions): Server {
     if (req.method === 'GET' && path === '/mcp/oauth/authorize') {
       const pending = store.createAuthorization({ clientId: field(url.searchParams, 'client_id'), redirectUri: field(url.searchParams, 'redirect_uri'), responseType: field(url.searchParams, 'response_type'), codeChallenge: field(url.searchParams, 'code_challenge'), codeChallengeMethod: field(url.searchParams, 'code_challenge_method'), scope: field(url.searchParams, 'scope'), resource: field(url.searchParams, 'resource'), state: field(url.searchParams, 'state') });
       setCookie(res, 'fma_mcp_authorize', pending.requestId);
-      html(res, 200, '가계부 읽기 연결', `<p><strong>${escapeHtml(pending.clientName)}</strong>에 이 계정으로 볼 수 있는 가구의 금융 내역 조회를 허용합니다.</p><div class="note">카드 거래 · 월 지출 · 예산과 남은 용돈 · 정기지출 · 문자 수집 상태<br>금액 수정, 분류 변경, 삭제 권한은 포함하지 않습니다.</div>${credentialsForm('/mcp/oauth/authorize', pending.csrfToken, pending.requestId, true)}<p class="muted">비밀번호는 로그인 확인에만 사용합니다. 연결은 최대 30일 동안 유지되며 언제든 해제할 수 있습니다.</p>`); return;
+      html(res, 200, '가계부 읽기 연결', `<p><strong>${escapeHtml(pending.clientName)}</strong>에 이 계정으로 볼 수 있는 가구의 금융 내역 조회를 허용합니다.</p><div class="note">카드 거래 · 월 지출 · 예산과 남은 용돈 · 정기지출 · 문자 수집 상태<br>금액 수정, 분류 변경, 삭제 권한은 포함하지 않습니다.</div>${credentialsForm('/mcp/oauth/authorize', pending.csrfToken, pending.requestId, true)}<p class="muted">비밀번호는 로그인 확인에만 사용합니다. 연결에는 정해진 만료일이 없으며 직접 해제할 때까지 유지됩니다. 계정 세션이 철회되면 다시 로그인해야 합니다.</p>`); return;
     }
     if (req.method === 'POST' && path === '/mcp/oauth/authorize') {
       browserPost(req);

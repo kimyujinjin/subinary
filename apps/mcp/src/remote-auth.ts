@@ -7,7 +7,8 @@ const SCOPE = 'finance:read' as const;
 const REQUEST_TTL_MS = 10 * 60_000;
 const CODE_TTL_MS = 5 * 60_000;
 const ACCESS_TTL_MS = 60 * 60_000;
-const GRANT_TTL_MS = 30 * 24 * 60 * 60_000;
+// 기존 SQLite NOT NULL 스키마를 유지하며 연결·refresh의 무기한 유효성을 나타낸다.
+const NO_EXPIRATION = 0;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const VERIFIER_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/;
 const MAX_CLIENTS = 1_000;
@@ -103,7 +104,7 @@ export interface AuthenticatedGrant {
   session: UpstreamSession;
 }
 
-/** 연결 관리 화면에 제공할 비밀정보 없는 메타데이터다. */
+/** 연결 관리 화면에 제공할 비밀정보 없는 메타데이터다. expiresAt이 null이면 고정 만료가 없다. */
 export interface GrantSummary {
   id: string;
   clientId: string;
@@ -113,7 +114,7 @@ export interface GrantSummary {
   resource: string;
   createdAt: number;
   lastUsedAt: number | null;
-  expiresAt: number;
+  expiresAt: number | null;
   revokedAt: number | null;
 }
 
@@ -135,6 +136,11 @@ interface CodeRow {
 interface TokenRow {
   hash: string; grant_id: string; kind: 'access' | 'refresh';
   expires_at: number; consumed_at: number | null;
+}
+
+/** 새 연결·refresh의 무기한 값과 기존 데이터의 유한 만료를 함께 판정한다. */
+function hasExpired(expiresAt: number, now: number): boolean {
+  return expiresAt !== NO_EXPIRATION && expiresAt <= now;
 }
 
 /** 원문 토큰은 DB에 쓰지 않고 SHA-256으로만 조회한다. */
@@ -306,7 +312,7 @@ export class RemoteAuthStore {
       this.db.prepare(`INSERT INTO grants
         (id,client_id,user_id,user_name,session,scope,resource,created_at,expires_at)
         VALUES(?,?,?,?,?,?,?,?,?)`).run(grantId, row.client_id, profile.id, profile.name,
-        this.seal(grantId, session), SCOPE, this.resource, now, now + GRANT_TTL_MS);
+        this.seal(grantId, session), SCOPE, this.resource, now, NO_EXPIRATION);
       this.db.prepare(`INSERT INTO authorization_codes
         (hash,grant_id,client_id,redirect_uri,code_challenge,resource,expires_at) VALUES(?,?,?,?,?,?,?)`)
         .run(hash(code), grantId, row.client_id, row.redirect_uri, row.code_challenge, this.resource, now + CODE_TTL_MS);
@@ -355,7 +361,7 @@ export class RemoteAuthStore {
     if (typeof input.refreshToken !== 'string' || !TOKEN_PATTERN.test(input.refreshToken)) throw this.invalidGrant();
     const result = this.atomic((): OAuthTokenResponse | null => {
       const token = this.db.prepare('SELECT * FROM tokens WHERE hash=? AND kind=?').get(hash(input.refreshToken), 'refresh') as TokenRow | undefined;
-      if (!token || token.expires_at <= this.now()) throw this.invalidGrant();
+      if (!token || hasExpired(token.expires_at, this.now())) throw this.invalidGrant();
       const grant = this.activeGrant(token.grant_id);
       if (grant.client_id !== input.clientId || grant.resource !== input.resource) throw this.invalidGrant();
       if (token.consumed_at !== null) {
@@ -379,6 +385,21 @@ export class RemoteAuthStore {
     const session = this.unseal(grant);
     this.db.prepare('UPDATE grants SET last_used_at=? WHERE id=?').run(this.now(), grant.id);
     return { grantId: grant.id, profile: { id: grant.user_id, name: grant.user_name }, session };
+  }
+
+  /** 서버의 세션 유지 작업에 필요한 활성 무기한 연결 ID만 반환한다. 토큰·세션은 노출하지 않는다. */
+  listActivePersistentGrantIds(): string[] {
+    const rows = this.db.prepare(`SELECT id FROM grants WHERE expires_at=? AND revoked_at IS NULL
+      AND session IS NOT NULL AND resource=? AND scope=? ORDER BY created_at,id`)
+      .all(NO_EXPIRATION, this.resource, SCOPE) as unknown as Array<{ id: string }>;
+    return rows.map((row) => row.id);
+  }
+
+  /** 서버 내부 유지 작업만 사용하는 세션이다. 토큰을 발급하거나 사용자 최종 사용 시각을 바꾸지 않는다. */
+  getGrantForMaintenance(grantId: string): AuthenticatedGrant {
+    const grant = this.activeGrant(grantId);
+    if (grant.expires_at !== NO_EXPIRATION) throw this.invalidGrant();
+    return { grantId: grant.id, profile: { id: grant.user_id, name: grant.user_name }, session: this.unseal(grant) };
   }
 
   /** 가계부 API refresh 결과를 해당 연결의 암호화 세션에만 반영한다. */
@@ -411,7 +432,8 @@ export class RemoteAuthStore {
       JOIN clients c ON c.id=g.client_id WHERE g.user_id=? ORDER BY g.created_at DESC`).all(userId) as unknown as Array<GrantRow & { client_name: string }>;
     return rows.map((row) => ({ id: row.id, clientId: row.client_id, clientName: row.client_name,
       profile: { id: row.user_id, name: row.user_name }, scope: SCOPE, resource: row.resource,
-      createdAt: row.created_at, lastUsedAt: row.last_used_at, expiresAt: row.expires_at, revokedAt: row.revoked_at }));
+      createdAt: row.created_at, lastUsedAt: row.last_used_at,
+      expiresAt: row.expires_at === NO_EXPIRATION ? null : row.expires_at, revokedAt: row.revoked_at }));
   }
 
   /** 본인 소유 연결만 철회하고 API 로그아웃에 쓸 내부 세션을 한 번 반환한다. */
@@ -470,14 +492,15 @@ export class RemoteAuthStore {
 
   private activeGrant(grantId: string): GrantRow {
     const row = this.db.prepare('SELECT * FROM grants WHERE id=?').get(grantId) as GrantRow | undefined;
-    if (!row || row.revoked_at !== null || row.expires_at <= this.now() || row.session === null ||
+    if (!row || row.revoked_at !== null || hasExpired(row.expires_at, this.now()) || row.session === null ||
         row.resource !== this.resource || row.scope !== SCOPE) throw this.invalidGrant();
     return row;
   }
 
   private issueTokens(grant: GrantRow): OAuthTokenResponse {
     const now = this.now();
-    const accessExpiresAt = Math.min(now + ACCESS_TTL_MS, grant.expires_at);
+    const accessExpiresAt = grant.expires_at === NO_EXPIRATION
+      ? now + ACCESS_TTL_MS : Math.min(now + ACCESS_TTL_MS, grant.expires_at);
     const accessToken = randomToken();
     const refreshToken = randomToken();
     const insert = this.db.prepare('INSERT INTO tokens(hash,grant_id,kind,expires_at) VALUES(?,?,?,?)');

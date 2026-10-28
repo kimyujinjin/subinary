@@ -2,7 +2,9 @@ import { chmodSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import { RemoteAuthStore } from './remote-auth';
-import { createRemoteHttpServer } from './remote-http';
+import { createRemoteHttpServer, GrantQueue } from './remote-http';
+import { maintainRemoteSessions } from './remote-session-maintenance';
+import { startSessionMaintenance } from './remote-session-scheduler';
 
 /** 금융 원격 MCP 실행 설정. 비밀번호·기존 로컬 인증 파일을 사용하지 않는다. */
 export interface RemoteConfig {
@@ -43,11 +45,27 @@ export function startRemoteServer(env: NodeJS.ProcessEnv = process.env): void {
   chmodSync(dirname(config.databasePath), 0o700);
   const store = new RemoteAuthStore({ databasePath: config.databasePath, encryptionKey: config.encryptionKey, resource: `${config.publicUrl}/mcp`, issuer: config.publicUrl, allowedRedirectUris: config.allowedRedirectUris });
   chmodSync(config.databasePath, 0o600);
-  const server = createRemoteHttpServer({ publicUrl: config.publicUrl, apiUrl: config.apiUrl, store, trustProxyClientIp: config.trustProxyClientIp });
-  server.listen(config.port, '0.0.0.0', () => { process.stderr.write('[family-finance-mcp] 원격 읽기 서비스 준비 완료\n'); });
+  const grantQueue = new GrantQueue();
+  const server = createRemoteHttpServer({ publicUrl: config.publicUrl, apiUrl: config.apiUrl, store, grantQueue, trustProxyClientIp: config.trustProxyClientIp });
+  let stopMaintenance: () => Promise<void> = async () => undefined;
+  let closing = false;
+  server.listen(config.port, '0.0.0.0', () => {
+    process.stderr.write('[family-finance-mcp] 원격 읽기 서비스 준비 완료\n');
+    if (closing) return;
+    stopMaintenance = startSessionMaintenance(
+      (shouldStop) => maintainRemoteSessions({ store, apiUrl: config.apiUrl, queue: grantQueue, shouldStop }),
+      () => { process.stderr.write('[family-finance-mcp] 내부 세션 확인 실패: 다음 주기에 재시도\n'); },
+    );
+  });
   const shutdown = (): void => {
-    server.close(() => { store.close(); process.exit(0); });
-    setTimeout(() => { process.exit(1); }, 10_000).unref();
+    if (closing) return;
+    closing = true;
+    const maintenanceStopped = stopMaintenance();
+    server.close(() => {
+      void maintenanceStopped.then(() => { store.close(); process.exit(0); });
+    });
+    // 최대 3회의 API 요청(각 15초) 뒤 회전 세션을 저장할 여유를 둔다.
+    setTimeout(() => { process.exit(1); }, 60_000).unref();
   };
   process.once('SIGTERM', shutdown); process.once('SIGINT', shutdown);
   server.on('error', () => { process.stderr.write('[family-finance-mcp] 서버 시작 오류\n'); process.exit(1); });

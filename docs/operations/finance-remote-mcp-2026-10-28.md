@@ -4,7 +4,15 @@
 
 09:09 KST 공개 HTTPS 경로에서 실제 계정 OAuth 연결, MCP 초기화, 도구 9개 발견, `finance_quality`와 `finance_overview` 조회에 성공했다. 파싱 실패 0건, 카드 소유자 불일치 0건, 2026-10월 두 카드 합산 예산을 확인했다. 검증용 연결은 즉시 철회했다. 거래·분류·예산 데이터를 변경하지 않았다.
 
-Aside에서 ChatGPT 로그인을 완료했다. 첫 플러그인 생성은 Cloudflare Bot Fight 모드가 OAuth 등록 요청을 차단해 실패했지만, 사용자의 실행 승인을 받아 해당 모드만 끈 뒤 DCR 등록과 **‘가족 가계부’ 플러그인 생성에 성공했다.** ChatGPT의 설치된 플러그인 목록에 항목이 나타났고, 실제 OAuth 로그인·읽기 허용 화면으로 이동했다. **가계부 사용자 연결 승인 및 Dot 대화 호출은 아직 미검증**이다. 예약 자동화도 생성하지 않았다. 기존 Codex 오전 9시 자동화는 중지 상태를 유지한다.
+Aside에서 ChatGPT 로그인을 완료했다. 첫 플러그인 생성은 Cloudflare Bot Fight 모드가 OAuth 등록 요청을 차단해 실패했지만, 사용자의 실행 승인을 받아 해당 모드만 끈 뒤 DCR 등록과 **‘가족 가계부’ 플러그인 생성에 성공했다.** ChatGPT의 설치된 플러그인 목록에 항목이 나타났고, 실제 OAuth 로그인·읽기 허용 화면으로 이동했다. 이후 사용자가 무기한 연결 및 대리 로그인을 승인했다. 무기한 연결 배포 후 Aside에서 제공된 계정으로 로그인했으나 **가계부가 HTTP 401로 거절**했다. 브라우저 입력과 재시도 응답을 확인했고, 계정 정보 확인을 요청했다. 현재 활성 grant는 0개이며 **ChatGPT OAuth 완료 및 Dot 대화 호출은 미검증**이다. 비밀번호는 파일·문서에 보관하지 않았다. 예약 자동화도 생성하지 않았다. 기존 Codex 오전 9시 자동화는 중지 상태를 유지한다.
+
+## 무기한 연결 변경
+
+- 사용자가 요청한 대로 새 grant와 refresh는 고정 만료 없이 직접 해제할 때까지 유지한다. access는 1시간, PKCE·CSRF·refresh 회전/재사용 철회는 유지한다. 기존 유한 연결은 자동 연장하지 않는다.
+- API 웹 세션의 30일 갱신 기한을 고려해 MCP 시작 시·6시간마다 계정 상태만 확인한다. 도구 호출과 같은 큐를 공유하고 갱신 쿠키는 후속 503에도 저장한다. 401은 철회한다. 금융 조회·AI 호출·Codex/Dot 예약 작업은 생성하지 않는다.
+- 계정 세션 철회 또는 30일 이상 서버 중단 시 재연결이 필요하다.
+- 전체 122개 테스트·타입 검사·빌드 통과. 새 유지보수 9개와 주기·종료 3개 테스트 포함. Node 22.23.1 합성 OAuth→9개 도구→품질→철회 검증 통과.
+- MCP 컨테이너만 교체했으며 기존 데이터 볼륨·암호화 키·다른 서비스는 유지했다. 배포 후 healthy, 공개 health 200·익명 MCP 401, 화면의 무기한 안내를 확인했다.
 
 ## ChatGPT 등록 차단 진단
 
@@ -36,8 +44,8 @@ Aside에서 ChatGPT 로그인을 완료했다. 첫 플러그인 생성은 Cloudf
 
 `Dot → 원격 MCP OAuth 토큰 → 금융 MCP 서비스 → 해당 사용자의 FMA 세션 → 기존 API` 흐름이다. API·웹·worker·PostgreSQL·Redis·Cloudflare 터널은 교체하지 않았다. 독립 `family-memory-ai-finance-mcp-1`을 추가하고 Caddy 경로만 교체했다. 기존 데이터베이스 마이그레이션은 없다. 가계부가 Mac의 Docker에서 실행되므로 Mac 전원·네트워크 의존성은 남는다.
 
-- 이미지: `family-memory-ai/mcp:20261028` / `family-memory-ai/mcp:local`
-- 이미지 ID: `sha256:3fb570020d6000ebdf310bb65a849dd9d8ccc45a2fdc7aaf0ca5ec2ae46addb8`
+- 이미지: `family-memory-ai/mcp:20261028-persistent` / `family-memory-ai/mcp:local`
+- 이미지 ID: `sha256:c9ac436eb1a26d7f3e5328c53af0a3c5392cd0a475c7a36f47177114544b0de7`
 - Node: `v22.23.1`
 - 데이터 볼륨: `family-memory-ai_finance-mcp-data` (0700, 서비스 UID 501/GID 20)
 - 암호화 키: `~/.config/family-memory-ai/remote-mcp/encryption.key` (32바이트, 0600)
@@ -65,8 +73,8 @@ MCP를 되돌릴 때는 원본 prod compose만 사용하여 `up -d --no-deps cad
 
 ## 검증
 
-- MCP 전체 105개 테스트, 타입 검사, 번들 빌드 통과.
-- OAuth 31개: PKCE·redirect·resource·scope·CSRF·만료, 코드/refresh 재사용, 사용자/클라이언트 분리, 트랜잭션 롤백, 해시·암호화 저장.
+- MCP 전체 122개 테스트, 타입 검사, 번들 빌드 통과.
+- OAuth 36개: PKCE·redirect·resource·scope·CSRF·만료, 코드/refresh 재사용, 사용자/클라이언트 분리, 트랜잭션 롤백, 해시·암호화 저장, 무기한/기존 유한 만료 호환.
 - 실제 HTTP: initialize/list/call, 사용자 격리, 수정 도구 미노출, API 실패·timeout·민감정보 비노출.
 - 관리 화면: 본인 연결만 표시·철회, 타인 연결 철회 거절, CSRF/Origin, 로그인 실패 후 재입력, 관리 로그아웃 시 Dot 연결 유지.
 - refresh 성공 뒤 `me` 503에서도 새 세션 저장, 동일 연결의 동시 요청 직렬화.
@@ -75,7 +83,7 @@ MCP를 되돌릴 때는 원본 prod compose만 사용하여 `up -d --no-deps cad
 - 공개 HTTPS 실제 OAuth 연결로 품질·합산 예산 조회 통과. 증거는 `.deploy-logs/remote-mcp-20261028/live-verification.json`에 값 최소화로 보관한다.
 - 공개 연결 안내 화면을 브라우저로 확인했다. ChatGPT 실제 callback 완료는 아직 미검증이다.
 
-Python urllib 요청은 Cloudflare에서 403이었지만 브라우저·curl·Node 요청은 통과했다. 이를 API 장애로 처리하지 않는다. ChatGPT 서버의 실제 접속은 플러그인 연결 단계에서 별도 확인해야 하며 Cloudflare 보안 설정은 낮추지 않았다.
+최초 검증에서 Python urllib 요청은 Cloudflare에서 403이었지만 브라우저·curl·Node 요청은 통과했다. 이후 실제 ChatGPT DCR 차단 원인을 확인하여 사용자 승인으로 Bot Fight 모드만 끈 경위는 위 기록을 따른다. 현재 로그인 401은 브라우저가 가계부 로그인 응답을 받은 결과로, 앞선 Cloudflare 챌린지와 구분한다.
 
 ## 리뷰와 반복 학습
 

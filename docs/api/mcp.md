@@ -8,6 +8,8 @@
 
 OAuth discovery는 `/.well-known/oauth-protected-resource/mcp`, `/.well-known/oauth-authorization-server`에 있다. 로그인·DCR·토큰 교환·철회는 `/mcp/oauth/{authorize,register,token,revoke}`를 사용한다. S256 PKCE, 정확한 resource와 redirect, 연결별 access/refresh 회전, 사용자 연결 해제를 적용한다. 원격은 항상 읽기 9개 도구만 노출하며 아래 모드 선택은 로컬 stdio에만 해당한다.
 
+새 grant와 refresh에는 절대 만료일이 없고 access는 1시간 유효하다. 저장소의 `expires_at=0`은 무기한을 뜻하며 연결 요약의 `expiresAt`은 `null`이다. 기존 양수 만료값은 그대로 적용한다. 서버 시작과 6시간 주기의 내부 계정 확인은 조회와 같은 연결별 큐를 사용해 API 세션을 갱신한다. API 401은 연결을 철회하고 일시 장애는 세션을 보존한다. 사용자가 해제하거나 계정 세션이 철회되면 다시 로그인해야 한다.
+
 ## 모드와 기존 명세의 관계
 
 | 모드 | 수 | 범위 |

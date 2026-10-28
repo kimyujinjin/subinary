@@ -2,7 +2,7 @@
 
 Dot이 대화와 판단을 맡고, family-memory-ai는 카드 문자 수집·거래 기록·집계와 권한을 맡습니다. **원격 HTTPS 금융 MCP와 기존 로컬 stdio MCP** 모두 기존 HTTP API를 호출하며 가계부 DB에 직접 접근하지 않습니다.
 
-2026-10-28 09:09 KST에 **`https://app.subinary.cloud/mcp` 원격 서버의 실제 계정 조회를 검증**했습니다. OAuth 연결 후 금융 조회 9개 도구 발견, 품질 조회와 두 카드 합산 예산 조회를 확인했습니다. 파싱 실패·카드 소유자 불일치는 각각 0건이며 검증용 연결은 즉시 해제했습니다. **ChatGPT 플러그인 설치·사용자 연결 및 Dot 직접 호출은 아직 확인 전**입니다. [연결 안내](https://app.subinary.cloud/mcp/connect), [연결 관리](https://app.subinary.cloud/mcp/connections), [원격 운영 기록](../../docs/operations/finance-remote-mcp-2026-10-28.md)을 참고하세요.
+2026-10-28 09:09 KST에 **`https://app.subinary.cloud/mcp` 원격 서버의 실제 계정 조회를 검증**했습니다. OAuth 연결 후 금융 조회 9개 도구 발견, 품질 조회와 두 카드 합산 예산 조회를 확인했습니다. 파싱 실패·카드 소유자 불일치는 각각 0건이며 검증용 연결은 즉시 해제했습니다. 이후 ChatGPT 플러그인 생성·설치와 무기한 연결 배포를 완료했습니다. **실제 가계부 로그인은 401로 거절되어 계정 확인이 필요하며, ChatGPT OAuth 완료와 Dot 직접 호출은 미검증**입니다. [연결 안내](https://app.subinary.cloud/mcp/connect), [연결 관리](https://app.subinary.cloud/mcp/connections), [원격 운영 기록](../../docs/operations/finance-remote-mcp-2026-10-28.md)을 참고하세요.
 
 2026-10-28 08:39 KST 기준, **Dot → 연결된 Mac → `check.cjs` → FMA API의 품질 조회에 성공했습니다.** 네트워크 승인 후 파싱 실패 0건·카드 소유자 불일치 0건을 확인했습니다. 로컬 stdio MCP의 조회 9종 검증은 별도이며, Dot 클라우드 대화에서 직접 MCP 도구를 호출하거나 분류를 수정·예약 실행하는 단계까지 확인한 것은 아닙니다. 카드 구분과 합산 예산은 [10/28 운영 기록](../../docs/operations/finance-dot-2026-10-28.md), 파싱 복구는 [10/27 기록](../../docs/operations/finance-dot-2026-10-27.md)을 확인하세요.
 
@@ -36,7 +36,9 @@ ChatGPT 플러그인에서 사용자 지정 MCP 서버를 추가합니다. 이�
 
 반환 주소는 현재 `https://chatgpt.com/connector_platform_oauth_redirect`만 허용합니다. ChatGPT가 다른 주소를 표시한다면 해당 연결의 정확한 주소를 확인해 운영 allowlist에 추가하고 다시 검증해야 합니다. 와일드카드는 사용하지 않습니다.
 
-원격 실행 파일은 `dist/remote.js`, Docker 확장은 루트 `docker-compose.mcp.yml`입니다. 로컬 자격증명 파일은 원격 서비스에서 읽지 않습니다. 연결 세션은 별도 볼륨에 암호화 저장하고 키는 별도 파일로 둡니다. 기본 access 만료는 1시간, 연결 절대 만료는 30일이며 연결 관리에서 즉시 해제할 수 있습니다.
+원격 실행 파일은 `dist/remote.js`, Docker 확장은 루트 `docker-compose.mcp.yml`입니다. 로컬 자격증명 파일은 원격 서비스에서 읽지 않습니다. 연결 세션은 별도 볼륨에 암호화 저장하고 키는 별도 파일로 둡니다. 새 연결은 정해진 만료일 없이 직접 해제할 때까지 유지됩니다. access 토큰은 1시간마다 만료되고 refresh는 사용 시 회전합니다. 연결 관리에서 즉시 해제할 수 있습니다.
+
+서버는 시작 시와 6시간마다 연결 계정의 로그인 상태만 확인하여 가계부 세션을 갱신합니다. 금융 조회나 AI 호출은 하지 않습니다. 비밀번호 변경·세션 철회 또는 서버가 가계부 refresh 기한(현재 30일)보다 오래 중단된 경우에는 다시 연결해야 합니다. 기존에 유한 기한으로 승인된 연결은 원래 기한을 유지합니다.
 
 ## 1. 기존 로컬 MCP용 로그인 정보 저장
 

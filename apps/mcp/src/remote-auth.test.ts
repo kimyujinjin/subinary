@@ -97,12 +97,15 @@ describe('원격 MCP OAuth 저장소', () => {
     expectOAuth(() => store.authenticate(token.refresh_token), 'invalid_token', 401);
     expectOAuth(() => store.authenticate(API_ACCESS), 'invalid_token', 401);
     const db = new DatabaseSync(config.databasePath);
+    expect(db.prepare('SELECT expires_at FROM grants WHERE id=?').get(actor.grantId)?.expires_at).toBe(0);
+    expect(db.prepare("SELECT expires_at FROM tokens WHERE grant_id=? AND kind='refresh'").get(actor.grantId)?.expires_at).toBe(0);
     const dump = JSON.stringify(['grants', 'tokens', 'authorization_codes', 'authorization_requests'].map((table) => db.prepare(`SELECT * FROM ${table}`).all()));
     db.close();
     for (const secret of [API_ACCESS, API_REFRESH, token.access_token, token.refresh_token, done.code, auth.csrfToken, auth.requestId]) {
       expect(dump).not.toContain(secret);
     }
     expect(JSON.stringify(store.listGrants(PROFILE.id))).not.toContain(API_ACCESS);
+    expect(store.listGrants(PROFILE.id)[0]?.expiresAt).toBeNull();
     expect(store.listGrants('another-user')).toEqual([]);
     expect(statSync(config.databasePath).mode & 0o777).toBe(0o600);
   });
@@ -117,6 +120,31 @@ describe('원격 MCP OAuth 저장소', () => {
     stores.push(reopened);
     expect(reopened.authenticate(tokens.access_token).session.accessToken).toBe('replacement-access');
     expect(readFileSync(config.databasePath).toString()).not.toContain('replacement-access');
+  });
+
+  it('내부 유지 작업은 활성 무기한 연결만 읽고 사용자 사용 시각과 토큰을 바꾸지 않는다', () => {
+    const { store, config, advance } = fixture();
+    const persistent = connected(store);
+    const finite = connected(store);
+    const revoked = connected(store);
+    const grants = store.listGrants(PROFILE.id);
+    const persistentGrant = grants.find((grant) => grant.clientId === persistent.client.client_id);
+    const finiteGrant = grants.find((grant) => grant.clientId === finite.client.client_id);
+    const revokedGrant = grants.find((grant) => grant.clientId === revoked.client.client_id);
+    if (!persistentGrant || !finiteGrant || !revokedGrant) throw new Error('검증할 연결이 필요합니다.');
+    store.revokeGrantForUser(revokedGrant.id, PROFILE.id);
+    const db = new DatabaseSync(config.databasePath);
+    db.prepare('UPDATE grants SET expires_at=? WHERE id=?').run(finiteGrant.createdAt + 30 * 24 * 60 * 60_000, finiteGrant.id);
+    const tokensBefore = db.prepare('SELECT * FROM tokens ORDER BY hash').all();
+    advance(60 * 60_000);
+    expect(store.listActivePersistentGrantIds()).toEqual([persistentGrant.id]);
+    expect(store.getGrantForMaintenance(persistentGrant.id)).toEqual({ grantId: persistentGrant.id, profile: PROFILE, session: SESSION });
+    expect(store.listGrants(PROFILE.id).find((grant) => grant.id === persistentGrant.id)?.lastUsedAt).toBeNull();
+    expect(db.prepare('SELECT * FROM tokens ORDER BY hash').all()).toEqual(tokensBefore);
+    db.close();
+    expectOAuth(() => store.getGrantForMaintenance(finiteGrant.id), 'invalid_grant');
+    expectOAuth(() => store.getGrantForMaintenance(revokedGrant.id), 'invalid_grant');
+    expectOAuth(() => store.getGrantForMaintenance('unknown'), 'invalid_grant');
   });
 
   it.each([
@@ -226,15 +254,90 @@ describe('원격 MCP OAuth 저장소', () => {
     expect(store.refresh(input).scope).toBe('finance:read');
   });
 
-  it('refresh 회전으로 최초 동의의 절대 30일 만료를 늘리지 않는다', () => {
+  it('새 연결은 30일과 여러 해가 지나도 재시작 후 refresh로 조회를 계속한다', () => {
+    const { store, config, advance } = fixture();
+    const a = connected(store);
+    advance(31 * 24 * 60 * 60_000);
+    expectOAuth(() => store.authenticate(a.tokens.access_token), 'invalid_token');
+    const afterMonth = store.refresh({ refreshToken: a.tokens.refresh_token, clientId: a.client.client_id, resource: RESOURCE });
+    expect(afterMonth.expires_in).toBe(3_600);
+    expect(store.authenticate(afterMonth.access_token).session).toEqual(SESSION);
+    advance(10 * 365 * 24 * 60 * 60_000);
+    store.close();
+    const reopened = new RemoteAuthStore(config);
+    stores.push(reopened);
+    expectOAuth(() => reopened.authenticate(afterMonth.access_token), 'invalid_token');
+    const afterYears = reopened.refresh({ refreshToken: afterMonth.refresh_token, clientId: a.client.client_id, resource: RESOURCE });
+    expect(afterYears.expires_in).toBe(3_600);
+    expect(reopened.authenticate(afterYears.access_token).profile).toEqual(PROFILE);
+    expect(reopened.listGrants(PROFILE.id)[0]?.expiresAt).toBeNull();
+    advance(60 * 60_000);
+    expectOAuth(() => reopened.authenticate(afterYears.access_token), 'invalid_token');
+  });
+
+  it('무기한 refresh도 장기간 뒤 소비된 토큰을 재사용하면 해당 연결만 철회한다', () => {
     const { store, advance } = fixture();
     const a = connected(store);
+    const b = connected(store);
+    const refreshed = store.refresh({ refreshToken: a.tokens.refresh_token, clientId: a.client.client_id, resource: RESOURCE });
+    advance(365 * 24 * 60 * 60_000);
+    const afterYear = store.refresh({ refreshToken: refreshed.refresh_token, clientId: a.client.client_id, resource: RESOURCE });
+    expectOAuth(() => store.refresh({ refreshToken: a.tokens.refresh_token, clientId: a.client.client_id, resource: RESOURCE }), 'invalid_grant');
+    expectOAuth(() => store.authenticate(afterYear.access_token), 'invalid_token');
+    expectOAuth(() => store.refresh({ refreshToken: afterYear.refresh_token, clientId: a.client.client_id, resource: RESOURCE }), 'invalid_grant');
+    const unaffected = store.refresh({ refreshToken: b.tokens.refresh_token, clientId: b.client.client_id, resource: RESOURCE });
+    expect(store.authenticate(unaffected.access_token).profile).toEqual(PROFILE);
+  });
+
+  it('장기간 유지된 무기한 연결도 사용자가 해제하면 access와 refresh를 즉시 거부한다', () => {
+    const { store, advance } = fixture();
+    const a = connected(store);
+    const grantId = store.authenticate(a.tokens.access_token).grantId;
+    advance(365 * 24 * 60 * 60_000);
+    const refreshed = store.refresh({ refreshToken: a.tokens.refresh_token, clientId: a.client.client_id, resource: RESOURCE });
+    expect(store.revokeGrantForUser(grantId, PROFILE.id)).toEqual(SESSION);
+    expectOAuth(() => store.authenticate(refreshed.access_token), 'invalid_token');
+    expectOAuth(() => store.refresh({ refreshToken: refreshed.refresh_token, clientId: a.client.client_id, resource: RESOURCE }), 'invalid_grant');
+    expect(store.listGrants(PROFILE.id)[0]).toMatchObject({ expiresAt: null, revokedAt: expect.any(Number) });
+  });
+
+  it('기존 유한 만료 연결은 재시작과 refresh 회전에도 최초 30일 기한을 유지한다', () => {
+    const { store, config, advance } = fixture();
+    const a = connected(store);
+    const grant = store.listGrants(PROFILE.id)[0];
+    expect(grant).toBeDefined();
+    if (!grant) throw new Error('검증할 연결이 필요합니다.');
+    const expiresAt = grant.createdAt + 30 * 24 * 60 * 60_000;
+    const db = new DatabaseSync(config.databasePath);
+    db.prepare('UPDATE grants SET expires_at=? WHERE id=?').run(expiresAt, grant.id);
+    db.prepare("UPDATE tokens SET expires_at=? WHERE grant_id=? AND kind='refresh'").run(expiresAt, grant.id);
+    db.close();
+    store.close();
+    const reopened = new RemoteAuthStore(config);
+    stores.push(reopened);
+    expect(reopened.listGrants(PROFILE.id)[0]?.expiresAt).toBe(expiresAt);
     advance(30 * 24 * 60 * 60_000 - 30_000);
-    const nearEnd = store.refresh({ refreshToken: a.tokens.refresh_token, clientId: a.client.client_id, resource: RESOURCE });
+    const nearEnd = reopened.refresh({ refreshToken: a.tokens.refresh_token, clientId: a.client.client_id, resource: RESOURCE });
     expect(nearEnd.expires_in).toBe(30);
+    expect(reopened.authenticate(nearEnd.access_token).profile).toEqual(PROFILE);
     advance(30_000);
-    expectOAuth(() => store.authenticate(nearEnd.access_token), 'invalid_token');
-    expectOAuth(() => store.refresh({ refreshToken: nearEnd.refresh_token, clientId: a.client.client_id, resource: RESOURCE }), 'invalid_grant');
+    expectOAuth(() => reopened.authenticate(nearEnd.access_token), 'invalid_token');
+    expectOAuth(() => reopened.refresh({ refreshToken: nearEnd.refresh_token, clientId: a.client.client_id, resource: RESOURCE }), 'invalid_grant');
+    expectOAuth(() => reopened.updateSession(grant.id, SESSION), 'invalid_grant');
+  });
+
+  it('기존 유한 만료 refresh는 연결이 무기한이어도 자체 기한에 만료된다', () => {
+    const { store, config, advance } = fixture();
+    const a = connected(store);
+    const grant = store.listGrants(PROFILE.id)[0];
+    expect(grant).toBeDefined();
+    if (!grant) throw new Error('검증할 연결이 필요합니다.');
+    const db = new DatabaseSync(config.databasePath);
+    db.prepare("UPDATE tokens SET expires_at=? WHERE grant_id=? AND kind='refresh'").run(grant.createdAt + 30_000, grant.id);
+    db.close();
+    advance(30_000);
+    expectOAuth(() => store.refresh({ refreshToken: a.tokens.refresh_token, clientId: a.client.client_id, resource: RESOURCE }), 'invalid_grant');
+    expect(store.authenticate(a.tokens.access_token).profile).toEqual(PROFILE);
   });
 
   it('다른 계정이나 클라이언트는 연결 철회·목록 조회에 관여할 수 없다', () => {

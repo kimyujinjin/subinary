@@ -61,6 +61,8 @@ async function startAuthorization(): Promise<{ clientId: string; verifier: strin
   const response = await send(`/mcp/oauth/authorize?${params}`);
   expect(response.status).toBe(200);
   const source = await response.text();
+  expect(source).toContain('정해진 만료일이 없으며 직접 해제할 때까지 유지');
+  expect(source).not.toContain('최대 30일');
   const csrf = /name="csrf" value="([^"]+)"/.exec(source)?.[1];
   const requestId = /name="request_id" value="([^"]+)"/.exec(source)?.[1];
   const cookie = response.headers.get('set-cookie')?.split(';')[0];
