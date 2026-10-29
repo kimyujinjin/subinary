@@ -1,7 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { parseCardSms } from '@family/card-parsers';
+import { hasSuspiciousSmsContent, parseCardSms } from '@family/card-parsers';
 import type { AppConfig } from '@family/config';
 import {
   schema,
@@ -10,7 +10,7 @@ import {
 } from '@family/database';
 import { createLogger, QUEUE_NAMES } from '@family/shared';
 import type { Job } from 'bullmq';
-import { and, eq, notExists } from 'drizzle-orm';
+import { and, eq, getTableColumns, notExists, sql } from 'drizzle-orm';
 
 import { LlmSpanExtractorService } from '../card-sms/llm-span-extractor.service';
 import {
@@ -130,7 +130,9 @@ export class CardSmsParseProcessor extends WorkerHost {
     }
 
     const [event] = await this.db
-      .select()
+      .select({ ...getTableColumns(schema.cardSmsEvents),
+        updatedAtVersion: sql<string>`${schema.cardSmsEvents.updatedAt}::text`,
+      })
       .from(schema.cardSmsEvents)
       .where(eq(schema.cardSmsEvents.id, cardSmsEventId))
       .limit(1);
@@ -145,11 +147,23 @@ export class CardSmsParseProcessor extends WorkerHost {
     }
 
     const repair = job.data.repair;
+    const [existingTransaction] = await this.db.select({ id: schema.cardTransactions.id })
+      .from(schema.cardTransactions).where(eq(schema.cardTransactions.sourceEventId, cardSmsEventId)).limit(1);
+    if (existingTransaction) {
+      if (repair !== undefined) throw new Error('repair_already_promoted');
+      // 큐 재전송이 이미 확정된 문자·거래의 결과를 다시 덮어쓰지 않는다.
+      return { cardSmsEventId, skipped: true };
+    }
     if (repair !== undefined) {
       assertCardSmsRepairGuard(event, repair);
-      const [existing] = await this.db.select({ id: schema.cardTransactions.id })
-        .from(schema.cardTransactions).where(eq(schema.cardTransactions.sourceEventId, cardSmsEventId)).limit(1);
-      if (existing) throw new Error('repair_already_promoted');
+    } else if (event.parseStatus === 'parsed' || event.parseStatus === 'pending_review') {
+      // 확정 후 재전송은 원문을 다시 해석하지 않는다. 거래 생성만 실패했다면 저장 결과로 재시도한다.
+      if (event.transactionType === 'approval' || event.transactionType === 'cancellation') {
+        await this.promotionService.promote(cardSmsEventId);
+      }
+      return { cardSmsEventId, parseStatus: event.parseStatus };
+    } else if (event.parseStatus === 'ignored') {
+      return { cardSmsEventId, skipped: true };
     }
 
     const input = {
@@ -157,6 +171,7 @@ export class CardSmsParseProcessor extends WorkerHost {
       content: event.rawContent,
       receivedAt: event.receivedAt,
     };
+    const suspiciousInput = hasSuspiciousSmsContent(input.content);
 
     // L0 — 결정적 규칙 파서 + 액션 결박 금액 게이트(ADR-0027 6단계).
     // 게이트가 금액을 확정하지 못하면 amount를 비우고 내려보내므로, 아래 `parseable`이
@@ -168,9 +183,9 @@ export class CardSmsParseProcessor extends WorkerHost {
     // L1 — 사람이 한 번 확정해 레시피가 생긴 레이아웃이면 LLM 없이 결정적으로 추출한다.
     // 지문 exact match라 "비슷한 템플릿"으로 잘못 보내는 오탐이 없다(ADR-0023 S4).
     let parseSource: 'rule' | 'recipe' | 'llm-span' = 'rule';
-    if (repair === undefined && !parseable(result)) {
+    if (repair === undefined && !suspiciousInput && !parseable(result)) {
       quality.recipeAttempted = true;
-      const fromRecipe = await this.templateRecipe.extract(input);
+      const fromRecipe = await this.templateRecipe.extract(input, event.householdId, event.memberId);
       if (fromRecipe && parseable(fromRecipe.result)) {
         result = fromRecipe.result;
         parseSource = 'recipe';
@@ -181,7 +196,7 @@ export class CardSmsParseProcessor extends WorkerHost {
     // L2 — L0·L1이 모두 못 읽은 건만 LLM span 추출로 넘긴다(ADR-0023). LLM은 값을
     // 만들지 않고 원문 인용만 하며, 실패는 null 이라 기존 parse_failed 흐름이 유지된다.
     let fromLlm = false;
-    if (repair === undefined && !parseable(result) && this.llmSpanExtractor.enabled) {
+    if (repair === undefined && !suspiciousInput && !parseable(result) && this.llmSpanExtractor.enabled) {
       quality.llmAttempted = true;
       const extraction = await this.llmSpanExtractor.extract(
         input,
@@ -211,11 +226,16 @@ export class CardSmsParseProcessor extends WorkerHost {
     }
 
     // 같은 판정으로 안내·거절·금액 오류·LLM 격리와 승격 가능 여부를 함께 결정한다.
-    const { parseStatus, parseError, promotable } = resolveCardSmsParseDisposition(
+    const disposition = resolveCardSmsParseDisposition(
       result,
       event.receivedAt,
       fromLlm,
     );
+    // 재사용 정책도 카드·중복까지 확인하는 원자적 자동 복구 경로에서만 반영한다.
+    // 의심 문구는 일반 파서가 성공했더라도 거래로 승격하지 않는다.
+    const { parseStatus, parseError, promotable } = suspiciousInput || parseSource === 'recipe'
+      ? { parseStatus: 'quarantined' as const, parseError: suspiciousInput ? 'suspicious_content' : 'approved_policy_validation_pending', promotable: false }
+      : disposition;
 
     const now = new Date();
 
@@ -241,15 +261,17 @@ export class CardSmsParseProcessor extends WorkerHost {
       })
       .where(and(
         eq(schema.cardSmsEvents.id, cardSmsEventId),
-        repair === undefined ? undefined : and(
-          eq(schema.cardSmsEvents.parseStatus, 'parse_failed'),
-          eq(schema.cardSmsEvents.updatedAt, event.updatedAt),
-          notExists(this.db.select({ id: schema.cardTransactions.id }).from(schema.cardTransactions)
-            .where(eq(schema.cardTransactions.sourceEventId, cardSmsEventId))),
-        ),
+        eq(schema.cardSmsEvents.parseStatus, event.parseStatus),
+        // JS Date의 밀리초 절삭 때문에 신규 DB now()가 충돌로 오인되지 않게 원래 정밀도를 유지한다.
+        sql`${schema.cardSmsEvents.updatedAt} = ${event.updatedAtVersion}::timestamptz`,
+        notExists(this.db.select({ id: schema.cardTransactions.id }).from(schema.cardTransactions)
+          .where(eq(schema.cardTransactions.sourceEventId, cardSmsEventId))),
       ))
       .returning({ id: schema.cardSmsEvents.id });
-    if (repair !== undefined && !updated) throw new Error('repair_snapshot_changed_before_write');
+    if (!updated) {
+      if (repair !== undefined) throw new Error('repair_snapshot_changed_before_write');
+      return { cardSmsEventId, skipped: true };
+    }
 
     // 로그는 식별자/상태/발급사/신뢰도만(원문·금액·가맹점 등 PII 미기록, 스펙 §1.1/§6).
     this.logger.info(

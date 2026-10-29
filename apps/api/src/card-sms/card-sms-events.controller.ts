@@ -13,6 +13,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseUUIDPipe,
   Post,
   Query,
   UseGuards,
@@ -27,6 +28,8 @@ import {
   type CardSmsEventDetail,
   type CardSmsEventSummary,
   type CardSmsReviewResponse,
+  type CardSmsReviewGroupsResponse,
+  type CardSmsReviewPolicy,
 } from '@family/contracts';
 
 import {
@@ -116,6 +119,19 @@ export class CardSmsEventsController {
     @Body() body: CardSmsDeclineDismissDto,
   ): Promise<CardSmsDeclineDismissResponse> {
     return this.queryService.setDeclineDismissed(user.userId, body, false);
+  }
+
+  /** GET /v1/card-sms-events/review-groups — 본인 문자 검토 묶음(원문 제외). */
+  @Get('review-groups')
+  reviewGroups(@CurrentUser() user: AuthenticatedUser, @Query('householdId', new ParseUUIDPipe()) householdId: string): Promise<CardSmsReviewGroupsResponse> {
+    return this.queryService.reviewGroups(user.userId, householdId);
+  }
+
+  /** POST /v1/card-sms-events/review-policies/:id/disable — 본인 자동 정리 중지. */
+  @Post('review-policies/:id/disable')
+  @HttpCode(HttpStatus.OK)
+  disableReviewPolicy(@CurrentUser() user: AuthenticatedUser, @Param('id', new ParseUUIDPipe()) id: string, @Query('householdId', new ParseUUIDPipe()) householdId: string): Promise<CardSmsReviewPolicy> {
+    return this.queryService.disableReviewPolicy(user.userId, householdId, id);
   }
 
   /** GET /v1/card-sms-events/:id — full event detail (includes raw content). */

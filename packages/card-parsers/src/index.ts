@@ -5,6 +5,8 @@ export type {
   CardSmsParser,
 } from './types.js';
 export { ACTION_GATE_WARNING_PREFIX, parseCardSms } from './dispatch.js';
+export { automaticApprovalRejection, hasSuspiciousSmsContent, scopedTemplateFingerprint } from './automation.js';
+export type { AutomaticApprovalRejection } from './automation.js';
 export type { ParseCardSmsOptions } from './dispatch.js';
 export { BaseCardParser } from './parsers/base.parser.js';
 export { ShinhanCardParser } from './parsers/shinhan.parser.js';

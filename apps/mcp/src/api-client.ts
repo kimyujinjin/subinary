@@ -23,6 +23,8 @@ import {
   transactionListResponseSchema,
   transactionSummarySchema,
   financeQualitySchema,
+  cardSmsReviewGroupsResponseSchema,
+  type CardSmsReviewGroupsResponse,
   recurringSeriesListResponseSchema,
   recurringUpcomingResponseSchema,
   type RecategorizeRequest,
@@ -442,6 +444,11 @@ export class FamilyApiClient {
   /** 선택월의 예산·사용액을 조회한다. 모델 API를 호출하지 않는다. */
   async budgets(householdId: string, month?: string): Promise<BudgetListResponse> {
     return budgetListResponseSchema.parse(await this.authedFetch<unknown>('/v1/budgets', { query: { householdId, month } }));
+  }
+
+  /** 본인 문자 검토 묶음을 읽는다. 원문·추출값·쓰기 권한은 제공하지 않는다. */
+  async smsReviewGroups(householdId: string): Promise<CardSmsReviewGroupsResponse> {
+    return cardSmsReviewGroupsResponseSchema.parse(await this.authedFetch<unknown>('/v1/card-sms-events/review-groups', { query: { householdId } }));
   }
 
   /** 선택월의 카테고리별 순지출을 조회한다. */

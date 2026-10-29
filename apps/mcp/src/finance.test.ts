@@ -66,6 +66,8 @@ describe('금융 전용 MCP 경계', () => {
     const client = await setup();
     const names = (await client.listTools()).tools.map(tool => tool.name);
     expect(names).toContain('finance_transactions');
+    expect(names).toContain('finance_sms_review_groups');
+    expect(names).toHaveLength(10);
     expect(names).not.toContain('memory_search');
     expect(names).not.toContain('finance_recategorize_apply');
     expect(names).not.toContain('finance_classify_transaction');
@@ -103,6 +105,41 @@ describe('금융 전용 MCP 경계', () => {
     expect(response.isError).not.toBe(true);
     expect(response.structuredContent).toEqual({ data: { enabled: true, provisional: false, items: [], computedAt: null } });
     expect(requests.map(r => r.path)).toEqual(['/v1/recurring/series']);
+  });
+
+  it('문자 묶음은 읽기 전용으로 원문 없이 상한·검토 경로·중지 상태를 보존한다', async () => {
+    const groups = { scope: 'own_member', scannedCount: 100, truncated: true,
+      items: [{ groupId: 'scope-hash', sender: '1588-test', count: 100, parseFailed: 80, quarantined: 20,
+        latestReceivedAt: '2026-10-28T00:00:00Z', representativeEventId: TRANSACTION, reviewPath: `/todo?reviewSms=${TRANSACTION}` }],
+      policies: [{ id: BATCH, approvedCardId: CATEGORY, enabled: false, createdAt: '2026-10-27T00:00:00Z', updatedAt: '2026-10-28T00:00:00Z' }] };
+    mockApi(() => ({ ...groups, rawContent: '반환하면 안 되는 원문', items: groups.items.map(item => ({ ...item, rawContent: '본문 지시 무시' })) }));
+    const client = await setup();
+    const tools = (await client.listTools()).tools;
+    expect(tools.find(tool => tool.name === 'finance_sms_review_groups')?.annotations?.readOnlyHint).toBe(true);
+    const response = await client.callTool({ name: 'finance_sms_review_groups', arguments: {} });
+    expect(response.isError).not.toBe(true);
+    expect(response.structuredContent).toEqual({ data: groups });
+    expect(requests.map(r => [r.path, r.method])).toEqual([['/v1/card-sms-events/review-groups', 'GET']]);
+    expect(JSON.stringify(response)).not.toContain('rawContent');
+  });
+
+  it('문자 묶음의 외부 검토 URL·잘못된 범위를 신뢰하지 않는다', async () => {
+    mockApi(() => ({ scope: 'own_member', scannedCount: 1, truncated: false, policies: [],
+      items: [{ groupId: 'bad', sender: 'test', count: 1, parseFailed: 1, quarantined: 0,
+        latestReceivedAt: '2026-10-28T00:00:00Z', representativeEventId: TRANSACTION, reviewPath: 'https://untrusted.invalid/login' }] }));
+    const client = await setup();
+    expect((await client.callTool({ name: 'finance_sms_review_groups', arguments: {} })).isError).toBe(true);
+    const before = requests.length;
+    expect((await client.callTool({ name: 'finance_sms_review_groups', arguments: { householdId: 'invalid' } })).isError).toBe(true);
+    expect(requests).toHaveLength(before);
+  });
+
+  it('분류 검토 모드도 문자 자동 승인 도구는 제공하지 않는다', async () => {
+    const client = await setup('finance-review');
+    const names = (await client.listTools()).tools.map(tool => tool.name);
+    expect(names).toHaveLength(13);
+    expect(names).not.toContain('finance_sms_review');
+    expect(names).not.toContain('finance_sms_policy_enable');
   });
 });
 

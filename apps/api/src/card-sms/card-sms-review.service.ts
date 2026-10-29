@@ -6,7 +6,7 @@
  *
  * 1. **거래 승격** — 확정된 값으로 `card_transactions`를 만든다(declined 제외).
  * 2. **학습 라벨 생산** — `feedback_events(source:'human_confirmed')`에 템플릿 지문과
- *    함께 기록한다. 이것이 S4 추출 레시피의 씨앗이자 플라이휠의 입력이다.
+ *    함께 기록한다. 같은 양식 재사용은 별도 선택한 경우에만 본인 범위에 저장한다.
  *
  * 승격은 워커(TransactionPromotionService)가 아니라 여기서 **동기 직접 삽입**한다 —
  * 워커를 태우면 재파싱이 사람의 교정을 덮어쓴다. 수동 입력(manual-fields)과 같은 방식이다.
@@ -24,19 +24,20 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
-  deriveRecipe,
+  scopedTemplateFingerprint,
   templateFingerprint,
   templateSkeleton,
 } from '@family/card-parsers';
 import type { CardSmsReviewRequest, CardSmsReviewResponse } from '@family/contracts';
-import { schema, type Db } from '@family/database';
+import { schema, type Db, type DbExecutor } from '@family/database';
 import { normalizeMerchant } from '@family/shared';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 
 import { DB } from '../database/database.constants';
 import { moneyRejectionToHttp } from '../money/money-rejection';
 import { MoneyShadowService } from '../money/money-shadow.service';
 import { MoneyWriteService } from '../money/money-write.service';
+import { reusableReviewRecipe } from './card-sms-review-policy';
 
 /** 검토 확정이 가능한 상태 — 둘 다 아직 거래로 승격되지 않았다. */
 const REVIEWABLE_STATUSES = ['quarantined', 'parse_failed'] as const;
@@ -64,48 +65,55 @@ export class CardSmsReviewService {
     cardSmsEventId: string,
     input: CardSmsReviewRequest,
   ): Promise<CardSmsReviewResponse> {
-    const [event] = await this.db
-      .select()
-      .from(schema.cardSmsEvents)
-      .where(eq(schema.cardSmsEvents.id, cardSmsEventId))
-      .limit(1);
-    if (!event) {
-      throw new NotFoundException('card-sms event not found');
-    }
-    await this.requireMembership(event.householdId, userId);
-
-    if (!REVIEWABLE_STATUSES.includes(event.parseStatus as (typeof REVIEWABLE_STATUSES)[number])) {
-      throw new ConflictException(
-        `card-sms event is not reviewable (parseStatus=${event.parseStatus})`,
-      );
-    }
-
-    const declined = input.transactionType === 'declined';
-    const currency = input.currency.toUpperCase();
-    // 거래를 만들 건이면 금액·시각·가맹점이 모두 있어야 한다. declined는 기록만 남긴다.
-    if (!declined) {
-      if (input.amount === undefined || input.amount <= 0) {
-        throw new BadRequestException('amount is required for a non-declined review');
-      }
-      if (input.occurredAt === undefined) {
-        throw new BadRequestException('occurredAt is required for a non-declined review');
-      }
-      if (input.merchantRaw === undefined) {
-        throw new BadRequestException('merchantRaw is required for a non-declined review');
-      }
-    }
-
-    const occurredAt = input.occurredAt ? new Date(input.occurredAt) : null;
-    const now = new Date();
-    // 지문은 라벨의 핵심 키다 — 같은 레이아웃의 다음 문자가 이 확정을 재사용한다(S4).
-    const fingerprint = templateFingerprint(event.sender, event.rawContent);
-
     const response = await this.db.transaction(async (tx): Promise<CardSmsReviewResponse> => {
+      const [event] = await tx
+        .select()
+        .from(schema.cardSmsEvents)
+        .where(eq(schema.cardSmsEvents.id, cardSmsEventId))
+        .limit(1)
+        .for('update');
+      if (!event) {
+        throw new NotFoundException('card-sms event not found');
+      }
+      const actorMemberId = await this.requireMembership(tx, event.householdId, userId);
+      if (event.memberId !== actorMemberId) {
+        throw new ForbiddenException('본인에게 수신된 문자만 확정할 수 있습니다.');
+      }
+
+      if (!REVIEWABLE_STATUSES.includes(event.parseStatus as (typeof REVIEWABLE_STATUSES)[number])) {
+        throw new ConflictException(
+          `card-sms event is not reviewable (parseStatus=${event.parseStatus})`,
+        );
+      }
+      const [existingTransaction] = await tx.select({ id: schema.cardTransactions.id }).from(schema.cardTransactions)
+        .where(eq(schema.cardTransactions.sourceEventId, cardSmsEventId)).limit(1);
+      if (existingTransaction) throw new ConflictException('이미 거래에 반영된 문자입니다. 거래에서 확인해 주세요.');
+
+      const declined = input.transactionType === 'declined';
+      const currency = (input.currency ?? 'KRW').toUpperCase();
+      // 거래를 만들 건이면 금액·시각·가맹점이 모두 있어야 한다. declined는 기록만 남긴다.
+      if (!declined) {
+        if (input.amount === undefined || input.amount <= 0) {
+          throw new BadRequestException('amount is required for a non-declined review');
+        }
+        if (input.occurredAt === undefined) {
+          throw new BadRequestException('occurredAt is required for a non-declined review');
+        }
+        if (input.merchantRaw === undefined) {
+          throw new BadRequestException('merchantRaw is required for a non-declined review');
+        }
+      }
+
+      const occurredAt = input.occurredAt ? new Date(input.occurredAt) : null;
+      const now = new Date();
+      // 지문은 라벨의 핵심 키다 — 같은 레이아웃의 다음 문자가 이 확정을 재사용한다(S4).
+      const fingerprint = templateFingerprint(event.sender, event.rawContent);
+
       // 카드가 지정되면 소유·활성 검증 후 visibility 상속(없으면 household).
       let visibility: schema.CardTransaction['visibility'] = 'household';
       if (input.cardId) {
         const [card] = await tx
-          .select({ visibility: schema.paymentCards.visibility })
+          .select({ visibility: schema.paymentCards.visibility, ownerMemberId: schema.paymentCards.ownerMemberId, isShared: schema.paymentCards.isShared })
           .from(schema.paymentCards)
           .where(
             and(
@@ -114,9 +122,10 @@ export class CardSmsReviewService {
               eq(schema.paymentCards.status, 'active'),
             ),
           )
-          .limit(1);
-        if (!card) {
-          throw new BadRequestException('card not found in household');
+          .limit(1)
+          .for('share');
+        if (!card || (!card.isShared && card.ownerMemberId !== actorMemberId)) {
+          throw new BadRequestException('본인 소유 또는 공용인 활성 카드를 선택해 주세요.');
         }
         visibility = card.visibility;
       }
@@ -153,6 +162,8 @@ export class CardSmsReviewService {
           fingerprint,
           sender: event.sender,
           transactionType: input.transactionType,
+          reuseForSimilar: input.reuseForSimilar === true,
+          approvedCardId: input.reuseForSimilar === true ? input.cardId ?? null : null,
           amount: input.amount ?? null,
           currency: input.amount !== undefined ? currency : null,
           merchantRaw: input.merchantRaw ?? null,
@@ -173,48 +184,30 @@ export class CardSmsReviewService {
         occurredAt: now,
       });
 
-      // ②-b 추출 레시피 유도(ADR-0023 S4). 이 확정 한 건으로 같은 레이아웃의 다음
-      //     문자는 LLM 없이 결정적으로 추출된다. 실패(필드 0개)면 저장하지 않는다.
-      const recipe = deriveRecipe(
-        {
+      // 재사용은 별도 동의가 있을 때만 저장한다. 단건 확인은 기존 규칙을 바꾸지 않는다.
+      if (input.reuseForSimilar === true) {
+        const activeCards = await tx.select({
+          id: schema.paymentCards.id, maskedNumber: schema.paymentCards.maskedNumber,
+          issuer: schema.paymentCards.issuer, visibility: schema.paymentCards.visibility,
+          ownerMemberId: schema.paymentCards.ownerMemberId, isShared: schema.paymentCards.isShared,
+        }).from(schema.paymentCards).where(and(
+          eq(schema.paymentCards.householdId, event.householdId), eq(schema.paymentCards.status, 'active'),
+        ));
+        const recipe = reusableReviewRecipe(event, input, actorMemberId, activeCards);
+        const approvedRecipe = { ...recipe, approvedCardId: input.cardId, automationEnabled: true,
+          householdId: event.householdId, memberId: actorMemberId };
+        const scopedFingerprint = scopedTemplateFingerprint(event.householdId, actorMemberId, event.sender, event.rawContent);
+        await tx.insert(schema.cardSmsTemplates).values({
+          fingerprint: scopedFingerprint,
           sender: event.sender,
-          content: event.rawContent,
-          receivedAt: event.receivedAt,
-        },
-        {
-          transactionType: input.transactionType,
-          issuer: input.issuer ?? event.issuer,
-          ...(input.amount !== undefined ? { amount: input.amount, currency } : {}),
-          ...(input.merchantRaw !== undefined ? { merchantRaw: input.merchantRaw } : {}),
-          ...(occurredAt !== null ? { occurredAt } : {}),
-          ...(input.installmentMonths !== undefined
-            ? { installmentMonths: input.installmentMonths }
-            : {}),
-        },
-        fingerprint,
-      );
-      if (Object.keys(recipe.fields).length > 0) {
-        // 최신 확정이 이긴다 — 카드사가 문구를 바꾸면 지문도 바뀌므로 같은 지문의
-        // 재확정은 "더 정확한 라벨"로 보는 것이 맞다.
-        await tx
-          .insert(schema.cardSmsTemplates)
-          .values({
-            fingerprint,
-            sender: event.sender,
-            skeleton: templateSkeleton(event.rawContent),
-            recipe: recipe as unknown as Record<string, unknown>,
-            sourceEventId: cardSmsEventId,
-            confirmedBy: userId,
-          })
-          .onConflictDoUpdate({
-            target: schema.cardSmsTemplates.fingerprint,
-            set: {
-              recipe: recipe as unknown as Record<string, unknown>,
-              sourceEventId: cardSmsEventId,
-              confirmedBy: userId,
-              updatedAt: now,
-            },
-          });
+          skeleton: templateSkeleton(event.rawContent),
+          recipe: approvedRecipe,
+          sourceEventId: cardSmsEventId,
+          confirmedBy: userId,
+        }).onConflictDoUpdate({
+          target: schema.cardSmsTemplates.fingerprint,
+          set: { recipe: approvedRecipe, sourceEventId: cardSmsEventId, confirmedBy: userId, updatedAt: now },
+        });
       }
 
       // 거절은 실제 체결이 아니므로 거래를 만들지 않는다. (스키마도
@@ -309,20 +302,26 @@ export class CardSmsReviewService {
   }
 
   /** 비회원에게는 가구 존재 여부를 드러내지 않는 403을 준다(PRD §26). */
-  private async requireMembership(householdId: string, userId: string): Promise<void> {
-    const [member] = await this.db
+  private async requireMembership(tx: DbExecutor, householdId: string, userId: string): Promise<string> {
+    const [member] = await tx
       .select({ id: schema.householdMembers.id })
       .from(schema.householdMembers)
+      .innerJoin(schema.users, eq(schema.householdMembers.userId, schema.users.id))
+      .innerJoin(schema.households, eq(schema.householdMembers.householdId, schema.households.id))
       .where(
         and(
           eq(schema.householdMembers.householdId, householdId),
           eq(schema.householdMembers.userId, userId),
           eq(schema.householdMembers.status, 'active'),
+          isNull(schema.users.deletedAt),
+          isNull(schema.households.deletedAt),
         ),
       )
-      .limit(1);
+      .limit(1)
+      .for('share');
     if (!member) {
       throw new ForbiddenException('not a household member');
     }
+    return member.id;
   }
 }

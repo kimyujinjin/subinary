@@ -55,6 +55,12 @@ export function registerFinanceReview(server: McpServer, client: FamilyApiClient
     inputSchema: { householdId }, annotations: readAnnotations,
   }, ({ householdId: requested }) => safely(async () => client.financeQuality(await client.resolveHouseholdId(requested))));
 
+  server.registerTool('finance_sms_review_groups', {
+    title: '확인이 필요한 문자 묶음',
+    description: '본인에게 수신된 파싱 실패·격리 문자를 같은 양식으로 묶어 건수와 가계부 웹 검토 경로를 조회합니다. 원문은 반환하지 않습니다. truncated이면 전체 건수로 단정하지 마세요. 대표 문자와 같은 양식도 각각 검증하며, 이 도구는 확정·재사용 동의를 수행하지 않습니다.',
+    inputSchema: { householdId }, annotations: readAnnotations,
+  }, ({ householdId: requested }) => safely(async () => client.smsReviewGroups(await client.resolveHouseholdId(requested))));
+
   server.registerTool('finance_recurring', {
     title: '정기지출 후보와 확정 내역',
     description: '정기지출 탐지 결과와 마지막 계산 시각을 조회합니다. computedAt이 없으면 미계산이며, 후보는 확정된 구독이 아닙니다. 사용자 판단이나 해지 상태를 변경하지 않습니다.',

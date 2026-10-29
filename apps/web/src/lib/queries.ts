@@ -20,6 +20,8 @@ import type {
   CardSmsDeclineDismissResponse,
   CardSmsDeclineListResponse,
   CardSmsEventSummary,
+  CardSmsReviewGroupsResponse,
+  CardSmsReviewPolicy,
   CardBreakdown,
   CardSummary,
   CategoryBreakdown,
@@ -385,6 +387,33 @@ export function useCardSmsReviewInbox(
           { accessToken: token },
         ),
       ),
+  });
+}
+
+/** 본인 문자만 양식별로 모은다. 확정 후 기존 문자 캐시와 함께 갱신한다. */
+export function useCardSmsReviewGroups(): UseQueryResult<CardSmsReviewGroupsResponse> {
+  const { householdId, authedFetch, enabled } = useHouseholdScope();
+  return useQuery({
+    queryKey: ["card-sms-events", householdId, "review-groups"],
+    enabled,
+    // 자동 정리 중인 미처리 문자가 있을 때만 화면을 따라 갱신한다.
+    refetchInterval: (query) => query.state.data?.scannedCount && query.state.data.policies.some((policy) => policy.enabled) ? 30_000 : false,
+    queryFn: () => authedFetch((token) => apiFetch<CardSmsReviewGroupsResponse>(
+      `/v1/card-sms-events/review-groups?householdId=${encodeURIComponent(householdId as string)}`, { accessToken: token },
+    )),
+  });
+}
+
+/** 본인 자동 정리 설정을 중지하고 묶음·설정 목록을 다시 읽는다. */
+export function useDisableSmsReviewPolicy(): UseMutationResult<CardSmsReviewPolicy, Error, string> {
+  const { householdId, authedFetch } = useHouseholdScope();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => authedFetch((token) => apiFetch<CardSmsReviewPolicy>(
+      `/v1/card-sms-events/review-policies/${encodeURIComponent(id)}/disable?householdId=${encodeURIComponent(householdId as string)}`,
+      { accessToken: token, method: "POST" },
+    )),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["card-sms-events"] }); },
   });
 }
 

@@ -25,7 +25,7 @@
  * ------------------------------------------------------------------------- */
 import { AlertTriangle, CheckCircle2, CircleAlert, MailWarning } from "lucide-react";
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import type { CardSmsEventSummary, TransactionSummary } from "@family/contracts";
 
@@ -41,25 +41,34 @@ import {
   pendingCountText,
   useTodoCounts,
 } from "@/components/widgets";
+import { useCardList, useCardSmsReviewGroups, useDisableSmsReviewPolicy } from "@/lib/queries";
+import { Button } from "@/components/ui/button";
 import { transactionDetailHref } from "@/lib/deep-link";
 import { formatDate, formatMoney, formatRelativeTime, formatWon } from "@/lib/format";
 
 export default function TodoPage() {
-  // 폴링하지 않는다 — 여기는 "보는" 화면이 아니라 "처리하는" 화면이고, 확정·제외
-  // 뮤테이션이 캐시를 무효화하므로 목록은 처리 직후 스스로 갱신된다. 포커스 리페치가
-  // 백그라운드에서 온 새 문자를 마저 채운다.
+  // 확정·제외 직후 캐시를 갱신하고, 문자 자동 정리가 대기 중이면 해당 묶음만 다시 읽는다.
   const todo = useTodoCounts();
   // 문자는 요약에 원문이 없어 상세를 따로 받아야 한다 → 고른 **한 건만** 넘긴다.
-  const [selectedSms, setSelectedSms] = useState<CardSmsEventSummary | null>(
-    null,
-  );
+  const [selectedSms, setSelectedSms] = useState<string | null>(null);
+  const smsGroups = useCardSmsReviewGroups();
+  const cardQuery = useCardList();
+  const stopPolicy = useDisableSmsReviewPolicy();
+  const policies = smsGroups.data?.policies ?? [];
+  const groups = smsGroups.data?.items ?? [];
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("reviewSms");
+    if (requested && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requested)) {
+      setSelectedSms(requested);
+    }
+  }, []);
 
   const loading =
-    todo.declinesLoading || todo.reviewsLoading || todo.smsLoading;
-  const anyError = todo.declinesError || todo.reviewsError || todo.smsError;
+    todo.declinesLoading || todo.reviewsLoading || smsGroups.isLoading;
+  const anyError = todo.declinesError || todo.reviewsError || smsGroups.isError;
   // 빈 상태는 **다 읽어낸 뒤에만** 보여준다. 못 읽은 것을 "할 일 없음"으로 쓰면
   // 사용자는 처리할 게 없다고 믿는다.
-  const showEmpty = !loading && !anyError && todo.total === 0;
+  const showEmpty = !loading && !anyError && todo.declines.length + todo.reviews.length + groups.length === 0;
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-5">
@@ -169,49 +178,56 @@ export default function TodoPage() {
         ))}
       </Section>
 
-      {/* 3) 읽지 못한 문자 — **전 기간**. 홈의 3일 창이 여기서는 적용되지 않는다. */}
+      {/* 본인 문자를 같은 양식으로 묶고 대표 한 건을 검토한다. */}
       <Section
-        show={todo.smsError || todo.sms.length > 0}
+        show={smsGroups.isError || groups.length > 0}
         title="거래 반영 전 문자"
-        description="자동으로 읽지 못했거나 확인을 기다리는 문자예요. 결제 문자라면 원문과 금액을 확인해 주세요."
-        countText={pendingCountText(
-          todo.smsLoading,
-          todo.smsError,
-          todo.sms.length,
-          todo.smsTruncated,
-        )}
-        error={todo.smsError}
-        errorText="문자를 불러오지 못했어요"
-        footer={
-          todo.smsTruncated ? (
-            <p className="text-muted-foreground px-4 py-3 text-xs">
-              한 번에 {todo.sms.length}건까지 보여드려요. 처리하면 그다음 문자가
-              이어서 나타나요.
-            </p>
-          ) : null
-        }
+        description="본인에게 온 문자를 같은 양식으로 모았어요. 대표 한 건을 확인하고, 원하면 같은 양식의 자동 정리도 선택할 수 있어요."
+        countText={pendingCountText(smsGroups.isLoading, smsGroups.isError, smsGroups.data?.scannedCount ?? 0, smsGroups.data?.truncated ?? false)}
+        error={smsGroups.isError}
+        errorText="문자 묶음을 불러오지 못했어요"
+        footer={smsGroups.data?.truncated ? (
+          <p className="text-muted-foreground px-4 py-3 text-xs">
+            최근 미처리 {smsGroups.data.scannedCount}건을 묶었어요. 처리하면 이전 문자가 이어서 나타나요.
+          </p>
+        ) : null}
       >
-        {todo.sms.map((e) => (
+        {groups.map((group) => (
           <ListRow
-            key={e.id}
-            onClick={() => setSelectedSms(e)}
+            key={group.groupId}
+            onClick={() => setSelectedSms(group.representativeEventId)}
             icon={<MailWarning />}
             iconClassName="bg-warning/15 text-warning-strong"
-            title={e.sender}
-            subtitle={smsSubtitle(e)}
-            value={
-              <span className="text-muted-foreground text-[13px]">
-                {formatRelativeTime(e.receivedAt)}
-              </span>
-            }
+            title={`${group.sender} · 같은 양식 ${group.count}건`}
+            subtitle={`읽지 못함 ${group.parseFailed}건 · 확인 대기 ${group.quarantined}건`}
+            value={<span className="text-muted-foreground text-[13px]">{formatRelativeTime(group.latestReceivedAt)}</span>}
             chevron
           />
         ))}
       </Section>
 
+      {policies.length > 0 ? (
+        <section className="space-y-2">
+          <h2 className="px-1 text-[15px] font-semibold">문자 자동 정리 설정</h2>
+          <p className="text-muted-foreground px-1 text-[13px]">허용한 양식은 약 5분 간격으로 확인해요. 중지하면 다음 자동 반영부터 멈추며, 이미 반영한 거래는 그대로 유지돼요.</p>
+          <Card className="divide-y p-3">
+            {policies.map((policy) => (
+              <div key={policy.id} className="flex items-center justify-between gap-3 py-3">
+                <div className="text-sm">
+                  <p>{cardQuery.data?.find((card) => card.id === policy.approvedCardId)?.alias ?? "선택한 카드"} · {policy.enabled ? "자동 정리 중" : "중지됨"}</p>
+                  <p className="text-muted-foreground text-xs">설정 시각 {formatDate(policy.createdAt)}</p>
+                </div>
+                {policy.enabled ? <Button variant="outline" size="sm" disabled={stopPolicy.isPending} onClick={() => stopPolicy.mutate(policy.id)}>자동 정리 중지</Button> : null}
+              </div>
+            ))}
+          </Card>
+          {stopPolicy.isError ? <p role="alert" className="text-destructive text-sm">자동 정리 중지를 확인하지 못했어요. 다시 시도해 주세요.</p> : null}
+        </section>
+      ) : null}
+
       <ReviewInboxDialog
         open={selectedSms != null}
-        events={selectedSms ? [selectedSms] : []}
+        events={selectedSms ? [{ id: selectedSms }] : []}
         onClose={() => setSelectedSms(null)}
         // 확정하면 그 문자는 목록에서 빠진다 — 열려 있는 폼이 이미 처리한 건을
         // 계속 보여주지 않도록 닫는다.

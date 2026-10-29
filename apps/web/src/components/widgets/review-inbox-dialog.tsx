@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/select";
 import { api, apiFetch } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
+import { useCardList, useHouseholdMembers } from "@/lib/queries";
 import { formatDate } from "@/lib/format";
 import { smsReviewAmountInput, smsReviewAmountMinorUnits } from "@/lib/sms-review-amount";
 
@@ -57,7 +58,7 @@ export function ReviewInboxDialog({
    * 이 목록의 **모든** 건에 대해 상세를 한 번에 받는다(원문이 요약에 없다). 그래서
    * 길게 넘기지 않는다 — 홈은 최근 3일, `/todo`는 사용자가 고른 한 건만 넘긴다.
    */
-  events: CardSmsEventSummary[];
+  events: Pick<CardSmsEventSummary, "id">[];
   onClose: () => void;
   /** 한 건을 확정한 뒤 호출(단건으로 열었을 때 다이얼로그를 닫는 용도). */
   onReviewed?: () => void;
@@ -86,8 +87,8 @@ export function ReviewInboxDialog({
         <DialogHeader>
           <DialogTitle>확인이 필요한 문자</DialogTitle>
           <DialogDescription>
-            아직 거래에 반영하지 않은 문자예요. 결제 문자라면 금액·가맹점·일시를
-            확인한 뒤 등록해 주세요.
+            문자 상태를 먼저 확인해 주세요. 등록이 필요한 결제 문자라면
+            금액·가맹점·일시를 확인한 뒤 등록할 수 있어요.
           </DialogDescription>
         </DialogHeader>
         {detailsQuery.isLoading ? (
@@ -111,8 +112,13 @@ export function ReviewInboxDialog({
                 <p className="text-muted-foreground text-sm">거래 금액에 반영하지 않았어요. 원문은 보관돼 있어요.</p>
                 <p className="text-sm break-words whitespace-pre-wrap">{d.rawContent}</p>
               </div>
-            ) : (
+            ) : d.parseStatus === "parse_failed" || d.parseStatus === "quarantined" ? (
               <ReviewEventCard key={d.id} detail={d} onReviewed={onReviewed} />
+            ) : (
+              <div key={d.id} className="bg-muted space-y-2 rounded-lg p-3">
+                <p className="text-sm font-medium">이 문자는 현재 확정 대기 상태가 아니에요</p>
+                <p className="text-muted-foreground text-sm">이미 처리됐거나 처리 중일 수 있어요. 거래 목록에서 결과를 확인해 주세요.</p>
+              </div>
             ))}
           </div>
         )}
@@ -143,7 +149,13 @@ function ReviewEventCard({
   detail: CardSmsEventDetail;
   onReviewed?: () => void;
 }) {
-  const { authedFetch } = useAuth();
+  const { authedFetch, user } = useAuth();
+  const cardQuery = useCardList();
+  const membersQuery = useHouseholdMembers();
+  const actorMemberId = membersQuery.data?.find((member) => member.userId === user?.id)?.memberId;
+  const cards = (cardQuery.data ?? []).filter((card) => card.status === "active" && (card.isShared || card.ownerMemberId === actorMemberId));
+  const [cardId, setCardId] = useState<string>("");
+  const [reuseForSimilar, setReuseForSimilar] = useState(false);
   const queryClient = useQueryClient();
   const inputId = useId();
   const currency = detail.currency ?? "KRW";
@@ -159,23 +171,29 @@ function ReviewEventCard({
     smsReviewAmountInput(detail.amount, currency),
   );
   const [merchant, setMerchant] = useState(detail.merchantRaw ?? "");
+  const [installment, setInstallment] = useState(detail.installmentMonths && detail.installmentMonths > 1 ? detail.installmentMonths.toString() : "");
   const [occurredAt, setOccurredAt] = useState(
     toLocalInputValue(detail.occurredAt),
   );
 
   const declined = transactionType === "declined";
+  const canReuse = transactionType === "approval" && currency === "KRW" && cards.some((card) => card.id === cardId);
+  const requestedReuse = reuseForSimilar && canReuse;
   const parsedAmount = smsReviewAmountMinorUnits(amount, currency);
+  const installmentMonths = installment.trim() === "" ? 1 : Number(installment);
+  const validInstallment = Number.isInteger(installmentMonths) && installmentMonths >= 1 && installmentMonths <= 60;
   const validOccurredAt = occurredAt !== "" && !Number.isNaN(new Date(occurredAt).getTime());
   const canSubmit =
     declined ||
     (parsedAmount !== null &&
       merchant.trim().length > 0 &&
+      validInstallment &&
       validOccurredAt);
 
   const reviewMutation = useMutation({
     mutationFn: () => {
-      if (!declined && (parsedAmount === null || !validOccurredAt || merchant.trim() === "")) {
-        throw new Error("결제 금액·가맹점·일시를 확인해 주세요.");
+      if (!declined && (parsedAmount === null || !validOccurredAt || merchant.trim() === "" || !validInstallment)) {
+        throw new Error("결제 금액·가맹점·일시·할부 개월을 확인해 주세요.");
       }
       if (declined) {
         return authedFetch((token) => api.cardSms.review(token, detail.id, { transactionType, currency }));
@@ -187,10 +205,13 @@ function ReviewEventCard({
         amount: parsedAmount,
         merchantRaw: merchant.trim(),
         occurredAt: new Date(occurredAt).toISOString(),
+        installmentMonths,
+        ...(cardId ? { cardId, issuer: cards.find((card) => card.id === cardId)?.issuer } : {}),
+        reuseForSimilar: requestedReuse,
       }));
     },
     onSuccess: () => {
-      toast.success(declined ? "거절 건으로 정리했어요" : "거래로 등록했어요");
+      toast.success(declined ? "거절 건으로 정리했어요" : requestedReuse ? "대표 거래와 같은 양식의 자동 정리 설정을 저장했어요" : "현재 거래 한 건을 등록했어요");
       // 검토 목록·거래·집계가 함께 바뀐다.
       void queryClient.invalidateQueries({ queryKey: ["card-sms-events"] });
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
@@ -281,8 +302,40 @@ function ReviewEventCard({
                 결제 일시를 읽지 못했어요. 문자 수신 시각({formatDate(detail.receivedAt)})과 다를 수 있으니 원문을 확인해 주세요.
               </p>
             ) : null}
+            <Label htmlFor={`${inputId}-installment`}>할부 개월 (일시불은 비워 두세요)</Label>
+            <Input
+              id={`${inputId}-installment`}
+              className="h-11"
+              inputMode="numeric"
+              value={installment}
+              placeholder="일시불"
+              aria-invalid={!validInstallment}
+              onChange={(event) => setInstallment(event.target.value)}
+            />
+            {!validInstallment ? <p className="text-destructive text-xs" role="alert">할부는 1~60개월로 입력해 주세요.</p> : null}
           </>
         )}
+
+        {!declined ? (
+          <>
+            <Label htmlFor={`${inputId}-card`}>사용한 카드</Label>
+            <Select value={cardId || "none"} onValueChange={(value) => { setCardId(value === "none" ? "" : value); setReuseForSimilar(false); }}>
+              <SelectTrigger id={`${inputId}-card`} className="h-11"><SelectValue placeholder="카드 선택" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">지정하지 않음 · 현재 한 건만</SelectItem>
+                {cards.map((card) => <SelectItem key={card.id} value={card.id}>{card.alias} {card.maskedNumber ?? ""}{card.isShared ? " · 공용" : ""}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {cardQuery.isError || membersQuery.isError ? <p className="text-destructive text-xs">카드 소유 정보를 확인하지 못했어요. 자동 정리는 선택할 수 없어요.</p> : null}
+            <label className="flex items-start gap-2 text-sm" htmlFor={`${inputId}-reuse`}>
+              <input id={`${inputId}-reuse`} type="checkbox" className="mt-1" checked={requestedReuse} disabled={!canReuse || cardQuery.isError || membersQuery.isError} onChange={(event) => setReuseForSimilar(event.target.checked)} />
+              <span>같은 양식의 대기 문자와 앞으로 수신할 문자를 자동 정리</span>
+            </label>
+            <p className="text-muted-foreground text-xs">
+              본인에게 온 문자와 선택한 카드의 원화 승인에만 적용해요. 각 문자의 금액·시각을 따로 검증하며, 애매한 문자는 계속 확인을 기다려요. 선택하지 않으면 현재 한 건만 처리하고 기존 자동 정리 설정은 유지해요.
+            </p>
+          </>
+        ) : null}
 
         <Button
           size="sm"
@@ -290,7 +343,7 @@ function ReviewEventCard({
           disabled={!canSubmit || reviewMutation.isPending}
           onClick={() => reviewMutation.mutate()}
         >
-          {reviewMutation.isPending ? "확정하는 중…" : "확정하기"}
+          {reviewMutation.isPending ? "확정하는 중…" : requestedReuse ? "현재 한 건 확정하고 자동 정리 설정" : "현재 한 건만 확정"}
         </Button>
       </div>
     </div>

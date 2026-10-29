@@ -136,7 +136,7 @@ describe('원격 금융 MCP HTTP 인증 통합', () => {
     expect(initialize.status).toBe(200);
     const list = await mcp(token.access_token, 'tools/list');
     const listed = await list.json() as { result: { tools: Array<{ name: string }> } };
-    expect(listed.result.tools).toHaveLength(9);
+    expect(listed.result.tools).toHaveLength(10);
     expect(listed.result.tools.some((tool) => /apply|revert|classify|memory/.test(tool.name))).toBe(false);
     const quality = await mcp(token.access_token, 'tools/call', { name: 'finance_quality', arguments: {} });
     const result = await quality.text();

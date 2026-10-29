@@ -78,7 +78,7 @@ afterEach(async () => {
 });
 
 describe('금융 원격 MCP 전송', () => {
-  it('실제 HTTP로 초기화·9개 조회 도구 발견·품질 조회가 되고 세션 ID는 만들지 않는다', async () => {
+  it('실제 HTTP로 초기화·10개 조회 도구 발견·품질 조회가 되고 세션 ID는 만들지 않는다', async () => {
     const paths: string[] = [];
     const apiUrl = await listen((req, res) => {
       paths.push(req.url ?? '');
@@ -91,7 +91,7 @@ describe('금융 원격 MCP 전송', () => {
     expect(transport.sessionId).toBeUndefined();
     expect(client.getServerVersion()?.name).toBe('family-finance');
     const tools = (await client.listTools()).tools;
-    expect(tools).toHaveLength(9);
+    expect(tools).toHaveLength(10);
     expect(tools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
     expect(tools.some((tool) => /memory|classify|apply|revert/.test(tool.name))).toBe(false);
     const response = await client.callTool({ name: 'finance_quality', arguments: {} });
