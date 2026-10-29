@@ -80,7 +80,7 @@ export class RecategorizeController {
     return this.service.deleteRule(user.userId, id);
   }
 
-  /** POST /v1/transactions/recategorize — 일괄 적용. */
+  /** POST /v1/transactions/recategorize — 과거 거래 분류만 적용하고 향후 규칙·학습 라벨은 유지한다. */
   @Post()
   apply(
     @CurrentUser() user: AuthenticatedUser,
