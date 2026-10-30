@@ -4,9 +4,10 @@ import type { AppConfig } from '@family/config';
 import { createLogger, toSeoulString } from '@family/shared';
 
 /**
- * 외화 → KRW 환율 조회 서비스.
+ * legacy/shadow 모드의 외화 → KRW 환율 조회 서비스.
  *
- * 외화 카드 거래를 승격할 때 승인 시점 환율로 KRW 환산액을 계산한다(원화 지출/예산/
+ * v2는 MoneyWriteService의 거래일 스냅샷을 사용하며 이 클라이언트를 호출하지 않는다.
+ * 이전 모드에서 외화 카드 거래를 승격할 때 KRW 환산액을 계산한다(원화 지출/예산/
  * 집계에 통합하기 위함). 조회는 무료 공개 API(open.er-api.com, 키 불필요)를 쓰고,
  * Asia/Seoul 날짜 단위로 인메모리 캐시한다(하루 1회 조회). API 장애·미지원 통화는
  * 내장 폴백 환율로 대체해 파싱/승격이 절대 막히지 않게 한다.

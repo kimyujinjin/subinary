@@ -55,6 +55,29 @@ export type {
   FxSnapshotResolver,
 } from './fx-snapshot-store.js';
 
+export { EcbHistoricalFxProvider } from './historical-fx-provider.js';
+export { LegacyTransactionMoneyService } from './legacy-money.service.js';
+export type {
+  LegacyMoneyRejection,
+  LegacyMoneyResult,
+  LegacyConvertedMoney,
+  LegacyCreateApprovalCommand,
+  LegacyCreateReviewedCommand,
+  LegacyCreateCancellationCommand,
+  LegacyCancellationOutcome,
+} from './legacy-money.service.js';
+export type {
+  HistoricalFxProvider,
+  HistoricalFxResult,
+  HistoricalFxUnavailableReason,
+} from './historical-fx-provider.js';
+export { AcquiringFxSnapshotResolver } from './acquiring-fx-snapshot-resolver.js';
+export type {
+  FxSnapshotWritableStore,
+  FxSnapshotUnavailableNotice,
+  AcquiringFxSnapshotResolverOptions,
+} from './acquiring-fx-snapshot-resolver.js';
+
 export {
   MONEY_ROW_COLUMNS,
   TransactionMoneyService,

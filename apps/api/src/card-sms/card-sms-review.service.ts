@@ -8,7 +8,7 @@
  * 2. **학습 라벨 생산** — `feedback_events(source:'human_confirmed')`에 템플릿 지문과
  *    함께 기록한다. 같은 양식 재사용은 별도 선택한 경우에만 본인 범위에 저장한다.
  *
- * 승격은 워커(TransactionPromotionService)가 아니라 여기서 **동기 직접 삽입**한다 —
+ * 승격은 워커(TransactionPromotionService)가 아니라 공통 금액 명령을 **동기 호출**한다 —
  * 워커를 태우면 재파싱이 사람의 교정을 덮어쓴다. 수동 입력(manual-fields)과 같은 방식이다.
  *
  * 대상 상태를 `quarantined`·`parse_failed`로 제한하는 이유: 둘 다 **승격되지 않은**
@@ -265,32 +265,22 @@ export class CardSmsReviewService {
         }
         transactionId = result.value.transactionId;
       } else {
-        const [txn] = await tx
-          .insert(schema.cardTransactions)
-          .values({
-            ...metadata,
-            transactionType,
-            status: cancellation ? 'cancelled' : 'approved',
-            amount,
-            cancelledAmount: 0,
-            // 취소 레코드의 netAmount는 0 규약(승인 쪽 cancelledAmount로 상계).
-            netAmount: cancellation ? 0 : amount,
+        const result = await this.moneyWrite.legacy.createReviewedTransaction(
+          {
+            metadata,
+            minorUnits: amount,
             currency,
-            originalAmount: null,
-            originalCurrency: null,
-            exchangeRate: null,
-            approvedAt: cancellation ? null : occurredAt,
-            cancelledAt: cancellation ? occurredAt : null,
-            parentTransactionId: null,
-          })
-          .onConflictDoNothing({ target: schema.cardTransactions.sourceEventId })
-          .returning({ id: schema.cardTransactions.id });
-
-        if (!txn) {
+            transactionType,
+            occurredAt,
+          },
+          { tx },
+        );
+        if (!result.ok) throw moneyRejectionToHttp(result.reason);
+        if (result.value.alreadyPromoted) {
           // 경합/재확정 — 이미 이 이벤트로 만들어진 거래가 있다.
           throw new ConflictException('a transaction already exists for this card-sms event');
         }
-        transactionId = txn.id;
+        transactionId = result.value.transactionId;
       }
       return { cardSmsEventId, parseStatus: 'parsed', transactionId };
     });

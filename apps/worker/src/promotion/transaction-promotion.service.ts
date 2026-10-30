@@ -27,6 +27,7 @@ import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '@family/config';
 import {
   schema,
+  MONEY_CONTRACT_VERSION_V2,
   type Db,
   type DbExecutor,
   notTransferCategory,
@@ -52,7 +53,8 @@ import {
   type PaymentCardLink as CardLink,
 } from '@family/shared';
 import type { Queue } from 'bullmq';
-import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql, type SQL } from 'drizzle-orm';
+import { convertToKrw as convertMoneyToKrw, fxBaseDate, fxRateDisplayValue } from '@family/transaction-domain';
+import { and, eq, gte, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 
 import { DB } from '../database/database.module';
@@ -551,10 +553,9 @@ export class TransactionPromotionService {
   /* ---------------------------------------------------------------------- */
 
   /**
-   * 외화 거래를 승인 시점 환율로 KRW로 환산한다. KRW 거래는 그대로 통과(fx=null).
-   * 외화는 major = amount/10^exp 로 되돌린 뒤 환율을 곱해 KRW minor units(=원)로
-   * 반올림하고, 원통화 원본(originalAmount/Currency)과 환율을 병기 보존한다. 이렇게
-   * 저장된 거래는 currency='KRW'라 기존 KRW 지출/예산/집계에 자연히 합산된다.
+   * v2는 서울 거래일의 불변 스냅샷과 도메인 정수 산술로 환산한다. 중복 비교와
+   * 실제 저장의 금액이 일치해야 한다. KRW는 그대로, legacy/shadow 모드만 기존
+   * 최신 환율 경로를 유지한다. 원통화 원본과 호환 표시 환율은 함께 보존한다.
    */
   private async convertToKrw(
     event: schema.CardSmsEvent,
@@ -568,6 +569,34 @@ export class TransactionPromotionService {
         originalAmount: null,
         originalCurrency: null,
         exchangeRate: null,
+      };
+    }
+
+    if (this.moneyWrite.enforced) {
+      // Acquire before the approval/card lock. The same immutable snapshot and
+      // integer math feed both duplicate comparison and the domain write.
+      const snapshot = await this.moneyWrite.fxSnapshots.find({
+        baseCurrency: rawCurrency,
+        asOfDate: fxBaseDate(event.occurredAt, event.receivedAt),
+        moneyContractVersion: MONEY_CONTRACT_VERSION_V2,
+      });
+      if (!snapshot) {
+        throw new Error(`money contract rejected ${event.transactionType}: fx_snapshot_missing`);
+      }
+      const converted = convertMoneyToKrw(amount, rawCurrency, snapshot.rate);
+      if (!converted.ok) {
+        throw new Error(`money contract rejected ${event.transactionType}: ${converted.failure}`);
+      }
+      this.logger.info(
+        { cardSmsEventId: event.id, originalCurrency: rawCurrency },
+        'foreign amount converted using transaction-date snapshot',
+      );
+      return {
+        amount: converted.krw,
+        currency: 'KRW',
+        originalAmount: amount,
+        originalCurrency: rawCurrency,
+        exchangeRate: fxRateDisplayValue(snapshot.rate),
       };
     }
 
@@ -648,9 +677,8 @@ export class TransactionPromotionService {
     /**
      * ADR-0027 5단계 — **D-1이 여기서 닫힌다.**
      *
-     * 위 `convertToKrw`는 `getRateToKrw(currency)`로 **오늘** 환율을 받는다(거래일이
-     * 아니다). 그래서 같은 이벤트를 언제 재시도하느냐가 KRW 금액을 바꿨고, 승인과
-     * 취소가 서로 다른 날 환율로 환산돼 전액취소에도 잔액이 남았다.
+     * legacy의 `getRateToKrw(currency)`는 오늘 환율을 받았고 재시도 시 금액이 바뀌었다.
+     * v2 앞단의 중복 비교도 이제 거래일 스냅샷과 정수 산술을 사용한다.
      *
      * enforce가 켜지면 원통화 금액을 그대로 넘기고 **거래일 스냅샷**으로 환산한다.
      * 스냅샷이 없으면 승격하지 않는다 — 오늘 환율로 대체하는 것이 D-1이었다.
@@ -691,29 +719,18 @@ export class TransactionPromotionService {
         : { status, transactionId: result.value.transactionId };
     }
 
-    const [inserted] = await this.db
-      .insert(schema.cardTransactions)
-      .values({
-        ...metadata,
-        transactionType: 'approval',
-        status,
-        amount,
-        cancelledAmount: 0,
-        netAmount: amount,
-        currency: converted.currency,
-        originalAmount: converted.originalAmount,
-        originalCurrency: converted.originalCurrency,
-        exchangeRate: converted.exchangeRate,
-        approvedAt: event.occurredAt ?? null,
-        cancelledAt: null,
-        parentTransactionId: null,
-      })
-      .onConflictDoNothing({ target: schema.cardTransactions.sourceEventId })
-      .returning({ id: schema.cardTransactions.id });
-
-    return inserted
-      ? { status, transactionId: inserted.id }
-      : { status: 'already_promoted', transactionId: null };
+    const result = await this.moneyWrite.legacy.createApproval({
+      metadata,
+      money: converted,
+      occurredAt: event.occurredAt ?? null,
+      status,
+    });
+    if (!result.ok) {
+      throw new Error(`legacy money rejected approval: ${result.reason}`);
+    }
+    return result.value.alreadyPromoted
+      ? { status: 'already_promoted', transactionId: null }
+      : { status, transactionId: result.value.transactionId };
   }
 
   /**
@@ -841,174 +858,34 @@ export class TransactionPromotionService {
       };
     }
 
-    return this.db.transaction(async (tx): Promise<CancellationOutcome> => {
-      // 취소 레코드 삽입(멱등). 경합/재승격은 onConflictDoNothing으로 흡수한다.
-      const [inserted] = await tx
-        .insert(schema.cardTransactions)
-        .values({
-          householdId: event.householdId,
-          memberId: event.memberId,
-          cardId: link.cardId,
-          sourceEventId: event.id,
-          transactionType: 'cancellation',
-          status: 'pending_review',
-          amount,
-          cancelledAmount: 0,
-          netAmount: 0,
-          currency: converted.currency,
-          originalAmount: converted.originalAmount,
-          originalCurrency: converted.originalCurrency,
-          exchangeRate: converted.exchangeRate,
-          merchantRaw: event.merchantRaw ?? null,
-          merchantNormalized,
-          categoryId,
-          approvedAt: null,
-          cancelledAt,
-          authorizationCode: null,
-          installmentMonths: event.installmentMonths ?? null,
-          parentTransactionId: null,
-          visibility: link.visibility,
-          memo: null,
-        })
-        .onConflictDoNothing({ target: schema.cardTransactions.sourceEventId })
-        .returning({ id: schema.cardTransactions.id });
-
-      if (!inserted) {
-        // 이미 승격됨 → 승인 잔액을 건드리지 않는다(멱등).
-        return {
-          status: 'pending_review',
-          linked: false,
-          skipped: true,
-          transactionId: null,
-        };
-      }
-
-      // 대응 승인 탐색: 같은 household/card, 승인, 미완료(approved|partially_cancelled),
-      // (가맹점 일치 시) 동일 merchant, 승인이 취소보다 앞섬. 잔액 조건은 JS에서 판정.
-      // 취소↔승인 잔액 비교(467)·netAmount 재계산(482)이 minor units 뺄셈이므로
-      // 반드시 동일 통화 승인만 후보로 남긴다. 외화도 승격 시 KRW로 환산 저장되므로
-      // 후보 통화는 항상 converted.currency(=KRW).
-      const candidateConditions: SQL[] = [
-        eq(schema.cardTransactions.householdId, event.householdId),
-        eq(schema.cardTransactions.transactionType, 'approval'),
-        eq(schema.cardTransactions.currency, converted.currency),
-        inArray(schema.cardTransactions.status, ['approved', 'partially_cancelled']),
-      ];
-      if (link.cardId) {
-        candidateConditions.push(eq(schema.cardTransactions.cardId, link.cardId));
-      } else {
-        candidateConditions.push(
-          isNull(schema.cardTransactions.cardId),
-          eq(schema.cardTransactions.memberId, event.memberId),
-        );
-      }
-      if (merchantNormalized) {
-        candidateConditions.push(
-          eq(schema.cardTransactions.merchantNormalized, merchantNormalized),
-        );
-      }
-      if (cancelledAt) {
-        candidateConditions.push(lt(schema.cardTransactions.approvedAt, cancelledAt));
-      }
-
-      const candidates = await tx
-        .select()
-        .from(schema.cardTransactions)
-        .where(and(...candidateConditions))
-        .orderBy(desc(schema.cardTransactions.approvedAt));
-
-      // 잔액(amount - cancelledAmount)이 취소액 이상인 승인만 후보로 남긴다.
-      const matches = candidates.filter(
-        (approval) => approval.amount - approval.cancelledAmount >= amount,
-      );
-
-      // 유일 매칭만 연결한다. 0개/2개 이상은 애매 → 취소 거래를 pending_review로 유지.
-      if (matches.length !== 1) {
-        return {
-          status: 'pending_review',
-          linked: false,
-          skipped: false,
-          transactionId: inserted.id,
-        };
-      }
-
-      // 후보 탐색은 잠금 없이 했다(후보가 많을 수 있어 전부 잠그면 승격이 서로 막힌다).
-      // 확정된 승인 **하나만** FOR UPDATE로 잠그고, 잠근 뒤 값으로 잔액을 다시 판정한다.
-      // 잠그기 전 값으로 누적하면 두 취소가 같은 초기 cancelledAmount를 읽어 마지막
-      // update만 남고 취소액이 유실된다(순지출·예산 사용률이 실제보다 크게 나온다).
-      const [approval] = await tx
-        .select()
-        .from(schema.cardTransactions)
-        .where(eq(schema.cardTransactions.id, matches[0].id))
-        .for('update')
-        .limit(1);
-
-      // 잠금을 기다리는 사이 다른 승격이 같은 승인에 붙어 잔액이 모자라졌거나 후보
-      // 조건에서 벗어났으면 연결하지 않는다 — 잘못 연결해 음수 잔액을 만드는 것보다
-      // pending_review가 낫다. 후보 탐색과 **같은 술어**로 다시 판정한다.
-      if (
-        !approval ||
-        !['approved', 'partially_cancelled'].includes(approval.status) ||
-        approval.amount - approval.cancelledAmount < amount
-      ) {
-        return {
-          status: 'pending_review',
-          linked: false,
-          skipped: false,
-          transactionId: inserted.id,
-        };
-      }
-
-      const newCancelledAmount = approval.cancelledAmount + amount;
-      const newNetAmount = approval.amount - newCancelledAmount;
-      assertKrwInteger(newNetAmount);
-      const approvalStatus: TransactionStatus =
-        newCancelledAmount >= approval.amount ? 'cancelled' : 'partially_cancelled';
-      const now = new Date();
-
-      // 취소 행 연결을 먼저 claim한다(`parent_transaction_id IS NULL` 조건 + RETURNING).
-      // 방금 삽입한 행이라 이 트랜잭션 밖에서는 보이지 않지만, 승인 누적을 claim 성공
-      // 뒤로 두면 "연결되지 않았는데 잔액만 깎이는" 상태가 어떤 경로로도 생기지 않는다.
-      const [linked] = await tx
-        .update(schema.cardTransactions)
-        .set({
-          parentTransactionId: approval.id,
-          status: 'approved',
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(schema.cardTransactions.id, inserted.id),
-            isNull(schema.cardTransactions.parentTransactionId),
-          ),
-        )
-        .returning({ id: schema.cardTransactions.id });
-      if (!linked) {
-        return {
-          status: 'pending_review',
-          linked: false,
-          skipped: false,
-          transactionId: inserted.id,
-        };
-      }
-
-      await tx
-        .update(schema.cardTransactions)
-        .set({
-          cancelledAmount: newCancelledAmount,
-          netAmount: newNetAmount,
-          status: approvalStatus,
-          updatedAt: now,
-        })
-        .where(eq(schema.cardTransactions.id, approval.id));
-
-      return {
-        status: approvalStatus,
-        linked: true,
-        skipped: false,
-        transactionId: inserted.id,
-      };
+    // The legacy domain owns insertion, unique-parent selection, row locking,
+    // cancellation claim and parent cumulative amounts in one transaction.
+    const result = await this.moneyWrite.legacy.createCancellation({
+      metadata: {
+        householdId: event.householdId,
+        memberId: event.memberId,
+        cardId: link.cardId,
+        sourceEventId: event.id,
+        merchantRaw: event.merchantRaw ?? null,
+        merchantNormalized,
+        categoryId,
+        authorizationCode: null,
+        installmentMonths: event.installmentMonths ?? null,
+        visibility: link.visibility,
+        memo: null,
+      },
+      money: converted,
+      occurredAt: cancelledAt,
     });
+    if (!result.ok) {
+      throw new Error(`legacy money rejected cancellation: ${result.reason}`);
+    }
+    return {
+      status: result.value.status,
+      linked: result.value.linked,
+      skipped: result.value.alreadyPromoted,
+      transactionId: result.value.alreadyPromoted ? null : result.value.transactionId,
+    };
   }
 
   /* ---------------------------------------------------------------------- */
