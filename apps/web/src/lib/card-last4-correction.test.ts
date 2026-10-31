@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { acceptsLast4Insertion, assertCardCorrectionReady, beginCardCorrectionRead, canCorrectCardLast4, CardCorrectionPendingError, CardCorrectionReadRequiredError, cardCorrectionIsPending, cardCorrectionRequiresRead, cardLast4, cardLast4MutationOptions, correctionError, correctionRequest, createCardCorrectionReadGate, hasUnknownCardLast4, markCardCorrectionUncertain, subscribeCardCorrectionState, writeCorrectedCard } from "./card-last4-correction";
 import { createTransactionEditSession } from "./transaction-edit";
 import { dispatchTransactionDetailBack, registerTransactionDetailBack } from "./transaction-detail-back";
+import { cardLast4DiscardDescription } from "@/components/card-last4-correction-dialog";
 
 const ownerId = "11111111-1111-4111-8111-111111111111";
 const card = { id: "synthetic-card", householdId: "synthetic-family", ownerMemberId: ownerId, alias: "합성 카드", issuer: "합성", maskedNumber: "1234" } as CardSummary;
@@ -16,6 +17,15 @@ function deferred<T>() {
 }
 
 describe("card last4 correction boundary", () => {
+  it.each([[true, false], [false, true], [true, true]])("does not claim an uncertain remote request was unsaved when closing (%s/%s)", (globalRead, localRead) => {
+    const message = cardLast4DiscardDescription(globalRead, localRead);
+    expect(message).toContain("입력한 내용은 닫으면 사라져요");
+    expect(message).toContain("정정 요청 처리 여부는 현재 카드 정보를 다시 확인");
+    expect(message).not.toContain("저장되지 않아요");
+  });
+  it("retains the ordinary unsent-draft cancellation meaning", () => {
+    expect(cardLast4DiscardDescription(false, false)).toBe("입력한 뒤 4자리는 저장되지 않아요.");
+  });
   it.each(["", "123", "12345", "4111111111111111", "12 34", "１２３４", "١٢٣٤", "1e03", "••••1234"])("rejects %j without truncating or filtering", (draft) => {
     expect(correctionRequest(draft, "5678", ownerId).ok).toBe(false);
   });

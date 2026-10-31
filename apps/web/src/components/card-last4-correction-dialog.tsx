@@ -12,6 +12,12 @@ import { acceptsLast4Insertion, cardLast4, correctionError, correctionRequest, c
 import { registerTransactionDetailBack, type TransactionDetailBackSource } from "@/lib/transaction-detail-back";
 import { createTransactionEditSession } from "@/lib/transaction-edit";
 
+export function cardLast4DiscardDescription(readRequired: boolean, localReadRequired: boolean): string {
+  return readRequired || localReadRequired
+    ? "입력한 내용은 닫으면 사라져요. 정정 요청 처리 여부는 현재 카드 정보를 다시 확인해 주세요."
+    : "입력한 뒤 4자리는 저장되지 않아요.";
+}
+
 export function CardLast4CorrectionDialog({ card, ownerLabelOf, canManage, readRequired, attemptPending, onCorrect, onRefresh, onClose }: {
   card: CardSummary;
   ownerLabelOf: (card: CardSummary) => string;
@@ -156,7 +162,7 @@ export function CardLast4CorrectionDialog({ card, ownerLabelOf, canManage, readR
         </form>
         <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
           <AlertDialogContent onCloseAutoFocus={(event) => { event.preventDefault(); input.current?.focus(); }}>
-            <AlertDialogHeader><AlertDialogTitle>입력을 버리고 닫을까요?</AlertDialogTitle><AlertDialogDescription>입력한 뒤 4자리는 저장되지 않아요.</AlertDialogDescription></AlertDialogHeader>
+            <AlertDialogHeader><AlertDialogTitle>입력을 버리고 닫을까요?</AlertDialogTitle><AlertDialogDescription>{cardLast4DiscardDescription(readRequired, readGate.current.required)}</AlertDialogDescription></AlertDialogHeader>
             <AlertDialogFooter><AlertDialogCancel>계속 입력하기</AlertDialogCancel><AlertDialogAction onClick={() => { session.current.invalidate(); onClose(); }}>버리고 닫기</AlertDialogAction></AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
