@@ -9,6 +9,7 @@ describe("TRANSACTION_SCOPE_KEYS — 실시간 힌트가 갈아엎는 범위", (
     ["결제 실패", "card-sms-declines"],
     ["가맹점", "merchants"],
     ["카드", "cards"],
+    ["목록 밖 거래 상세", "transaction-detail"],
   ])("%s이 빠져 있으면 새로고침해야 보인다 (%s)", (_label, prefix) => {
     expect(prefixes).toContain(prefix);
   });

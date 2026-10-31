@@ -23,6 +23,7 @@ import {
   useCardSmsReviewInbox,
   useDeclineList,
   useTransactions,
+  useUnpostedSms,
   type QueryOpts,
 } from "@/lib/queries";
 
@@ -44,6 +45,10 @@ export interface TodoCounts {
   smsRecent: CardSmsEventSummary[];
   /** 홈 창 밖(= 홈에서는 "지난 문자 N건 더 보기"로만 보이는 것). */
   smsOlder: CardSmsEventSummary[];
+  unposted: CardSmsEventSummary[];
+  unpostedLoading: boolean;
+  unpostedError: boolean;
+  unpostedTruncated: boolean;
   /** 배지 합계. */
   total: number;
   /** 소스별 로딩/에러 — 못 읽은 축을 0건으로 표기하지 않기 위해 나눠 준다. */
@@ -75,6 +80,7 @@ export function useTodoCounts(opts?: QueryOpts): TodoCounts {
     opts,
   );
   const smsQuery = useCardSmsReviewInbox(opts);
+  const unpostedQuery = useUnpostedSms();
 
   const declines = useMemo(
     () => unresolvedDeclines(declineQuery.data?.items),
@@ -102,10 +108,15 @@ export function useTodoCounts(opts?: QueryOpts): TodoCounts {
     sms,
     smsRecent,
     smsOlder,
+    unposted: unpostedQuery.data ?? [],
+    unpostedLoading: unpostedQuery.isLoading,
+    unpostedError: unpostedQuery.isError,
+    unpostedTruncated: (unpostedQuery.data?.length ?? 0) >= REVIEW_SCAN_LIMIT,
     total: todoTotal({
       declines: declines.length,
       reviews: reviews.length,
       sms: sms.length,
+      unposted: unpostedQuery.data?.length ?? 0,
     }),
     declinesLoading: declineQuery.isLoading,
     declinesError: declineQuery.isError,

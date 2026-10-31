@@ -21,6 +21,7 @@ import type {
   CardSmsDeclineDismissRequest,
   CardSmsDeclineDismissResponse,
   CardSmsEventDetail,
+  CardSmsPostingStatusResponse,
   CardSmsReviewRequest,
   CardSmsReviewResponse,
   ManualParsePreviewRequest,
@@ -824,6 +825,9 @@ export const api = {
     /** manual-text 등록 후 파싱 상태 폴링(GET card-sms-events/:id). */
     eventStatus: (accessToken: AccessToken, id: string) =>
       apiFetch<CardSmsEventDetail>(`/v1/card-sms-events/${id}`, { accessToken }),
+    /** Registration feedback does not need to download the original message. */
+    postingStatus: (accessToken: AccessToken, id: string) =>
+      apiFetch<CardSmsPostingStatusResponse>(`/v1/card-sms-events/${id}/posting`, { accessToken }),
     /**
      * 격리(quarantined)·실패(parse_failed) 건을 사람이 확인·교정해 확정한다.
      * 거래를 만들고 동시에 학습 라벨을 남긴다(ADR-0023 S3).

@@ -11,6 +11,7 @@ import type { MoneyShadowService } from '../money/money-shadow.service';
 import type { MoneyWriteService } from '../money/money-write.service';
 import type { RealtimePublisherService } from '../realtime/realtime-publisher.service';
 import { TransactionService } from './transaction.service';
+import { transactionFxColumns } from './transaction-fx';
 
 const TRANSACTION = '00000000-0000-4000-8000-000000000001';
 const HOUSEHOLD = '00000000-0000-4000-8000-000000000002';
@@ -56,7 +57,10 @@ function setup(updateResult: 'success' | 'conflict' | 'error', initialCategory: 
     if (query.includes('from "merchant_category_rules"')) return [];
     if (query.includes('from "card_transactions"')) {
       const values = Object.keys(getTableColumns(schema.cardTransactions)).map(key => row[key]);
-      return [query.includes('left join') ? [...values, 'food'] : values];
+      // A missing LEFT JOIN row supplies NULLs; its `created_by is not null` expression is false.
+      const fx = query.includes('left join "fx_rate_snapshots"')
+        ? Object.keys(transactionFxColumns).map(key => key === 'isManual' ? false : null) : [];
+      return [query.includes('left join') ? [...values, 'food', ...fx] : values];
     }
     throw new Error('예상하지 않은 검증용 SQL입니다.');
   }

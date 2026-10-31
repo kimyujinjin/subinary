@@ -93,11 +93,13 @@ export interface TodoCountBreakdown {
   reviews: number;
   /** 읽지 못한 문자 수(전 기간). */
   sms: number;
+  /** 접수됐으나 거래 원장에 아직 반영되지 않은 문자. */
+  unposted?: number;
 }
 
 /** 배지에 찍히는 합계. 세 소스 중 하나라도 못 읽었으면 그 축은 0으로 센다. */
 export function todoTotal(counts: TodoCountBreakdown): number {
-  return counts.declines + counts.reviews + counts.sms;
+  return counts.declines + counts.reviews + counts.sms + (counts.unposted ?? 0);
 }
 
 /**

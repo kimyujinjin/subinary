@@ -27,6 +27,7 @@ import {
   type CardSmsDeclineListResponse,
   type CardSmsEventDetail,
   type CardSmsEventSummary,
+  type CardSmsPostingStatusResponse,
   type CardSmsReviewResponse,
   type CardSmsReviewGroupsResponse,
   type CardSmsReviewPolicy,
@@ -63,6 +64,7 @@ export class CardSmsEventsController {
     @Query('status') status?: string,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
+    @Query('posting') posting?: string,
   ): Promise<CardSmsEventSummary[]> {
     return this.queryService.list(
       user.userId,
@@ -70,6 +72,7 @@ export class CardSmsEventsController {
       status,
       limit,
       cursor,
+      posting,
     );
   }
 
@@ -132,6 +135,12 @@ export class CardSmsEventsController {
   @HttpCode(HttpStatus.OK)
   disableReviewPolicy(@CurrentUser() user: AuthenticatedUser, @Param('id', new ParseUUIDPipe()) id: string, @Query('householdId', new ParseUUIDPipe()) householdId: string): Promise<CardSmsReviewPolicy> {
     return this.queryService.disableReviewPolicy(user.userId, householdId, id);
+  }
+
+  /** GET /v1/card-sms-events/:id/posting — minimal authenticated status poll, no message body. */
+  @Get(':id/posting')
+  getPosting(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string): Promise<CardSmsPostingStatusResponse> {
+    return this.queryService.getPosting(user.userId, id);
   }
 
   /** GET /v1/card-sms-events/:id — full event detail (includes raw content). */

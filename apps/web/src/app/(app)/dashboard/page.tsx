@@ -361,7 +361,7 @@ function DashboardView() {
   const showReviewRow = todo.reviewsError || todo.reviews.length > 0;
   const showParseFailedRow =
     todo.smsError || parseFailedCount > 0 || olderSmsCount > 0;
-  const showTodoCard = showDeclineRow || showReviewRow || showParseFailedRow;
+  const showTodoCard = showDeclineRow || showReviewRow || showParseFailedRow || todo.unpostedError || todo.unposted.length > 0;
 
   // --- 온보딩 체크리스트(C-1) ------------------------------------------------
   // 합류 직후 홈은 빈 카드 6장이라 다음 행동이 없었다. 거래가 아직 하나도 없고
@@ -985,6 +985,16 @@ function TodoCard({
         </CardAction>
       </CardHeader>
       <CardContent className="px-3">
+        {todo.unpostedError || todo.unposted.length > 0 ? (
+          <ListRow
+            href="/todo"
+            icon={<MailWarning />}
+            title="아직 거래에 반영되지 않은 문자"
+            subtitle={todo.unpostedError ? "반영 상태를 확인하지 못했어요" : "환율·처리·검토 대기 이유를 확인해요"}
+            value={pendingCountText(todo.unpostedLoading, todo.unpostedError, todo.unposted.length, todo.unpostedTruncated)}
+            chevron
+          />
+        ) : null}
         {showDeclineRow ? (
           // 배너에 있던 정보(가맹점·금액·시도 횟수·조치 문구)를 한 줄로 옮겼다.
           // ListRow는 자체가 flex 행이고 제목/부제가 `min-w-0 flex-1` 안에서 truncate

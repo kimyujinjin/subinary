@@ -54,6 +54,8 @@ import type {
 } from '@family/contracts';
 import {
   revokeMerchantRuleLineage,
+  MONEY_CONTRACT_VERSION_V1,
+  MONEY_CONTRACT_VERSION_V2,
   schema,
   type Db,
   notTransferCategory,
@@ -72,6 +74,7 @@ import { moneyRejectionToHttp } from '../money/money-rejection';
 import { MoneyShadowService } from '../money/money-shadow.service';
 import { MoneyWriteService } from '../money/money-write.service';
 import { RealtimePublisherService } from '../realtime/realtime-publisher.service';
+import { transactionFx, transactionFxColumns, type TransactionFxSnapshot } from './transaction-fx';
 import {
   actorCanSeeApproval,
   cancellationCandidateFilter,
@@ -187,10 +190,9 @@ export class TransactionService {
     @Inject(DB) private readonly db: Db,
     private readonly realtimePublisher: RealtimePublisherService,
     // ADR-0027 3단계: 금액 수정·취소 연결 결과를 새 계약과 대조해 기록만 한다.
-    // 이 서비스는 취소 산술의 두 번째 사본이다(worker 승격이 첫 번째) — 두 사본이
-    // 같은 답을 내는지가 전환 전에 확인해야 할 값이다.
+    // 관측은 유지하되 금액 산술과 잠금은 공통 금액 명령이 소유한다.
     private readonly moneyShadow: MoneyShadowService,
-    // ADR-0027 5단계: enforce가 켜지면 금액 수정·취소 연결을 이쪽이 소유한다.
+    // 수정·연결은 런타임 모드로, 검토·삭제는 저장된 계약 버전으로 소유자를 정한다.
     private readonly moneyWrite: MoneyWriteService,
   ) {}
 
@@ -312,12 +314,14 @@ export class TransactionService {
       .select({
         txn: schema.cardTransactions,
         categorySlug: schema.expenseCategories.slug,
+        fxSnapshot: transactionFxColumns,
       })
       .from(schema.cardTransactions)
       .leftJoin(
         schema.expenseCategories,
         eq(schema.cardTransactions.categoryId, schema.expenseCategories.id),
       )
+      .leftJoin(schema.fxRateSnapshots, eq(schema.cardTransactions.fxRateSnapshotId, schema.fxRateSnapshots.id))
       .where(and(...conditions))
       .orderBy(
         desc(schema.cardTransactions.createdAt),
@@ -336,7 +340,7 @@ export class TransactionService {
     }
 
     const items = page.map((r) =>
-      buildSummary(r.txn, r.categorySlug, maskedFor(r.txn, actor.memberId)),
+      buildSummary(r.txn, r.categorySlug, maskedFor(r.txn, actor.memberId), r.fxSnapshot),
     );
     return { items, nextCursor };
   }
@@ -361,6 +365,7 @@ export class TransactionService {
       row.txn,
       row.categorySlug,
       maskedFor(row.txn, actor.memberId),
+      row.fxSnapshot,
     );
   }
 
@@ -716,19 +721,6 @@ export class TransactionService {
         );
       }
       assertKrwInteger(input.amount);
-      if (!enforceMoney) {
-        updates.amount = input.amount;
-        // 승인은 net = amount(취소 없음), 취소 행은 net이 항상 0.
-        updates.netAmount = current.transactionType === 'approval' ? input.amount : 0;
-      }
-    }
-    if (input.occurredAt !== undefined && !enforceMoney) {
-      const occurred = new Date(input.occurredAt);
-      if (current.transactionType === 'approval') {
-        updates.approvedAt = occurred;
-      } else {
-        updates.cancelledAt = occurred;
-      }
     }
 
     if (enforceMoney) {
@@ -766,12 +758,32 @@ export class TransactionService {
           { tx },
         );
         if (!outcome.ok) throw moneyRejectionToHttp(outcome.reason);
+      } else if (moneyFieldsChanged) {
+        const outcome = await this.moneyWrite.legacy.amendTransaction(
+          {
+            transactionId: id,
+            ...(input.amount === undefined ? {} : { amount: input.amount }),
+            ...(input.occurredAt === undefined
+              ? {}
+              : { occurredAt: new Date(input.occurredAt) }),
+          },
+          { tx },
+        );
+        if (!outcome.ok) throw moneyRejectionToHttp(outcome.reason);
       }
       // 분류 비교와 갱신을 한 SQL로 실행해 조회 이후의 다른 사용자 수정을 보존한다.
       // 충돌은 같은 트랜잭션의 금액 변경까지 되돌리고 규칙·확정 라벨 기록 전에 종료한다.
       const [updated] = await tx
         .update(schema.cardTransactions)
-        .set(updates)
+        .set({
+          categoryId: updates.categoryId,
+          merchantNormalized: updates.merchantNormalized,
+          memberId: updates.memberId,
+          cardId: updates.cardId,
+          visibility: updates.visibility,
+          memo: updates.memo,
+          updatedAt: updates.updatedAt,
+        })
         .where(and(
           eq(schema.cardTransactions.id, id),
           input.expectedCategoryId === undefined
@@ -891,6 +903,7 @@ export class TransactionService {
       row.txn,
       row.categorySlug,
       maskedFor(row.txn, actor.memberId),
+      row.fxSnapshot,
     );
   }
 
@@ -940,17 +953,19 @@ export class TransactionService {
       .select({
         txn: schema.cardTransactions,
         categorySlug: schema.expenseCategories.slug,
+        fxSnapshot: transactionFxColumns,
       })
       .from(schema.cardTransactions)
       .leftJoin(
         schema.expenseCategories,
         eq(schema.cardTransactions.categoryId, schema.expenseCategories.id),
       )
+      .leftJoin(schema.fxRateSnapshots, eq(schema.cardTransactions.fxRateSnapshotId, schema.fxRateSnapshots.id))
       .where(cancellationCandidateFilter(cancellation, actor.memberId))
       .orderBy(...cancellationCandidateOrder(cancellation));
 
     const items = rows.map((r) =>
-      buildSummary(r.txn, r.categorySlug, maskedFor(r.txn, actor.memberId)),
+      buildSummary(r.txn, r.categorySlug, maskedFor(r.txn, actor.memberId), r.fxSnapshot),
     );
     return { items, nextCursor: null };
   }
@@ -981,140 +996,45 @@ export class TransactionService {
       throw new ConflictException('cancellation is already linked');
     }
 
-    /*
-     * 잔액 검증과 누적을 **승인 행을 잠근 뒤** 다시 한다.
-     *
-     * 이전 구현은 트랜잭션 밖에서 읽은 `cancelledAmount`로 새 합계를 미리 계산하고
-     * 조건 없이 덮어썼다. 두 취소가 같은 초기값을 읽으면 나중 update만 남아 취소액이
-     * 통째로 유실되고 `netAmount`·월 지출·예산 사용률이 **실제보다 크게** 나온다.
-     * 잔액 초과 검사도 잠그기 전 값으로 하면 검사 자체가 무의미하다.
-     *
-     * 잠금 순서는 **승인 → 취소**로 고정한다({@link remove}의 역산 경로도 같다).
-     * 반대로 잠그는 경로가 하나라도 생기면 link/delete 교차 시 데드락이 된다.
-     */
-    if (this.moneyWrite.enforced) {
-      /**
-       * ADR-0027 5단계. 금액 조작(claim → 잔액 검증 → 체인 재계산)은 새 계약이 소유하고,
-       * **권한과 공개범위는 여기 남는다** — 도메인 서비스는 누가 무엇을 볼 수 있는지
-       * 모르고, 알아야 할 이유도 없다.
-       *
-       * 승인 행을 `for('update')`로 잠그지 않는 것이 중요하다. 재연결이면 도메인이
-       * `[이전 부모, 새 부모]`를 **id 오름차순으로** 잠그는데, 여기서 새 부모를 먼저
-       * 잠가 두면 그 순서가 뒤집혀 교착이 된다. 검증은 잠금 없이 읽고, 경합에 민감한
-       * 조건(household·통화·잔액·중복 연결)은 도메인이 잠근 뒤 다시 본다.
-       */
-      await this.db.transaction(async (tx) => {
-        const [approval] = await tx
-          .select()
-          .from(schema.cardTransactions)
-          .where(eq(schema.cardTransactions.id, input.approvalTransactionId))
-          .limit(1);
-        if (!approval) {
-          throw new NotFoundException('transaction not found');
-        }
-        // 공개범위는 API의 책임이다. 존재를 숨기는 404 정책도 그대로 유지한다.
-        if (!actorCanSeeApproval(approval, actor.memberId)) {
-          throw new NotFoundException('transaction not found');
-        }
-
-        const outcome = await this.moneyWrite.commands.linkCancellation(
-          { cancellationId: cancellation.id, approvalId: approval.id },
-          { tx },
-        );
-        if (!outcome.ok) throw moneyRejectionToHttp(outcome.reason);
-      });
-    } else {
-      await this.db.transaction(async (tx) => {
-        const [approval] = await tx
-          .select()
-          .from(schema.cardTransactions)
-          .where(eq(schema.cardTransactions.id, input.approvalTransactionId))
-          .for('update')
-          .limit(1);
-        if (!approval) {
-          throw new NotFoundException('transaction not found');
-        }
+    const enforced = this.moneyWrite.enforced;
+    await this.db.transaction(async (tx) => {
+      const query = tx
+        .select()
+        .from(schema.cardTransactions)
+        .where(eq(schema.cardTransactions.id, input.approvalTransactionId));
+      // Legacy has one parent: keep its visibility check under the same approval
+      // lock as before. v2 owns ordered parent locks and must acquire them itself.
+      const [approval] = enforced
+        ? await query.limit(1)
+        : await query.for('update').limit(1);
+      if (!approval) throw new NotFoundException('transaction not found');
+      if (!enforced) {
         if (approval.householdId !== cancellation.householdId) {
-          throw new BadRequestException(
-            'transactions belong to different households',
-          );
+          throw new BadRequestException('transactions belong to different households');
         }
         if (approval.transactionType !== 'approval') {
           throw new BadRequestException('target is not an approval transaction');
         }
-        /*
-         * 승인 대상에도 공개범위를 건다.
-         *
-         * 이 검사가 없던 동안 저장 경로는 household·승인여부·통화·잔액만 봤고,
-         * 타인의 `private` 승인이라도 UUID만 알면 **연결(= 쓰기)** 이 됐다. 게다가
-         * 응답이 그 승인의 요약을 마스킹 없이 돌려줘 가려졌던 가맹점명까지 드러났다.
-         * 후보 엔드포인트가 타인의 `summary_only` 승인을 (가맹점만 가린 채) 후보로
-         * 주므로 그 id로 곧장 도달할 수 있었다 — 추측이 필요 없는 경로였다.
-         *
-         * 역할 예외를 두지 않는다. `visibilityScope()`도 owner/admin을 봐주지 않아
-         * 목록·상세·집계 어디서도 타인의 `private`은 보이지 않는다. 여기만 열면
-         * "owner는 볼 수 없는 거래를 고칠 수 있다"가 되어 규약이 갈라진다.
-         * (`assertCanMutate`의 권한자 예외는 **취소 행**에 적용된다 — 가족의 취소를
-         * 대신 정리하는 것은 허용하되, 대상 승인은 본인이 볼 수 있는 것이어야 한다.)
-         */
-        if (!actorCanSeeApproval(approval, actor.memberId)) {
-          // 존재를 숨긴다. 403을 주면 "그런 승인이 있긴 하다"가 새어 나가고,
-          // 상세 조회(:301 부근)도 같은 이유로 404를 준다.
-          throw new NotFoundException('transaction not found');
-        }
-        // amount는 minor units라 통화가 다르면 뺄셈/비교가 무의미하다(USD 취소를 KRW
-        // 승인에 연결 등). 동일 통화 거래끼리만 연결을 허용한다.
-        if (approval.currency !== cancellation.currency) {
-          throw new BadRequestException('transactions have different currencies');
-        }
+      }
+      // The domain never grants visibility: even an owner cannot link another
+      // member's private approval, and summary-only responses stay masked below.
+      if (!actorCanSeeApproval(approval, actor.memberId)) {
+        throw new NotFoundException('transaction not found');
+      }
+      if (!enforced && approval.currency !== cancellation.currency) {
+        throw new BadRequestException('transactions have different currencies');
+      }
 
-        const now = new Date();
-
-        // 취소 행을 원자적으로 claim한다 — 이미 연결된 취소를 두 번 연결하면 승인 잔액이
-        // 두 번 깎인다. 승인 갱신은 claim이 성공한 뒤에만 한다.
-        const [claimed] = await tx
-          .update(schema.cardTransactions)
-          .set({
-            parentTransactionId: approval.id,
-            status: 'approved',
-            updatedAt: now,
-          })
-          .where(
-            and(
-              eq(schema.cardTransactions.id, cancellation.id),
-              isNull(schema.cardTransactions.parentTransactionId),
-            ),
+      const outcome = enforced
+        ? await this.moneyWrite.commands.linkCancellation(
+            { cancellationId: cancellation.id, approvalId: approval.id }, { tx },
           )
-          .returning({ amount: schema.cardTransactions.amount });
-        if (!claimed) {
-          throw new ConflictException('cancellation is already linked');
-        }
-
-        const remaining = approval.amount - approval.cancelledAmount;
-        if (claimed.amount > remaining) {
-          throw new BadRequestException(
-            'cancellation amount exceeds remaining approved balance',
+        : await this.moneyWrite.legacy.linkCancellation(
+            { cancellationId: cancellation.id, approvalId: approval.id,
+              householdId: cancellation.householdId }, { tx },
           );
-        }
-
-        const newCancelled = approval.cancelledAmount + claimed.amount;
-        assertKrwInteger(newCancelled);
-        const newNet = approval.amount - newCancelled;
-        assertKrwInteger(newNet);
-        const newStatus: TxnStatus =
-          newCancelled >= approval.amount ? 'cancelled' : 'partially_cancelled';
-
-        await tx
-          .update(schema.cardTransactions)
-          .set({
-            cancelledAmount: newCancelled,
-            netAmount: newNet,
-            status: newStatus,
-            updatedAt: now,
-          })
-          .where(eq(schema.cardTransactions.id, approval.id));
-      });
-    }
+      if (!outcome.ok) throw moneyRejectionToHttp(outcome.reason);
+    });
 
     const row = await this.loadSummaryRow(input.approvalTransactionId);
     // 취소↔승인 연결을 가족의 다른 열린 화면에 전파(best-effort).
@@ -1127,6 +1047,7 @@ export class TransactionService {
       row.txn,
       row.categorySlug,
       maskedFor(row.txn, actor.memberId),
+      row.fxSnapshot,
     );
   }
 
@@ -1139,10 +1060,9 @@ export class TransactionService {
     const actor = await this.requireMembership(current.householdId, userId);
     this.assertCanMutate(actor, current.memberId);
 
-    await this.db
-      .update(schema.cardTransactions)
-      .set({ status: 'duplicate_suspected', updatedAt: new Date() })
-      .where(eq(schema.cardTransactions.id, id));
+    const outcome = await this.reviewAndDeleteCommands(current.moneyContractVersion)
+      .setReviewFlag({ transactionId: id, flag: 'duplicate_suspected' });
+    if (!outcome.ok) throw moneyRejectionToHttp(outcome.reason);
 
     const row = await this.loadSummaryRow(id);
     // 편집 결과를 가족의 다른 열린 화면에 전파(best-effort, fire-and-forget).
@@ -1151,6 +1071,7 @@ export class TransactionService {
       row.txn,
       row.categorySlug,
       maskedFor(row.txn, actor.memberId),
+      row.fxSnapshot,
     );
   }
 
@@ -1170,27 +1091,9 @@ export class TransactionService {
       throw new BadRequestException('transaction is not pending review');
     }
 
-    let status: TxnStatus;
-    let netAmount: number;
-    if (current.transactionType === 'approval') {
-      netAmount = current.amount - current.cancelledAmount;
-      assertKrwInteger(netAmount);
-      status =
-        current.cancelledAmount >= current.amount
-          ? 'cancelled'
-          : current.cancelledAmount > 0
-            ? 'partially_cancelled'
-            : 'approved';
-    } else {
-      // A cancellation row carries no net amount of its own.
-      netAmount = 0;
-      status = 'approved';
-    }
-
-    await this.db
-      .update(schema.cardTransactions)
-      .set({ status, netAmount, updatedAt: new Date() })
-      .where(eq(schema.cardTransactions.id, id));
+    const outcome = await this.reviewAndDeleteCommands(current.moneyContractVersion)
+      .setReviewFlag({ transactionId: id, flag: null });
+    if (!outcome.ok) throw moneyRejectionToHttp(outcome.reason);
 
     const row = await this.loadSummaryRow(id);
     // 편집 결과를 가족의 다른 열린 화면에 전파(best-effort, fire-and-forget).
@@ -1199,6 +1102,7 @@ export class TransactionService {
       row.txn,
       row.categorySlug,
       maskedFor(row.txn, actor.memberId),
+      row.fxSnapshot,
     );
   }
 
@@ -1226,6 +1130,7 @@ export class TransactionService {
       row.txn,
       row.categorySlug,
       maskedFor(row.txn, actor.memberId),
+      row.fxSnapshot,
     );
   }
 
@@ -1249,14 +1154,14 @@ export class TransactionService {
       row.txn,
       row.categorySlug,
       maskedFor(row.txn, actor.memberId),
+      row.fxSnapshot,
     );
   }
 
   /**
    * 거래를 하드 삭제한다(되돌리기 불가 — 되돌림이 필요하면 exclude 사용).
    * - 자식 취소가 연결된 승인은 차단(취소를 먼저 처리해야 함).
-   * - 연결된 취소를 삭제하면 부모 승인의 cancelledAmount/netAmount/status를 역산
-   *   복원한다({@link linkCancellation}의 역연산).
+   * - 연결된 취소 삭제와 부모 체인 복원은 해당 계약의 금액 명령이 담당한다.
    * source `card_sms_event`는 원문 감사용으로 남긴다. ⚠️ 삭제한 거래의 source를
    * **수동 재파싱**하면 재생성될 수 있으나(자동 재파싱 경로 없음), 재파싱=소스
    * 재도출이라 의도된 동작으로 본다.
@@ -1266,88 +1171,20 @@ export class TransactionService {
     const actor = await this.requireMembership(current.householdId, userId);
     this.assertCanMutate(actor, current.memberId);
 
-    await this.db.transaction(async (tx) => {
-      if (current.transactionType === 'approval') {
-        // 자식 검사와 삭제 사이에 취소가 연결되면 자기참조 FK 위반(500)이 난다.
-        // 승인 행을 잠근 뒤 검사해야 진행 중인 linkCancellation과 직렬화된다.
-        const [locked] = await tx
-          .select({ id: schema.cardTransactions.id })
-          .from(schema.cardTransactions)
-          .where(eq(schema.cardTransactions.id, id))
-          .for('update')
-          .limit(1);
-        if (!locked) {
-          throw new NotFoundException('transaction not found');
-        }
-        const [child] = await tx
-          .select({ id: schema.cardTransactions.id })
-          .from(schema.cardTransactions)
-          .where(eq(schema.cardTransactions.parentTransactionId, id))
-          .limit(1);
-        if (child) {
-          throw new ConflictException(
-            '연결된 취소 거래가 있어 삭제할 수 없어요. 취소 거래를 먼저 삭제하세요',
-          );
-        }
-      }
-
-      // 연결된 취소를 지우면 부모 승인 잔액을 역산 복원한다. 잠금 순서는
-      // linkCancellation과 동일하게 **승인 → 취소**다(반대로 잠그면 데드락).
-      if (
-        current.transactionType === 'cancellation' &&
-        current.parentTransactionId
-      ) {
-        const [approval] = await tx
-          .select()
-          .from(schema.cardTransactions)
-          .where(eq(schema.cardTransactions.id, current.parentTransactionId))
-          .for('update')
-          .limit(1);
-        // 잠근 뒤 취소 행을 다시 읽는다 — 잠금 전 값으로 역산하면 동시 연결/해제가
-        // 서로의 누적을 덮어쓴다. 부모가 바뀌었으면(다른 요청이 먼저 처리) 역산하지 않는다.
-        const [linked] = await tx
-          .select({
-            amount: schema.cardTransactions.amount,
-            parentTransactionId: schema.cardTransactions.parentTransactionId,
-          })
-          .from(schema.cardTransactions)
-          .where(eq(schema.cardTransactions.id, id))
-          .for('update')
-          .limit(1);
-        if (approval && linked && linked.parentTransactionId === approval.id) {
-          const newCancelled = Math.max(
-            0,
-            approval.cancelledAmount - linked.amount,
-          );
-          assertKrwInteger(newCancelled);
-          const newNet = approval.amount - newCancelled;
-          assertKrwInteger(newNet);
-          const newStatus: TxnStatus =
-            newCancelled >= approval.amount
-              ? 'cancelled'
-              : newCancelled > 0
-                ? 'partially_cancelled'
-                : 'approved';
-          await tx
-            .update(schema.cardTransactions)
-            .set({
-              cancelledAmount: newCancelled,
-              netAmount: newNet,
-              status: newStatus,
-              updatedAt: new Date(),
-            })
-            .where(eq(schema.cardTransactions.id, approval.id));
-        }
-      }
-
-      await tx
-        .delete(schema.cardTransactions)
-        .where(eq(schema.cardTransactions.id, id));
-    });
+    const outcome = await this.reviewAndDeleteCommands(current.moneyContractVersion)
+      .removeTransaction({ transactionId: id });
+    if (!outcome.ok) throw moneyRejectionToHttp(outcome.reason);
 
     // 삭제를 가족의 다른 열린 화면에 전파(best-effort, fire-and-forget).
     void this.realtimePublisher.publish(current.householdId);
     return { deleted: true };
+  }
+
+  /** Existing v2 rows keep their owner even during a runtime rollback. */
+  private reviewAndDeleteCommands(contractVersion: number) {
+    if (contractVersion === MONEY_CONTRACT_VERSION_V2) return this.moneyWrite.commands;
+    if (contractVersion === MONEY_CONTRACT_VERSION_V1) return this.moneyWrite.legacy;
+    throw moneyRejectionToHttp('money_contract_version_mismatch');
   }
 
   /* ---------------------------------------------------------------------- */
@@ -1450,17 +1287,19 @@ export class TransactionService {
   /** Loads a transaction row joined with its category slug, or throws 404. */
   private async loadSummaryRow(
     id: string,
-  ): Promise<{ txn: schema.CardTransaction; categorySlug: string | null }> {
+  ): Promise<{ txn: schema.CardTransaction; categorySlug: string | null; fxSnapshot: TransactionFxSnapshot | null }> {
     const [row] = await this.db
       .select({
         txn: schema.cardTransactions,
         categorySlug: schema.expenseCategories.slug,
+        fxSnapshot: transactionFxColumns,
       })
       .from(schema.cardTransactions)
       .leftJoin(
         schema.expenseCategories,
         eq(schema.cardTransactions.categoryId, schema.expenseCategories.id),
       )
+      .leftJoin(schema.fxRateSnapshots, eq(schema.cardTransactions.fxRateSnapshotId, schema.fxRateSnapshots.id))
       .where(eq(schema.cardTransactions.id, id))
       .limit(1);
     if (!row) {
@@ -1661,6 +1500,7 @@ export function buildSummary(
   txn: schema.CardTransaction,
   categorySlug: string | null,
   masked: boolean,
+  fxSnapshot?: TransactionFxSnapshot | null,
 ): TransactionSummary {
   return {
     id: txn.id,
@@ -1676,6 +1516,7 @@ export function buildSummary(
     originalAmount: txn.originalAmount,
     originalCurrency: txn.originalCurrency,
     exchangeRate: txn.exchangeRate,
+    fx: transactionFx(txn, fxSnapshot, masked),
     merchantRaw: masked ? null : txn.merchantRaw,
     merchantNormalized: masked ? null : txn.merchantNormalized,
     categoryId: txn.categoryId,

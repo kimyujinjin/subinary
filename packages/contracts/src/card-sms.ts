@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { transactionStatusSchema } from './transaction.js';
 
 /**
  * Card-SMS parsing lifecycle (PRD §31 Phase 3; mirrors DB `cardSmsParseStatus`).
@@ -113,6 +114,27 @@ export const cardSmsIngestResponseSchema = z.object({
 });
 export type CardSmsIngestResponse = z.infer<typeof cardSmsIngestResponseSchema>;
 
+/** Parsing and creation of a ledger transaction are separate lifecycle stages. */
+export const cardSmsPostingSchema = z.object({
+  status: z.enum(['posted', 'pending', 'needs_review', 'not_applicable']),
+  /** Null when no transaction exists or its current visibility forbids linking to it. */
+  transactionId: z.string().nullable(),
+  transactionStatus: transactionStatusSchema.nullable(),
+  /** Current observable condition, never a reconstructed historical failure reason. */
+  reason: z.enum(['parsing', 'parse_failed', 'quarantined', 'fx_snapshot_missing',
+    'processing', 'ignored', 'declined', 'unsupported_message']).nullable(),
+});
+export type CardSmsPosting = z.infer<typeof cardSmsPostingSchema>;
+
+/** Status polling needs neither a message body nor its parsed financial details. */
+export const cardSmsPostingStatusResponseSchema = z.object({
+  id: z.string(),
+  parseStatus: cardSmsParseStatusSchema,
+  transactionType: cardSmsTransactionTypeSchema.nullable(),
+  posting: cardSmsPostingSchema,
+});
+export type CardSmsPostingStatusResponse = z.infer<typeof cardSmsPostingStatusResponseSchema>;
+
 /**
  * List projection for `GET /v1/card-sms-events`. Excludes the raw content —
  * that is only surfaced in the detail view. `amount` is in `currency`'s minor
@@ -125,6 +147,8 @@ export const cardSmsEventSummarySchema = z.object({
   sender: z.string(),
   receivedAt: z.string(),
   parseStatus: cardSmsParseStatusSchema,
+  /** Optional for clients receiving an older server response; new APIs always emit it. */
+  posting: cardSmsPostingSchema.optional(),
   issuer: z.string().nullable(),
   transactionType: cardSmsTransactionTypeSchema.nullable(),
   amount: z.number().int().nullable(),

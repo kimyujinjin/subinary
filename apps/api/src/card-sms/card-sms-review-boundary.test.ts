@@ -4,6 +4,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import type postgres from 'postgres';
 import { describe, expect, it, vi } from 'vitest';
 import { schema } from '@family/database';
+import { LegacyTransactionMoneyService } from '@family/transaction-domain';
 import { scopedTemplateFingerprint, templateFingerprint } from '@family/card-parsers';
 import type { MoneyShadowService } from '../money/money-shadow.service';
 import type { MoneyWriteService } from '../money/money-write.service';
@@ -66,7 +67,8 @@ function setup(options: Options = {}) {
   const db = drizzle(driver as unknown as postgres.Sql, { schema });
   const observe = vi.fn();
   return { queries, state, observe, review: new CardSmsReviewService(db,
-    { observe } as unknown as MoneyShadowService, { enforced: false } as unknown as MoneyWriteService), query: new CardSmsQueryService(db) };
+    { observe } as unknown as MoneyShadowService,
+    { enforced: false, legacy: new LegacyTransactionMoneyService(db) } as unknown as MoneyWriteService), query: new CardSmsQueryService(db) };
 }
 
 const writes = (queries: Array<{ sql: string }>) => queries.filter(query => /^(insert|update)/.test(query.sql));

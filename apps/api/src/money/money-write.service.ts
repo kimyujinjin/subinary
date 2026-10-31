@@ -23,9 +23,14 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { type Db } from '@family/database';
 import {
+  AcquiringFxSnapshotResolver,
   DrizzleFxSnapshotStore,
+  EcbHistoricalFxProvider,
+  LegacyTransactionMoneyService,
   TransactionMoneyService,
+  type FxSnapshotResolver,
 } from '@family/transaction-domain';
+import { createLogger } from '@family/shared';
 
 import { DB } from '../database/database.constants';
 import { MoneyRuntimeService } from './money-runtime.service';
@@ -33,12 +38,22 @@ import { MoneyRuntimeService } from './money-runtime.service';
 @Injectable()
 export class MoneyWriteService {
   private readonly service: TransactionMoneyService;
+  readonly fxSnapshots: FxSnapshotResolver;
+  readonly legacy: LegacyTransactionMoneyService;
+  private readonly logger = createLogger('api:historical-fx');
 
   constructor(
     @Inject(DB) db: Db,
     private readonly runtime: MoneyRuntimeService,
   ) {
-    this.service = new TransactionMoneyService(db, new DrizzleFxSnapshotStore(db));
+    this.legacy = new LegacyTransactionMoneyService(db);
+    this.fxSnapshots = new AcquiringFxSnapshotResolver(
+      new DrizzleFxSnapshotStore(db), new EcbHistoricalFxProvider(), {
+        reportUnavailable: (notice) => this.logger.warn(notice,
+          'historical FX snapshot unavailable; transaction remains pending'),
+      },
+    );
+    this.service = new TransactionMoneyService(db, this.fxSnapshots);
   }
 
   /**
