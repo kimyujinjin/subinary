@@ -13,6 +13,8 @@
 /** 실시간 힌트·거래 뮤테이션 이후 무효화할 쿼리 접두 키. */
 export const TRANSACTION_SCOPE_KEYS: ReadonlyArray<ReadonlyArray<string>> = [
   ["transactions"],
+  // 알림으로 연 목록 밖 거래도 편집·가족 원격 변경 직후 갱신한다.
+  ["transaction-detail"],
   ["analytics"],
   ["budgets"],
   ["monthly-insights"],

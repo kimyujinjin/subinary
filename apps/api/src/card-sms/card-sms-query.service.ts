@@ -16,6 +16,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   and,
@@ -42,6 +43,8 @@ import type {
   CardSmsDeclineListResponse,
   CardSmsEventDetail,
   CardSmsEventSummary,
+  CardSmsPosting,
+  CardSmsPostingStatusResponse,
   CardSmsReviewGroupsResponse,
   CardSmsReviewPolicy,
 } from '@family/contracts';
@@ -52,7 +55,9 @@ import {
 } from '@family/shared';
 
 import { DB } from '../database/database.constants';
+import { MoneyRuntimeService } from '../money/money-runtime.service';
 import { groupReviewEvents } from './card-sms-review-groups';
+import { cardSmsPosting } from './card-sms-posting';
 
 /** Pagination bounds (spec §5.2 — default 50, max 100). */
 const DEFAULT_LIMIT = 50;
@@ -76,7 +81,10 @@ interface Cursor {
 
 @Injectable()
 export class CardSmsQueryService {
-  constructor(@Inject(DB) private readonly db: Db) {}
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    @Optional() private readonly moneyRuntime?: MoneyRuntimeService,
+  ) {}
 
   /**
    * Lists card-SMS event summaries for a household the actor belongs to,
@@ -88,6 +96,7 @@ export class CardSmsQueryService {
     status: string | undefined,
     limit: string | undefined,
     cursor: string | undefined,
+    posting?: string,
   ): Promise<CardSmsEventSummary[]> {
     if (!householdId) {
       throw new BadRequestException('householdId is required');
@@ -97,6 +106,7 @@ export class CardSmsQueryService {
     const take = this.parseLimit(limit);
     const statusFilter = this.parseStatus(status);
     const keyset = this.decodeCursor(cursor);
+    if (posting !== undefined && posting !== 'unposted') throw new BadRequestException('invalid posting filter');
 
     const conditions: SQL[] = [
       eq(schema.cardSmsEvents.householdId, householdId),
@@ -104,6 +114,15 @@ export class CardSmsQueryService {
     ];
     if (statusFilter) {
       conditions.push(inArray(schema.cardSmsEvents.parseStatus, statusFilter));
+    }
+    if (posting === 'unposted') {
+      // This separate inbox excludes the existing parse-failure/review/decline queues.
+      conditions.push(isNull(schema.cardTransactions.id));
+      conditions.push(or(
+        eq(schema.cardSmsEvents.parseStatus, 'pending'),
+        and(inArray(schema.cardSmsEvents.parseStatus, ['parsed', 'pending_review']),
+          inArray(schema.cardSmsEvents.transactionType, ['approval', 'cancellation'])),
+      ) as SQL);
     }
     if (keyset) {
       const after = or(
@@ -118,14 +137,13 @@ export class CardSmsQueryService {
       }
     }
 
-    const rows = await this.db
-      .select()
-      .from(schema.cardSmsEvents)
+    const rows = await this.postingQuery()
       .where(and(...conditions))
       .orderBy(desc(schema.cardSmsEvents.createdAt), desc(schema.cardSmsEvents.id))
       .limit(take);
 
-    return rows.map(toSummary);
+    return rows.map((row) => toSummary(row.event, cardSmsPosting(row.event, row.transaction,
+      row.snapshotId != null, this.moneyRuntime?.contractMode, actorMemberId)));
   }
 
   /**
@@ -133,18 +151,64 @@ export class CardSmsQueryService {
    * to the actor's household membership.
    */
   async get(userId: string, id: string): Promise<CardSmsEventDetail> {
-    const [event] = await this.db
-      .select()
-      .from(schema.cardSmsEvents)
+    const [row] = await this.postingQuery()
       .where(eq(schema.cardSmsEvents.id, id))
       .limit(1);
 
-    if (!event) {
+    if (!row) {
       throw new NotFoundException('card-sms event not found');
     }
+    const event = row.event;
     const actorMemberId = await this.requireMembership(event.householdId, userId);
     if (event.memberId !== actorMemberId) throw new ForbiddenException('본인에게 수신된 문자만 조회할 수 있습니다.');
-    return toDetail(event);
+    return toDetail(event, cardSmsPosting(event, row.transaction,
+      row.snapshotId != null, this.moneyRuntime?.contractMode, actorMemberId));
+  }
+
+  /** Minimal status poll: never select or return the raw message or parsed amounts. */
+  async getPosting(userId: string, id: string): Promise<CardSmsPostingStatusResponse> {
+    const event = schema.cardSmsEvents;
+    const transaction = schema.cardTransactions;
+    const snapshot = schema.fxRateSnapshots;
+    const [row] = await this.db.select({ event: {
+      id: event.id, householdId: event.householdId, memberId: event.memberId,
+      parseStatus: event.parseStatus, transactionType: event.transactionType,
+      currency: event.currency,
+    }, transaction: { id: transaction.id, householdId: transaction.householdId,
+      memberId: transaction.memberId, visibility: transaction.visibility, status: transaction.status },
+      snapshotId: snapshot.id,
+    }).from(event)
+      .leftJoin(transaction, eq(transaction.sourceEventId, event.id))
+      .leftJoin(snapshot, and(
+        eq(snapshot.baseCurrency, sql`upper(coalesce(${event.currency}, 'KRW'))`),
+        eq(snapshot.quoteCurrency, 'KRW'),
+        eq(snapshot.asOfDate, sql`(coalesce(${event.occurredAt}, ${event.receivedAt}) at time zone 'Asia/Seoul')::date`),
+        eq(snapshot.moneyContractVersion, 2),
+      ))
+      .where(eq(event.id, id)).limit(1);
+    if (!row) throw new NotFoundException('card-sms event not found');
+    const memberId = await this.requireMembership(row.event.householdId, userId);
+    if (row.event.memberId !== memberId) throw new ForbiddenException('본인에게 수신된 문자만 조회할 수 있습니다.');
+    return { id: row.event.id, parseStatus: row.event.parseStatus, transactionType: row.event.transactionType,
+      posting: cardSmsPosting(row.event, row.transaction, row.snapshotId != null, this.moneyRuntime?.contractMode, memberId) };
+  }
+
+  /** One SQL statement observes event, actual source-event linkage and current exact-key snapshot. */
+  private postingQuery() {
+    const event = schema.cardSmsEvents;
+    const transaction = schema.cardTransactions;
+    const snapshot = schema.fxRateSnapshots;
+    return this.db.select({ event, transaction: { id: transaction.id, householdId: transaction.householdId,
+      memberId: transaction.memberId, visibility: transaction.visibility, status: transaction.status },
+      snapshotId: snapshot.id,
+    }).from(event)
+      .leftJoin(transaction, eq(transaction.sourceEventId, event.id))
+      .leftJoin(snapshot, and(
+        eq(snapshot.baseCurrency, sql`upper(coalesce(${event.currency}, 'KRW'))`),
+        eq(snapshot.quoteCurrency, 'KRW'),
+        eq(snapshot.asOfDate, sql`(coalesce(${event.occurredAt}, ${event.receivedAt}) at time zone 'Asia/Seoul')::date`),
+        eq(snapshot.moneyContractVersion, 2),
+      ));
   }
 
   /** 본인의 파싱 실패·격리 문자를 같은 양식으로 묶으며 원문을 반환하지 않는다. */
@@ -596,13 +660,14 @@ export class CardSmsQueryService {
 /* -------------------------------------------------------------------------- */
 
 /** Maps a card-SMS event row to its lightweight summary (no raw text). */
-function toSummary(event: schema.CardSmsEvent): CardSmsEventSummary {
+function toSummary(event: schema.CardSmsEvent, posting: CardSmsPosting): CardSmsEventSummary {
   return {
     id: event.id,
     eventId: event.eventId,
     sender: event.sender,
     receivedAt: event.receivedAt.toISOString(),
     parseStatus: event.parseStatus,
+    posting,
     issuer: event.issuer,
     transactionType: event.transactionType,
     amount: event.amount,
@@ -617,9 +682,9 @@ function toSummary(event: schema.CardSmsEvent): CardSmsEventSummary {
 }
 
 /** Maps a card-SMS event row to the full detail (summary + raw text). */
-function toDetail(event: schema.CardSmsEvent): CardSmsEventDetail {
+function toDetail(event: schema.CardSmsEvent, posting: CardSmsPosting): CardSmsEventDetail {
   return {
-    ...toSummary(event),
+    ...toSummary(event, posting),
     rawContent: event.rawContent,
     maskedCardNumber: event.maskedCardNumber,
   };

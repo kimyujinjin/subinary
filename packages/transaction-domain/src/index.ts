@@ -55,7 +55,7 @@ export type {
   FxSnapshotResolver,
 } from './fx-snapshot-store.js';
 
-export { EcbHistoricalFxProvider } from './historical-fx-provider.js';
+export { EcbHistoricalFxProvider, deriveEcbCrossRate } from './historical-fx-provider.js';
 export { LegacyTransactionMoneyService } from './legacy-money.service.js';
 export type {
   LegacyMoneyRejection,

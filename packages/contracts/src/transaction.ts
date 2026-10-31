@@ -66,6 +66,18 @@ export type LinkCancellationRequest = z.infer<typeof linkCancellationRequestSche
 
 // --- Responses ---
 
+/** Safe provenance of the snapshot actually bound to the transaction. */
+export const transactionFxSchema = z.object({
+  basis: z.enum(['daily_reference', 'manual_reference', 'snapshot_reference', 'unknown']),
+  asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  source: z.enum(['ecb', 'manual', 'other']).nullable(),
+  /** Exact stored decimal, in KRW per one major unit of the original currency. */
+  rate: z.string().nullable(),
+  /** Only true when reference-rate semantics are established; absence is not false. */
+  isReference: z.literal(true).nullable(),
+});
+export type TransactionFx = z.infer<typeof transactionFxSchema>;
+
 /**
  * Transaction projection for `GET /v1/transactions` / `GET /v1/transactions/:id`.
  * Amounts are integer **minor units of `currency`** (`major = amount /
@@ -85,12 +97,14 @@ export const transactionSummarySchema = z.object({
   cancelledAmount: z.number().int(),
   netAmount: z.number().int(),
   currency: z.string(),
-  // 외화 원거래(환산 전). 외화 거래는 승격 시 승인 시점 환율로 KRW 환산(amount/currency
-  // 는 KRW)하고, 원통화 원본을 여기 보존한다. KRW 거래는 전부 null. originalAmount는
+  // 외화 원거래(환산 전). v2는 거래일 스냅샷으로 KRW 환산하고 원통화 원본을 보존한다.
+  // legacy 환율의 날짜·출처는 추정하지 않는다. KRW 거래는 전부 null. originalAmount는
   // originalCurrency의 minor units, exchangeRate는 원통화 1단위당 KRW(추정치).
   originalAmount: z.number().int().nullable(),
   originalCurrency: z.string().nullable(),
   exchangeRate: z.number().nullable(),
+  /** Null for KRW/masked rows. Missing provenance is explicitly unknown, not invented. */
+  fx: transactionFxSchema.nullable().optional(),
   merchantRaw: z.string().nullable(),
   merchantNormalized: z.string().nullable(),
   categoryId: z.string().nullable(),

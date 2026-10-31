@@ -11,7 +11,7 @@
  * - 타인 summary_only(masked) 항목은 가맹점을 '(비공개)'로 표기하고 편집을 막는다.
  * - 권한은 서버(서비스 계층)가 강제하며, 실패 시 배너로 메시지를 노출한다.
  * ------------------------------------------------------------------------- */
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -94,7 +94,20 @@ import {
   detailFallbackReason,
 } from "@/lib/transaction-detail-fallback";
 import { cn } from "@/lib/utils";
+import {
+  createTransactionEditSession,
+  validateTransactionEdit,
+  type TransactionEditErrors,
+  type TransactionEditPatch,
+} from "@/lib/transaction-edit";
+import {
+  cancelTransactionReads,
+  transactionDetailKey,
+  writeTransactionResult,
+} from "@/lib/transaction-detail-cache";
+import { registerTransactionDetailBack, type TransactionDetailBackSource } from "@/lib/transaction-detail-back";
 import { AddTransactionDialog } from "./add-transaction-dialog";
+import { TransactionFxDetails } from "@/components/transaction-fx-details";
 import {
   matchesCandidateSearch,
   retainSelection,
@@ -566,7 +579,7 @@ function TransactionsView() {
 
   const inList = detailId != null && items.some((t) => t.id === detailId);
   const detailFallbackQuery = useQuery({
-    queryKey: ["transaction-detail", detailId],
+    queryKey: transactionDetailKey(householdId, detailId),
     enabled: detailId != null && !inList,
     retry: false,
     queryFn: () =>
@@ -591,6 +604,7 @@ function TransactionsView() {
       : null;
 
   const mutation = useMutation({
+    onMutate: (action: RowAction) => cancelTransactionReads(queryClient, householdId, action.id),
     mutationFn: (action: RowAction): Promise<TransactionSummary> =>
       authedFetch((token) => {
         switch (action.kind) {
@@ -614,8 +628,10 @@ function TransactionsView() {
           }
         }
       }),
-    onSuccess: () => {
+    onSuccess: (updated) => {
       setActionError(null);
+      // PATCH's response is authoritative immediately, including off-list deep links.
+      writeTransactionResult(queryClient, updated);
       // 거래·집계·예산·인사이트·가맹점후보를 단일 헬퍼로 일괄 무효화(실시간 힌트
       // 경로와 동일 범위 — 조합 불일치/누락 방지).
       invalidateTransactionScope(queryClient);
@@ -635,21 +651,23 @@ function TransactionsView() {
   };
 
   // 금액·날짜 수정(변경된 필드만 PATCH). 빈 body면 no-op.
-  const editFields = (
+  const editFields = async (
     txn: TransactionSummary,
-    body: { amount?: number; occurredAt?: string },
-  ) => {
-    if (body.amount === undefined && body.occurredAt === undefined) return;
-    mutation.mutate({ kind: "update", id: txn.id, body });
+    body: TransactionEditPatch,
+  ): Promise<TransactionSummary> => {
+    if (body.amount === undefined && body.occurredAt === undefined) return txn;
+    return mutation.mutateAsync({ kind: "update", id: txn.id, body });
   };
 
   // 하드 삭제(되돌리기 불가). 성공 시 상세 닫기 + 목록/집계 무효화.
   const deleteMutation = useMutation({
     mutationFn: (id: string) =>
       authedFetch((token) => api.transactions.remove(token, id)),
-    onSuccess: () => {
+    onMutate: (id: string) => ({ householdId, id }),
+    onSuccess: (_result, id, context) => {
       setActionError(null);
-      setDetailId(null);
+      queryClient.removeQueries({ queryKey: transactionDetailKey(context?.householdId ?? householdId, id) });
+      setDetailId((current) => current === id ? null : current);
       invalidateTransactionScope(queryClient);
     },
     onError: (error) => setActionError(errorMessage(error)),
@@ -693,7 +711,7 @@ function TransactionsView() {
   const saveMemo = (txn: TransactionSummary, memo: string) => {
     mutation.mutate(
       { kind: "update", id: txn.id, body: { memo } },
-      { onSuccess: () => setMemoTarget(null) },
+      { onSuccess: () => setMemoTarget((current) => current?.id === txn.id ? null : current) },
     );
   };
 
@@ -704,7 +722,7 @@ function TransactionsView() {
         id: txn.id,
         approvalTransactionId: approvalId,
       },
-      { onSuccess: () => setLinkTarget(null) },
+      { onSuccess: () => setLinkTarget((current) => current?.id === txn.id ? null : current) },
     );
   };
 
@@ -1126,6 +1144,7 @@ function TransactionsView() {
 
       {detailTxn ? (
         <TransactionDetailDialog
+          key={`${householdId}:${detailTxn.id}`}
           txn={detailTxn}
           busy={mutation.isPending || deleteMutation.isPending}
           cardLabel={detailCard
@@ -1227,7 +1246,7 @@ function TransactionsView() {
  */
 function TransactionDetailDialog({
   txn,
-  busy,
+  busy: actionBusy,
   cardLabel,
   memberName,
   ownershipMismatch,
@@ -1261,7 +1280,7 @@ function TransactionDetailDialog({
   onChangeCategory: (categoryId: string) => void;
   onCreateCategory: (name: string) => Promise<void>;
   onChangeVisibility: (visibility: string) => void;
-  onEditFields: (body: { amount?: number; occurredAt?: string }) => void;
+  onEditFields: (body: TransactionEditPatch) => Promise<TransactionSummary>;
   onOpenMemo: () => void;
   onOpenLink: () => void;
   onMarkValid: () => void;
@@ -1270,6 +1289,8 @@ function TransactionDetailDialog({
   onDelete: () => void;
   onClose: () => void;
 }>) {
+  const [editSaving, setEditSaving] = useState(false);
+  const busy = actionBusy || editSaving;
   const isCancellation = txn.transactionType === "cancellation";
   const excluded = txn.excludedAt != null;
   const isPending =
@@ -1286,27 +1307,92 @@ function TransactionDetailDialog({
   const initialDate = toDateTimeLocal(occurredAt(txn));
   const [editAmount, setEditAmount] = useState(String(txn.amount));
   const [editDate, setEditDate] = useState(initialDate);
+  const [editErrors, setEditErrors] = useState<TransactionEditErrors>({});
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editNotice, setEditNotice] = useState<string | null>(null);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const editSession = useRef(createTransactionEditSession());
+  const amountInput = useRef<HTMLInputElement>(null);
+  const dateInput = useRef<HTMLInputElement>(null);
+  const inputId = useId();
+  const backHandler = useRef<(source: TransactionDetailBackSource) => void>(() => undefined);
+  useEffect(() => {
+    const unregister = registerTransactionDetailBack(window, (source) => backHandler.current(source));
+    return () => { unregister(); editSession.current.invalidate(); };
+  }, []);
   const editDirty =
     (canEditAmount && editAmount.trim() !== String(txn.amount)) ||
     editDate !== initialDate;
   const cancelEdit = () => {
+    if (editSession.current.pending || busy) return;
+    editSession.current.invalidate();
     setEditAmount(String(txn.amount));
     setEditDate(initialDate);
+    setEditErrors({});
+    setEditError(null);
+    setEditNotice(null);
     setEditing(false);
   };
-  const saveEdits = () => {
-    const body: { amount?: number; occurredAt?: string } = {};
-    if (canEditAmount) {
-      const parsed = Number(editAmount.replace(/[,\s]/g, ""));
-      if (Number.isInteger(parsed) && parsed > 0 && parsed !== txn.amount) {
-        body.amount = parsed;
-      }
+  const startEdit = () => {
+    setEditAmount(String(txn.amount));
+    setEditDate(initialDate);
+    setEditErrors({});
+    setEditError(null);
+    setEditNotice(null);
+    setEditing(true);
+  };
+  const requestClose = () => {
+    if (discardOpen) { setDiscardOpen(false); return; }
+    if (deleteConfirmOpen) { setDeleteConfirmOpen(false); return; }
+    if (editSession.current.pending || busy) {
+      setEditNotice("저장 중이에요. 완료될 때까지 잠시 기다려 주세요.");
+      return;
     }
-    if (editDate && editDate !== initialDate) {
-      const d = new Date(editDate);
-      if (!Number.isNaN(d.getTime())) body.occurredAt = d.toISOString();
+    if (editing && editDirty) { setDiscardOpen(true); return; }
+    onClose();
+  };
+  backHandler.current = (source) => {
+    if (source === "browser") {
+      // popstate already navigated: do not restore a URL or claim an in-flight
+      // write was cancelled. Only discard this dialog's response callbacks.
+      editSession.current.invalidate();
+      onClose();
+      return;
     }
-    onEditFields(body);
+    requestClose();
+  };
+  const saveEdits = async () => {
+    if (editSession.current.pending || busy) return;
+    const validation = validateTransactionEdit({
+      amount: editAmount, date: editDate, initialAmount: txn.amount,
+      initialDate, canEditAmount,
+    });
+    setEditNotice(null);
+    setEditError(null);
+    if (!validation.ok) {
+      setEditErrors(validation.errors);
+      (validation.errors.amount ? amountInput : dateInput).current?.focus();
+      return;
+    }
+    setEditErrors({});
+    if (Object.keys(validation.patch).length === 0) { setEditing(false); return; }
+    setEditSaving(true);
+    await editSession.current.save(
+      () => onEditFields(validation.patch),
+      () => {
+        setEditSaving(false);
+        setEditing(false);
+        setEditNotice("수정 내용을 저장했어요.");
+      },
+      (error) => {
+        setEditSaving(false);
+        setEditNotice(null);
+        setEditError(errorMessage(error));
+        // Keep both inputs and focusable actions available for a correction/retry.
+        (canEditAmount ? amountInput : dateInput).current?.focus();
+      },
+    );
   };
 
   // 인라인 '새 카테고리 만들기' 상태.
@@ -1334,16 +1420,16 @@ function TransactionDetailDialog({
   };
 
   return (
-    <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-h-[92dvh] gap-3 overflow-y-auto overscroll-contain">
+    <Dialog open onOpenChange={(v) => !v && requestClose()}>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] grid-cols-[minmax(0,1fr)] gap-3 overflow-y-auto overscroll-contain p-4 [&>*]:min-w-0 sm:p-6">
         <DialogHeader>
-          <DialogTitle>{merchantLabel(txn)}</DialogTitle>
-          <DialogDescription>
+          <DialogTitle className="break-words pr-6">{merchantLabel(txn)}</DialogTitle>
+          <DialogDescription className="break-words">
             {formatDate(occurredAt(txn))} · 지출 구분: {memberName}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-1 text-sm">
+        <div className="space-y-1 text-sm break-words">
           <p className="text-muted-foreground">연결 카드: {cardLabel}</p>
           {ownershipMismatch ? (
             <p className="text-warning-strong" role="status">
@@ -1353,38 +1439,60 @@ function TransactionDetailDialog({
         </div>
 
         {/* 금액 요약 — 평소엔 읽기 뷰, '수정' 탭 시 인라인 편집으로 전환 */}
-        <div className="bg-muted relative flex flex-col items-center gap-1 rounded-xl px-4 py-4">
+        <div className="bg-muted relative flex min-w-0 max-w-full flex-col items-center gap-1 rounded-xl px-4 py-4">
           {editing ? (
             <div className="flex w-full flex-col gap-2">
-              <span className="text-muted-foreground text-[13px]">
+              <span className="text-muted-foreground text-[13px]" id={`${inputId}-heading`}>
                 금액·날짜 수정
               </span>
               <div className="flex flex-col gap-2">
+                <Label htmlFor={`${inputId}-amount`}>금액</Label>
                 <Input
+                  id={`${inputId}-amount`}
+                  ref={amountInput}
                   inputMode="numeric"
-                  aria-label="금액"
+                  aria-invalid={Boolean(editErrors.amount)}
+                  aria-describedby={editErrors.amount ? `${inputId}-amount-error` : undefined}
                   value={editAmount}
                   disabled={busy || !canEditAmount}
-                  onChange={(e) => setEditAmount(e.target.value)}
+                  className="min-h-11"
+                  onChange={(e) => {
+                    setEditAmount(e.target.value);
+                    setEditErrors((errors) => ({ ...errors, amount: undefined }));
+                    setEditError(null);
+                  }}
                 />
+                {editErrors.amount ? <p id={`${inputId}-amount-error`} role="alert" className="text-destructive text-sm">{editErrors.amount}</p> : null}
+                <Label htmlFor={`${inputId}-date`}>날짜/시각 (이 기기의 시간)</Label>
                 <Input
+                  id={`${inputId}-date`}
+                  ref={dateInput}
                   type="datetime-local"
-                  aria-label="날짜/시각"
+                  aria-invalid={Boolean(editErrors.occurredAt)}
+                  aria-describedby={editErrors.occurredAt ? `${inputId}-date-error` : undefined}
                   value={editDate}
                   disabled={busy}
-                  onChange={(e) => setEditDate(e.target.value)}
+                  className="min-h-11 min-w-0 w-full"
+                  onChange={(e) => {
+                    setEditDate(e.target.value);
+                    setEditErrors((errors) => ({ ...errors, occurredAt: undefined }));
+                    setEditError(null);
+                  }}
                 />
+                {editErrors.occurredAt ? <p id={`${inputId}-date-error`} role="alert" className="text-destructive text-sm">{editErrors.occurredAt}</p> : null}
               </div>
+              {editError ? <p role="alert" className="text-destructive text-sm">{editError}</p> : null}
               {!canEditAmount ? (
                 <p className="text-muted-foreground text-[12px]">
                   취소가 연결된 거래는 금액을 바꿀 수 없어요. 날짜만 수정돼요.
                 </p>
               ) : null}
-              <div className="flex justify-end gap-2">
+              <div className="sticky bottom-0 flex justify-end gap-2 bg-muted py-2" aria-busy={editSaving}>
                 <Button
                   type="button"
                   size="sm"
                   variant="ghost"
+                  className="min-h-11 min-w-20"
                   disabled={busy}
                   onClick={cancelEdit}
                 >
@@ -1393,13 +1501,11 @@ function TransactionDetailDialog({
                 <Button
                   type="button"
                   size="sm"
+                  className="min-h-11 min-w-20"
                   disabled={busy || !editDirty}
-                  onClick={() => {
-                    saveEdits();
-                    setEditing(false);
-                  }}
+                  onClick={() => void saveEdits()}
                 >
-                  저장
+                  {editSaving ? "저장 중…" : "저장"}
                 </Button>
               </div>
             </div>
@@ -1409,8 +1515,8 @@ function TransactionDetailDialog({
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => setEditing(true)}
-                  className="text-accent-foreground absolute top-3 right-3 text-[13px] font-medium disabled:opacity-50"
+                  onClick={startEdit}
+                  className="text-accent-foreground absolute top-1 right-1 min-h-11 min-w-11 px-2 text-[13px] font-medium disabled:opacity-50"
                 >
                   수정
                 </button>
@@ -1431,13 +1537,10 @@ function TransactionDetailDialog({
                 )}
               </span>
               {txn.originalCurrency && txn.originalAmount != null ? (
-                <span className="text-muted-foreground text-[13px]">
-                  해외 결제 {formatMoney(txn.originalAmount, txn.originalCurrency)}
-                  {txn.exchangeRate
-                    ? ` · 환율 ${txn.exchangeRate.toLocaleString("ko-KR", { maximumFractionDigits: 2 })}`
-                    : ""}{" "}
-                  (승인 시점 환산, 실제 청구액은 다를 수 있어요)
-                </span>
+                <div className="w-full text-center">
+                  <p className="text-muted-foreground text-[13px]">해외 결제 {formatMoney(txn.originalAmount, txn.originalCurrency)}</p>
+                  <TransactionFxDetails currency={txn.originalCurrency} exchangeRate={txn.exchangeRate} fx={txn.fx} />
+                </div>
               ) : null}
               {excluded ? (
                 <span className="bg-background text-muted-foreground mt-1 rounded-full px-2 py-0.5 text-xs font-medium">
@@ -1488,7 +1591,9 @@ function TransactionDetailDialog({
           )}
         </div>
 
-        <div className="flex flex-col gap-3">
+        {editNotice ? <p role="status" aria-live="polite" className="text-muted-foreground text-sm">{editNotice}</p> : null}
+
+        <div className="flex min-w-0 flex-col gap-3">
           {/* 카드 연결/재지정 — 미연결·모호(pending_review) 거래 해소 경로 */}
           <div className="flex flex-col gap-2">
             <Label htmlFor="detail-card">카드</Label>
@@ -1497,8 +1602,8 @@ function TransactionDetailDialog({
               disabled={busy}
               onValueChange={onChangeCard}
             >
-              <SelectTrigger id="detail-card" className="w-full">
-                <SelectValue placeholder="카드 미연결" />
+              <SelectTrigger id="detail-card" className="min-w-0 w-full max-w-full">
+                <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder="카드 미연결" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={CARD_NONE}>카드 미연결</SelectItem>
@@ -1524,8 +1629,8 @@ function TransactionDetailDialog({
               disabled={busy}
               onValueChange={onChangeCategory}
             >
-              <SelectTrigger id="detail-category" className="w-full">
-                <SelectValue placeholder="미분류" />
+              <SelectTrigger id="detail-category" className="min-w-0 w-full max-w-full">
+                <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder="미분류" />
               </SelectTrigger>
               <SelectContent>
                 {categoryOptions.map((o) => (
@@ -1610,8 +1715,8 @@ function TransactionDetailDialog({
               disabled={busy}
               onValueChange={onChangeVisibility}
             >
-              <SelectTrigger id="detail-visibility" className="w-full">
-                <SelectValue />
+              <SelectTrigger id="detail-visibility" className="min-w-0 w-full max-w-full">
+                <SelectValue className="min-w-0 flex-1 truncate text-left" />
               </SelectTrigger>
               <SelectContent>
                 {VISIBILITY_OPTIONS.map((o) => (
@@ -1681,7 +1786,7 @@ function TransactionDetailDialog({
             ) : null}
 
             {/* 하드 삭제(되돌리기 불가) — 확인 다이얼로그 경유 */}
-            <AlertDialog>
+            <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
               <AlertDialogTrigger asChild>
                 <Button
                   variant="ghost"
@@ -1725,11 +1830,30 @@ function TransactionDetailDialog({
             variant="ghost"
             className="h-11 w-full"
             disabled={busy}
-            onClick={onClose}
+            onClick={requestClose}
           >
             닫기
           </Button>
         </DialogFooter>
+        <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
+          <AlertDialogContent onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            (canEditAmount ? amountInput : dateInput).current?.focus();
+          }}>
+            <AlertDialogHeader>
+              <AlertDialogTitle>수정 내용을 버릴까요?</AlertDialogTitle>
+              <AlertDialogDescription>아직 저장하지 않은 금액과 날짜가 있어요.</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>계속 수정하기</AlertDialogCancel>
+              <AlertDialogAction onClick={() => {
+                editSession.current.invalidate();
+                setDiscardOpen(false);
+                onClose();
+              }}>버리고 닫기</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );
@@ -1738,6 +1862,13 @@ function TransactionDetailDialog({
 /* -------------------------------------------------------------------------- */
 /* Memo modal                                                                 */
 /* -------------------------------------------------------------------------- */
+
+/** Nested transaction dialogs take native back before the detail behind them. */
+function useTransactionModalBack(onClose: () => void, busy: boolean) {
+  const handler = useRef<(source: TransactionDetailBackSource) => void>(() => undefined);
+  handler.current = (source) => { if (source === "browser" || !busy) onClose(); };
+  useEffect(() => registerTransactionDetailBack(window, (source) => handler.current(source)), []);
+}
 
 function MemoModal({
   txn,
@@ -1750,9 +1881,10 @@ function MemoModal({
   onClose: () => void;
   onSave: (memo: string) => void;
 }>) {
+  useTransactionModalBack(onClose, busy);
   const [memo, setMemo] = useState(txn.memo ?? "");
   return (
-    <Dialog open onOpenChange={(v) => !v && onClose()}>
+    <Dialog open onOpenChange={(v) => !v && !busy && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>메모 남기기</DialogTitle>
@@ -1775,6 +1907,7 @@ function MemoModal({
           />
         </div>
         <DialogFooter className="flex-col gap-2 sm:flex-col">
+          {busy ? <p role="status" className="text-muted-foreground text-sm">저장 중이에요. 완료될 때까지 잠시 기다려 주세요.</p> : null}
           <Button
             variant="default"
             className="h-11 w-full"
@@ -1812,6 +1945,7 @@ function LinkCancellationModal({
   onClose: () => void;
   onConfirm: (approvalTransactionId: string) => void;
 }>) {
+  useTransactionModalBack(onClose, busy);
   const { authedFetch } = useAuth();
   const [selected, setSelected] = useState("");
   const [search, setSearch] = useState("");
@@ -1867,7 +2001,7 @@ function LinkCancellationModal({
   );
 
   return (
-    <Dialog open onOpenChange={(v) => !v && onClose()}>
+    <Dialog open onOpenChange={(v) => !v && !busy && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>어떤 결제를 취소한 건가요?</DialogTitle>
@@ -1966,6 +2100,7 @@ function LinkCancellationModal({
           )}
         </div>
         <DialogFooter className="flex-col gap-2 sm:flex-col">
+          {busy ? <p role="status" className="text-muted-foreground text-sm">연결 중이에요. 완료될 때까지 잠시 기다려 주세요.</p> : null}
           <Button
             variant="default"
             className="h-11 w-full"

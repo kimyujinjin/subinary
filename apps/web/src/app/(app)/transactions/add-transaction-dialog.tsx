@@ -10,10 +10,11 @@
  * 파싱 로직/스키마는 서버(@family/card-parsers, ManualEntryService)가 정본이며,
  * 여기선 입력 수집·미리보기 표시·상태 안내만 담당한다.
  * ------------------------------------------------------------------------- */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import {
   Dialog,
   DialogContent,
@@ -43,6 +44,8 @@ import {
   useParsePreview,
 } from "@/lib/queries";
 import { cn } from "@/lib/utils";
+import { postingConfirmed, postingMessage } from "@/lib/sms-posting";
+import { registerTransactionDetailBack } from "@/lib/transaction-detail-back";
 
 /** Select에서 "선택 안 함"을 표현하는 sentinel(Radix는 빈 문자열 value 금지). */
 const NONE = "__none__";
@@ -71,6 +74,10 @@ export function AddTransactionDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const inFlight = useRef(false);
+  const session = useRef(0);
+  const closeHandler = useRef<() => void>(() => undefined);
+  const [discardOpen, setDiscardOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("text");
 
   // 문자 붙여넣기 상태
@@ -93,7 +100,9 @@ export function AddTransactionDialog({
 
   // 다이얼로그 열릴 때마다 초기화.
   useEffect(() => {
+    session.current += 1;
     if (!open) return;
+    setDiscardOpen(false);
     setMode("text");
     setContent("");
     setAmount("");
@@ -104,9 +113,20 @@ export function AddTransactionDialog({
     preview.reset();
     textEntry.reset();
     fieldsEntry.reset();
+    return () => { session.current += 1; };
     // 초기화는 open 토글에만 반응(뮤테이션 identity는 안정적).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    return registerTransactionDetailBack(window, (source) => {
+      if (source === "browser") {
+        session.current += 1;
+        onOpenChange(false);
+      } else closeHandler.current();
+    });
+  }, [open, onOpenChange]);
 
   // 문자 입력 디바운스 → 파싱 미리보기.
   useEffect(() => {
@@ -120,10 +140,23 @@ export function AddTransactionDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content, mode]);
 
-  const previewData = preview.data;
+  const previewData = mode === "text" && preview.variables?.content === content.trim() ? preview.data : undefined;
   const canRegisterText = Boolean(previewData?.parseable);
 
   const submitting = textEntry.isPending || fieldsEntry.isPending;
+  const requestClose = () => {
+    if (inFlight.current) {
+      toast.message("등록 결과를 확인하고 있어요. 잠시 기다려 주세요.");
+      return;
+    }
+    if (discardOpen) { setDiscardOpen(false); return; }
+    if (content.trim() || amount.trim() || merchant.trim()) {
+      setDiscardOpen(true);
+      return;
+    }
+    onOpenChange(false);
+  };
+  closeHandler.current = requestClose;
 
   /** 미리보기 결과를 직접 입력 폼에 채우고 폼 모드로 전환. */
   function switchToFieldsPrefilled() {
@@ -151,34 +184,31 @@ export function AddTransactionDialog({
   }
 
   async function handleTextRegister() {
+    if (inFlight.current || !canRegisterText) return;
+    inFlight.current = true;
+    const activeSession = session.current;
     try {
       const res = await textEntry.mutateAsync({ content: content.trim() });
-      const status = res.detail.parseStatus;
-      if (status === "parsed") {
-        toast.success(res.detail.transactionType === "declined" ? "승인 거절 문자로 정리했어요. 지출에는 포함하지 않아요." : "거래가 등록됐어요");
-        onOpenChange(false);
-      } else if (status === "pending_review" || status === "quarantined") {
-        toast.message("확인이 필요한 문자예요. 할 일에서 원문과 금액을 확인해 주세요.");
-        onOpenChange(false);
-      } else if (status === "parse_failed") {
-        toast.error("자동 인식에 실패했어요. 직접 입력으로 등록해 주세요");
-        switchToFieldsPrefilled();
-      } else if (status === "ignored") {
-        toast.message("결제 내역이 아닌 안내 문자예요. 거래 금액에는 반영하지 않았어요.");
-        onOpenChange(false);
+      if (session.current !== activeSession) return;
+      const message = postingMessage(res.detail);
+      const reviewed = res.detail?.posting?.transactionStatus;
+      if (postingConfirmed(res.detail) && reviewed !== "pending_review" && reviewed !== "duplicate_suspected") {
+        toast.success(message);
       } else {
-        // 폴링 시간 내 미완료(드묾) — 곧 목록에 반영됨.
-        toast.message("등록 처리 중이에요. 잠시 후 목록에 반영됩니다");
-        onOpenChange(false);
+        toast.message(message, { duration: 8000 });
       }
+      onOpenChange(false);
     } catch (error) {
-      toast.error(errorMessage(error));
+      if (session.current === activeSession) toast.error(errorMessage(error));
+    } finally {
+      inFlight.current = false;
     }
   }
 
   async function handleFieldsRegister() {
+    if (inFlight.current) return;
     const amountInt = Number(amount.replace(/[,\s]/g, ""));
-    if (!Number.isInteger(amountInt) || amountInt <= 0) {
+    if (!Number.isSafeInteger(amountInt) || amountInt <= 0) {
       toast.error("금액을 올바르게 입력해 주세요");
       return;
     }
@@ -191,6 +221,8 @@ export function AddTransactionDialog({
       toast.error("날짜/시각을 올바르게 입력해 주세요");
       return;
     }
+    inFlight.current = true;
+    const activeSession = session.current;
     try {
       await fieldsEntry.mutateAsync({
         amount: amountInt,
@@ -201,10 +233,13 @@ export function AddTransactionDialog({
         cardId: cardId === NONE ? undefined : cardId,
         categoryId: categoryId === NONE ? undefined : categoryId,
       });
+      if (session.current !== activeSession) return;
       toast.success("거래가 등록됐어요");
       onOpenChange(false);
     } catch (error) {
-      toast.error(errorMessage(error));
+      if (session.current === activeSession) toast.error(errorMessage(error));
+    } finally {
+      inFlight.current = false;
     }
   }
 
@@ -215,8 +250,14 @@ export function AddTransactionDialog({
   );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+    <>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) requestClose(); }}>
+      <DialogContent
+        className="max-h-[90dvh] max-w-md overflow-y-auto overscroll-contain"
+        onEscapeKeyDown={(event) => { if (inFlight.current) event.preventDefault(); }}
+        onInteractOutside={(event) => { if (inFlight.current) event.preventDefault(); }}
+      >
+        <fieldset disabled={submitting} className="contents">
         <DialogHeader>
           <DialogTitle>거래 추가</DialogTitle>
           <DialogDescription>
@@ -224,6 +265,7 @@ export function AddTransactionDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {submitting ? <p role="status" className="text-muted-foreground text-sm">등록 결과를 확인하고 있어요. 중복 등록을 막기 위해 잠시 기다려 주세요.</p> : null}
         {/* 모드 탭 */}
         <div className="bg-muted flex gap-1 rounded-xl p-1">
           {(
@@ -312,7 +354,7 @@ export function AddTransactionDialog({
               <Button
                 type="button"
                 variant="ghost"
-                onClick={() => onOpenChange(false)}
+                onClick={requestClose}
               >
                 취소
               </Button>
@@ -392,7 +434,7 @@ export function AddTransactionDialog({
               <Button
                 type="button"
                 variant="ghost"
-                onClick={() => onOpenChange(false)}
+                onClick={requestClose}
               >
                 취소
               </Button>
@@ -406,7 +448,18 @@ export function AddTransactionDialog({
             </DialogFooter>
           </div>
         )}
+        </fieldset>
       </DialogContent>
     </Dialog>
+    <AlertDialog open={open && discardOpen} onOpenChange={setDiscardOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader><AlertDialogTitle>입력을 그만둘까요?</AlertDialogTitle><AlertDialogDescription>아직 등록하지 않은 입력은 사라져요.</AlertDialogDescription></AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>계속 입력</AlertDialogCancel>
+          <AlertDialogAction onClick={() => { setDiscardOpen(false); onOpenChange(false); }}>입력 버리기</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }

@@ -20,6 +20,7 @@ import { decideBackAction } from "@/lib/back-button";
 import { consumeGameBack } from "@/lib/game-navigation";
 import { noteInAppNavigation } from "@/lib/nav-history";
 import { canGoBackInApp } from "@/lib/nav-history";
+import { dispatchTransactionDetailBack } from "@/lib/transaction-detail-back";
 import { isTabRoot, normalizePath } from "@/lib/nav-tabs";
 import {
   applyStatusBarStyle,
@@ -45,6 +46,7 @@ export function NativeBootstrap() {
     void initNative({
       onDeepLink: (path) => router.push(path),
       onBackButton: () => {
+        if (!dispatchTransactionDetailBack(window)) return;
         const path = pathnameRef.current;
         if (normalizePath(path) === "/play/app") {
           if (!consumeGameBack()) router.replace("/play");

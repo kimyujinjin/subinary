@@ -53,6 +53,7 @@ import {
 import { useAuth } from "./auth-context";
 import { useHousehold } from "./household-context";
 import { TRANSACTION_SCOPE_KEYS } from "./invalidation-scope";
+import { pollAcceptedPosting } from "./sms-posting";
 
 export { TRANSACTION_SCOPE_KEYS };
 
@@ -387,6 +388,24 @@ export function useCardSmsReviewInbox(
           { accessToken: token },
         ),
       ),
+  });
+}
+
+/** Unposted messages use a separate query; successful parsing is not posting. */
+export function useUnpostedSms(): UseQueryResult<CardSmsEventSummary[]> {
+  const { householdId, authedFetch, enabled } = useHouseholdScope();
+  return useQuery({
+    queryKey: ["card-sms-events", householdId, "unposted"],
+    enabled,
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const items = await authedFetch((token) => apiFetch<CardSmsEventSummary[]>(
+        `/v1/card-sms-events?householdId=${encodeURIComponent(householdId as string)}&posting=unposted&limit=${REVIEW_SCAN_LIMIT}`,
+        { accessToken: token },
+      ));
+      // An older API may ignore the filter; never label its unrelated rows pending.
+      return items.filter((item) => item.posting?.status === "pending" || item.posting?.status === "needs_review");
+    },
   });
 }
 
@@ -858,16 +877,11 @@ export function useManualTextEntry() {
           ...input,
         }),
       );
-      let detail = await authedFetch((token) =>
-        api.cardSms.eventStatus(token, res.cardSmsEventId),
+      const status = await pollAcceptedPosting(
+        () => authedFetch((token) => api.cardSms.postingStatus(token, res.cardSmsEventId)),
+        () => new Promise((resolve) => setTimeout(resolve, 900)),
       );
-      for (let i = 0; i < 15 && detail.parseStatus === "pending"; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 900));
-        detail = await authedFetch((token) =>
-          api.cardSms.eventStatus(token, res.cardSmsEventId),
-        );
-      }
-      return { ...res, detail };
+      return { ...res, ...status };
     },
     onSuccess: () => invalidateTransactionScope(qc),
   });

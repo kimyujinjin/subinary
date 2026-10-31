@@ -74,6 +74,7 @@ import { moneyRejectionToHttp } from '../money/money-rejection';
 import { MoneyShadowService } from '../money/money-shadow.service';
 import { MoneyWriteService } from '../money/money-write.service';
 import { RealtimePublisherService } from '../realtime/realtime-publisher.service';
+import { transactionFx, transactionFxColumns, type TransactionFxSnapshot } from './transaction-fx';
 import {
   actorCanSeeApproval,
   cancellationCandidateFilter,
@@ -313,12 +314,14 @@ export class TransactionService {
       .select({
         txn: schema.cardTransactions,
         categorySlug: schema.expenseCategories.slug,
+        fxSnapshot: transactionFxColumns,
       })
       .from(schema.cardTransactions)
       .leftJoin(
         schema.expenseCategories,
         eq(schema.cardTransactions.categoryId, schema.expenseCategories.id),
       )
+      .leftJoin(schema.fxRateSnapshots, eq(schema.cardTransactions.fxRateSnapshotId, schema.fxRateSnapshots.id))
       .where(and(...conditions))
       .orderBy(
         desc(schema.cardTransactions.createdAt),
@@ -337,7 +340,7 @@ export class TransactionService {
     }
 
     const items = page.map((r) =>
-      buildSummary(r.txn, r.categorySlug, maskedFor(r.txn, actor.memberId)),
+      buildSummary(r.txn, r.categorySlug, maskedFor(r.txn, actor.memberId), r.fxSnapshot),
     );
     return { items, nextCursor };
   }
@@ -362,6 +365,7 @@ export class TransactionService {
       row.txn,
       row.categorySlug,
       maskedFor(row.txn, actor.memberId),
+      row.fxSnapshot,
     );
   }
 
@@ -899,6 +903,7 @@ export class TransactionService {
       row.txn,
       row.categorySlug,
       maskedFor(row.txn, actor.memberId),
+      row.fxSnapshot,
     );
   }
 
@@ -948,17 +953,19 @@ export class TransactionService {
       .select({
         txn: schema.cardTransactions,
         categorySlug: schema.expenseCategories.slug,
+        fxSnapshot: transactionFxColumns,
       })
       .from(schema.cardTransactions)
       .leftJoin(
         schema.expenseCategories,
         eq(schema.cardTransactions.categoryId, schema.expenseCategories.id),
       )
+      .leftJoin(schema.fxRateSnapshots, eq(schema.cardTransactions.fxRateSnapshotId, schema.fxRateSnapshots.id))
       .where(cancellationCandidateFilter(cancellation, actor.memberId))
       .orderBy(...cancellationCandidateOrder(cancellation));
 
     const items = rows.map((r) =>
-      buildSummary(r.txn, r.categorySlug, maskedFor(r.txn, actor.memberId)),
+      buildSummary(r.txn, r.categorySlug, maskedFor(r.txn, actor.memberId), r.fxSnapshot),
     );
     return { items, nextCursor: null };
   }
@@ -1040,6 +1047,7 @@ export class TransactionService {
       row.txn,
       row.categorySlug,
       maskedFor(row.txn, actor.memberId),
+      row.fxSnapshot,
     );
   }
 
@@ -1063,6 +1071,7 @@ export class TransactionService {
       row.txn,
       row.categorySlug,
       maskedFor(row.txn, actor.memberId),
+      row.fxSnapshot,
     );
   }
 
@@ -1093,6 +1102,7 @@ export class TransactionService {
       row.txn,
       row.categorySlug,
       maskedFor(row.txn, actor.memberId),
+      row.fxSnapshot,
     );
   }
 
@@ -1120,6 +1130,7 @@ export class TransactionService {
       row.txn,
       row.categorySlug,
       maskedFor(row.txn, actor.memberId),
+      row.fxSnapshot,
     );
   }
 
@@ -1143,6 +1154,7 @@ export class TransactionService {
       row.txn,
       row.categorySlug,
       maskedFor(row.txn, actor.memberId),
+      row.fxSnapshot,
     );
   }
 
@@ -1275,17 +1287,19 @@ export class TransactionService {
   /** Loads a transaction row joined with its category slug, or throws 404. */
   private async loadSummaryRow(
     id: string,
-  ): Promise<{ txn: schema.CardTransaction; categorySlug: string | null }> {
+  ): Promise<{ txn: schema.CardTransaction; categorySlug: string | null; fxSnapshot: TransactionFxSnapshot | null }> {
     const [row] = await this.db
       .select({
         txn: schema.cardTransactions,
         categorySlug: schema.expenseCategories.slug,
+        fxSnapshot: transactionFxColumns,
       })
       .from(schema.cardTransactions)
       .leftJoin(
         schema.expenseCategories,
         eq(schema.cardTransactions.categoryId, schema.expenseCategories.id),
       )
+      .leftJoin(schema.fxRateSnapshots, eq(schema.cardTransactions.fxRateSnapshotId, schema.fxRateSnapshots.id))
       .where(eq(schema.cardTransactions.id, id))
       .limit(1);
     if (!row) {
@@ -1486,6 +1500,7 @@ export function buildSummary(
   txn: schema.CardTransaction,
   categorySlug: string | null,
   masked: boolean,
+  fxSnapshot?: TransactionFxSnapshot | null,
 ): TransactionSummary {
   return {
     id: txn.id,
@@ -1501,6 +1516,7 @@ export function buildSummary(
     originalAmount: txn.originalAmount,
     originalCurrency: txn.originalCurrency,
     exchangeRate: txn.exchangeRate,
+    fx: transactionFx(txn, fxSnapshot, masked),
     merchantRaw: masked ? null : txn.merchantRaw,
     merchantNormalized: masked ? null : txn.merchantNormalized,
     categoryId: txn.categoryId,

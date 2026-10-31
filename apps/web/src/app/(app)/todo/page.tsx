@@ -45,6 +45,7 @@ import { useCardList, useCardSmsReviewGroups, useDisableSmsReviewPolicy } from "
 import { Button } from "@/components/ui/button";
 import { transactionDetailHref } from "@/lib/deep-link";
 import { formatDate, formatMoney, formatRelativeTime, formatWon } from "@/lib/format";
+import { postingMessage } from "@/lib/sms-posting";
 
 export default function TodoPage() {
   // 확정·제외 직후 캐시를 갱신하고, 문자 자동 정리가 대기 중이면 해당 묶음만 다시 읽는다.
@@ -64,11 +65,11 @@ export default function TodoPage() {
   }, []);
 
   const loading =
-    todo.declinesLoading || todo.reviewsLoading || smsGroups.isLoading;
-  const anyError = todo.declinesError || todo.reviewsError || smsGroups.isError;
+    todo.declinesLoading || todo.reviewsLoading || smsGroups.isLoading || todo.unpostedLoading;
+  const anyError = todo.declinesError || todo.reviewsError || smsGroups.isError || todo.unpostedError;
   // 빈 상태는 **다 읽어낸 뒤에만** 보여준다. 못 읽은 것을 "할 일 없음"으로 쓰면
   // 사용자는 처리할 게 없다고 믿는다.
-  const showEmpty = !loading && !anyError && todo.declines.length + todo.reviews.length + groups.length === 0;
+  const showEmpty = !loading && !anyError && todo.declines.length + todo.reviews.length + groups.length + todo.unposted.length === 0;
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-5">
@@ -175,6 +176,23 @@ export default function TodoPage() {
             valueSub={<StatusBadge status={t.status} />}
             chevron
           />
+        ))}
+      </Section>
+
+      <Section
+        show={todo.unpostedError || todo.unposted.length > 0}
+        title="아직 거래에 반영되지 않았어요"
+        description="접수된 문자와 실제 거래 반영을 따로 확인해요. 같은 문자를 다시 등록할 필요는 없어요."
+        countText={pendingCountText(todo.unpostedLoading, todo.unpostedError, todo.unposted.length, todo.unpostedTruncated)}
+        error={todo.unpostedError}
+        errorText="거래 반영 상태를 확인하지 못했어요. 잠시 후 새로고침해 주세요."
+        footer={todo.unpostedTruncated ? <p className="text-muted-foreground px-4 py-3 text-xs">최근 미반영 {todo.unposted.length}건이에요. 반영되면 이전 내역이 이어서 나타나요.</p> : null}
+      >
+        {todo.unposted.map((event) => (
+          <div key={event.id} className="space-y-1 px-3 py-3">
+            <p className="text-sm font-medium">{event.currency ?? "통화 확인 중"} · {formatRelativeTime(event.receivedAt)}</p>
+            <p className="text-muted-foreground text-sm leading-relaxed">{postingMessage(event)}</p>
+          </div>
         ))}
       </Section>
 
