@@ -495,7 +495,7 @@ export default function CardsPage() {
                           </DropdownMenuItem>
                           {canCorrectCardLast4(c, myMemberId, activeMembership?.role) ? (
                             <DropdownMenuItem
-                              disabled={updateMutation.isPending || correction.isPending || cardsQuery.isFetching}
+                              disabled={updateMutation.isPending || correction.isPending || correction.cardPending(c.id, c.householdId) || cardsQuery.isFetching}
                               onSelect={() => setCorrecting(c)}
                             >
                               뒤 4자리 정정
@@ -556,8 +556,10 @@ export default function CardsPage() {
           card={correcting}
           ownerLabelOf={(card) => cardOwnerLabel(card, memberNames)}
           canManage={(card) => canCorrectCardLast4(card, myMemberId, activeMembership?.role)}
+          readRequired={correction.requiresRead(correcting.id, correcting.householdId)}
+          attemptPending={correction.cardPending(correcting.id, correcting.householdId)}
           onCorrect={(body) => correction.mutateAsync({ id: correcting.id, householdId: correcting.householdId, body })}
-          onRefresh={() => correction.refresh(correcting.id, correcting.householdId)}
+          onRefresh={(signal) => correction.refresh(correcting.id, correcting.householdId, signal)}
           onClose={() => setCorrecting(null)}
         />
       ) : null}

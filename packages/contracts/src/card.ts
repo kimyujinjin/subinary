@@ -51,6 +51,7 @@ const last4DigitsSchema = z.string().length(4).regex(/^[0-9]{4}$/, 'last4 must b
 export const cardLast4CorrectionRequestSchema = z.object({
   last4: last4DigitsSchema,
   expectedLast4: last4DigitsSchema.nullable(),
+  expectedOwnerMemberId: z.string().uuid(),
 }).strict();
 export type CardLast4CorrectionRequest = z.infer<typeof cardLast4CorrectionRequestSchema>;
 

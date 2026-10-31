@@ -365,7 +365,7 @@ export class CardService {
     // This service can also be called directly, without the HTTP validation pipe.
     const parsed = cardLast4CorrectionRequestSchema.safeParse(input);
     if (!parsed.success) throw new BadRequestException('카드 뒤 4자리와 변경 전 번호를 확인해 주세요.');
-    const { last4, expectedLast4 } = parsed.data;
+    const { last4, expectedLast4, expectedOwnerMemberId } = parsed.data;
     const initial = await this.loadCard(id);
     const initialMember = await this.requireMembership(initial.householdId, userId);
     this.assertCanCorrectLast4(initialMember, initial);
@@ -387,6 +387,7 @@ export class CardService {
         const target = cards.find(card => card.id === id);
         if (!target) throw new NotFoundException('card not found');
         this.assertCanCorrectLast4(member, target);
+        if (target.ownerMemberId !== expectedOwnerMemberId) throw this.last4Stale();
 
         // Legacy decoration such as ****1234 is understood, but a PAN or malformed
         // non-null value is never truncated or guessed to mean an unregistered card.

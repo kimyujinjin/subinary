@@ -15,6 +15,7 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query";
+import { useSyncExternalStore } from "react";
 
 import type {
   CardSmsDeclineDismissResponse,
@@ -24,7 +25,6 @@ import type {
   CardSmsReviewPolicy,
   CardBreakdown,
   CardSummary,
-  CardLast4CorrectionRequest,
   CategoryBreakdown,
   CategorySummary,
   DeviceSummary,
@@ -55,7 +55,7 @@ import { useAuth } from "./auth-context";
 import { useHousehold } from "./household-context";
 import { TRANSACTION_SCOPE_KEYS } from "./invalidation-scope";
 import { pollAcceptedPosting } from "./sms-posting";
-import { correctionError, writeCorrectedCard } from "./card-last4-correction";
+import { beginCardCorrectionRead, cardCorrectionIsPending, cardCorrectionRequiresRead, cardCorrectionStateVersion, cardLast4MutationOptions, subscribeCardCorrectionState, writeCorrectedCard } from "./card-last4-correction";
 
 export { TRANSACTION_SCOPE_KEYS };
 
@@ -323,11 +323,16 @@ export function useDevices(
 
 export function useCardList(): UseQueryResult<CardSummary[]> {
   const { householdId, authedFetch, enabled } = useHouseholdScope();
+  const qc = useQueryClient();
   return useQuery({
     queryKey: queryKeys.cards(householdId),
     enabled,
-    queryFn: () =>
-      authedFetch((token) => api.cards.list(token, householdId as string)),
+    queryFn: async ({ signal }) => {
+      const confirm = beginCardCorrectionRead(qc, householdId as string, signal);
+      const result = await authedFetch((token) => api.cards.list(token, householdId as string, signal));
+      confirm(result);
+      return result;
+    },
   });
 }
 
@@ -335,28 +340,27 @@ export function useCardList(): UseQueryResult<CardSummary[]> {
 export function useCardLast4Correction() {
   const { authedFetch } = useHouseholdScope();
   const qc = useQueryClient();
-  const mutation = useMutation({
-    retry: false,
-    onMutate: (input: { id: string; householdId: string; body: CardLast4CorrectionRequest }) =>
-      qc.cancelQueries({ queryKey: queryKeys.cards(input.householdId) }),
-    mutationFn: async (input: { id: string; householdId: string; body: CardLast4CorrectionRequest }) => {
-      const result = await authedFetch((token) => api.cards.correctLast4(token, input.id, input.body));
-      if (result.id !== input.id || result.householdId !== input.householdId) throw new Error("card_response_scope_mismatch");
-      return result;
-    },
-    onSuccess: (result) => writeCorrectedCard(qc, result),
-    onError: (error, input) => {
-      if (correctionError(error).readRequired) void qc.invalidateQueries({ queryKey: queryKeys.cards(input.householdId) });
-    },
-  });
-  const refresh = async (id: string, householdId: string) => {
+  useSyncExternalStore((notify) => subscribeCardCorrectionState(qc, notify),
+    () => cardCorrectionStateVersion(qc), () => 0);
+  const mutation = useMutation(cardLast4MutationOptions(qc, (input, guard) =>
+    authedFetch((token) => {
+      guard();
+      return api.cards.correctLast4(token, input.id, input.body);
+    })));
+  const refresh = async (id: string, householdId: string, signal?: AbortSignal) => {
     await qc.cancelQueries({ queryKey: queryKeys.cards(householdId) });
-    const result = await authedFetch((token) => api.cards.get(token, id));
+    const confirm = beginCardCorrectionRead(qc, householdId, signal);
+    const result = await authedFetch((token) => api.cards.get(token, id, signal));
+    if (signal?.aborted) throw new Error("card_current_read_cancelled");
     if (result.id !== id || result.householdId !== householdId) throw new Error("card_response_scope_mismatch");
+    confirm([result]);
     writeCorrectedCard(qc, result);
     return result;
   };
-  return { ...mutation, refresh };
+  return { ...mutation, refresh,
+    requiresRead: (id: string, householdId: string) => cardCorrectionRequiresRead(qc, householdId, id),
+    cardPending: (id: string, householdId: string) => cardCorrectionIsPending(qc, householdId, id),
+  };
 }
 
 export function useCategoryList(): UseQueryResult<CategorySummary[]> {

@@ -1,22 +1,29 @@
-import { QueryClient } from "@tanstack/react-query";
+import { MutationObserver, onlineManager, QueryClient } from "@tanstack/react-query";
 import type { CardSummary } from "@family/contracts";
 import { describe, expect, it, vi } from "vitest";
-import { acceptsLast4Insertion, canCorrectCardLast4, cardLast4, correctionError, correctionRequest, createCardCorrectionReadGate, hasUnknownCardLast4, writeCorrectedCard } from "./card-last4-correction";
+import { acceptsLast4Insertion, assertCardCorrectionReady, beginCardCorrectionRead, canCorrectCardLast4, CardCorrectionPendingError, CardCorrectionReadRequiredError, cardCorrectionIsPending, cardCorrectionRequiresRead, cardLast4, cardLast4MutationOptions, correctionError, correctionRequest, createCardCorrectionReadGate, hasUnknownCardLast4, markCardCorrectionUncertain, subscribeCardCorrectionState, writeCorrectedCard } from "./card-last4-correction";
 import { createTransactionEditSession } from "./transaction-edit";
 import { dispatchTransactionDetailBack, registerTransactionDetailBack } from "./transaction-detail-back";
 
-const card = { id: "synthetic-card", householdId: "synthetic-family", ownerMemberId: "synthetic-owner", alias: "합성 카드", issuer: "합성", maskedNumber: "1234" } as CardSummary;
+const ownerId = "11111111-1111-4111-8111-111111111111";
+const card = { id: "synthetic-card", householdId: "synthetic-family", ownerMemberId: ownerId, alias: "합성 카드", issuer: "합성", maskedNumber: "1234" } as CardSummary;
 vi.mock("./native", () => ({ isNative: () => false }));
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
 
 describe("card last4 correction boundary", () => {
   it.each(["", "123", "12345", "4111111111111111", "12 34", "１２３４", "١٢٣٤", "1e03", "••••1234"])("rejects %j without truncating or filtering", (draft) => {
-    expect(correctionRequest(draft, "5678").ok).toBe(false);
+    expect(correctionRequest(draft, "5678", ownerId).ok).toBe(false);
   });
-  it("preserves leading zeroes, captures the old key, and sends only two allowed fields", () => {
-    expect(correctionRequest("0012", "1234")).toEqual({ ok: true, body: { last4: "0012", expectedLast4: "1234" } });
-    expect(correctionRequest("0000", null)).toEqual({ ok: true, body: { last4: "0000", expectedLast4: null } });
-    expect(correctionRequest("1234", "1234").ok).toBe(false);
-    expect(correctionRequest("0012", "4111111111111111").ok).toBe(false);
+  it("preserves leading zeroes and captures both the displayed old number and owner", () => {
+    expect(correctionRequest("0012", "1234", ownerId)).toEqual({ ok: true, body: { last4: "0012", expectedLast4: "1234", expectedOwnerMemberId: ownerId } });
+    expect(correctionRequest("0000", null, ownerId)).toEqual({ ok: true, body: { last4: "0000", expectedLast4: null, expectedOwnerMemberId: ownerId } });
+    expect(correctionRequest("1234", "1234", ownerId).ok).toBe(false);
+    expect(correctionRequest("0012", "4111111111111111", ownerId).ok).toBe(false);
   });
   it("reads masked historical formats but never derives last4 from a full PAN", () => {
     expect(cardLast4("•••• 0012")).toBe("0012");
@@ -36,7 +43,7 @@ describe("card last4 correction boundary", () => {
     expect(acceptsLast4Insertion("", "１２３４")).toBe(false);
   });
   it("shows the action only for the owner or a household owner/admin", () => {
-    expect(canCorrectCardLast4(card, "synthetic-owner", "member")).toBe(true);
+    expect(canCorrectCardLast4(card, ownerId, "member")).toBe(true);
     expect(canCorrectCardLast4(card, "other", "owner")).toBe(true);
     expect(canCorrectCardLast4(card, "other", "admin")).toBe(true);
     expect(canCorrectCardLast4(card, "other", "member")).toBe(false);
@@ -47,12 +54,12 @@ describe("card last4 correction boundary", () => {
     expect(correctionError({ status: 403 }).message).toContain("권한");
     expect(correctionError(new TypeError("synthetic network")).message).toContain("입력은 그대로");
     expect(correctionError({ status: 409, body: { private: "SYNTHETIC_MARKER" } }).message).not.toContain("SYNTHETIC_MARKER");
-    expect(correctionError({ status: 409, body: { code: "card_last4_stale" } }).message).toContain("변경");
+    expect(correctionError({ status: 409, body: { code: "card_last4_stale" } }).message).toContain("확인하지 못");
     expect(correctionError({ status: 409, body: { code: "card_last4_conflict" } }).message).toContain("활성 카드");
-    expect(correctionError({ status: 409, serverMessage: "card_last4_stale" }).message).toContain("변경");
+    expect(correctionError({ status: 409, serverMessage: "card_last4_stale" }).message).toContain("확인하지 못");
     expect(correctionError({ status: 409, serverMessage: "duplicate card" }).message).toContain("활성 카드");
     expect(correctionError({ status: 409, serverMessage: "같은 조건으로 자동 연결되는 카드가 이미 있어요. 카드 목록을 확인해 주세요." }).message).toContain("활성 카드");
-    expect(correctionError({ status: 409, serverMessage: "카드 정보가 변경됐거나 번호를 확인할 수 없어요. 카드 목록을 다시 확인해 주세요." }).message).toContain("변경");
+    expect(correctionError({ status: 409, serverMessage: "카드 정보가 변경됐거나 번호를 확인할 수 없어요. 카드 목록을 다시 확인해 주세요." }).message).toContain("확인하지 못");
   });
   it("calls only the dedicated endpoint and strips unrelated owner/alias fields before transport", async () => {
     vi.stubEnv("NEXT_PUBLIC_API_URL", "http://synthetic.invalid");
@@ -60,13 +67,168 @@ describe("card last4 correction boundary", () => {
     vi.stubGlobal("fetch", fetch);
     try {
       const { api } = await import("./api-client");
-      const body = { last4: "0012", expectedLast4: "1234", ownerMemberId: "must-not-send", alias: "must-not-send" };
+      const body = { last4: "0012", expectedLast4: "1234", expectedOwnerMemberId: ownerId, ownerMemberId: "must-not-send", alias: "must-not-send" };
       await api.cards.correctLast4("synthetic-token", "synthetic/card", body);
       const [url, options] = fetch.mock.calls[0] as unknown as [string, RequestInit];
       expect(url).toBe("http://synthetic.invalid/v1/cards/synthetic%2Fcard/last4");
       expect(options.method).toBe("PATCH");
-      expect(JSON.parse(String(options.body))).toEqual({ last4: "0012", expectedLast4: "1234" });
+      expect(JSON.parse(String(options.body))).toEqual({ last4: "0012", expectedLast4: "1234", expectedOwnerMemberId: ownerId });
     } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+  });
+});
+
+describe("QueryClient-scoped uncertain correction proof", () => {
+  const input = { id: card.id, householdId: card.householdId, body: {
+    last4: "0012", expectedLast4: "1234", expectedOwnerMemberId: ownerId,
+  } };
+
+  it("survives close/remount/household changes and cache writes without persisting anything on reload", () => {
+    const qc = new QueryClient(); const notify = vi.fn();
+    const unmount = subscribeCardCorrectionState(qc, notify);
+    markCardCorrectionUncertain(qc, card.householdId, card.id);
+    expect(notify).toHaveBeenCalledTimes(1); unmount();
+    const remount = subscribeCardCorrectionState(qc, notify);
+    expect(cardCorrectionRequiresRead(qc, card.householdId, card.id)).toBe(true);
+    expect(cardCorrectionRequiresRead(qc, "other-family", card.id)).toBe(false);
+    writeCorrectedCard(qc, card);
+    expect(cardCorrectionRequiresRead(qc, card.householdId, card.id)).toBe(true);
+    beginCardCorrectionRead(qc, "other-family")([{ ...card, householdId: "other-family" }]);
+    expect(() => assertCardCorrectionReady(qc, card.householdId, card.id)).toThrow(CardCorrectionReadRequiredError);
+    remount();
+    beginCardCorrectionRead(qc, card.householdId)([card]);
+    expect(notify).toHaveBeenCalledTimes(1);
+    const reloaded = new QueryClient();
+    expect(reloaded.getQueryData(["cards", card.householdId])).toBeUndefined();
+    qc.clear(); reloaded.clear();
+  });
+
+  it("accepts only the same card/household and current uncertainty epoch, never an older GET", () => {
+    const qc = new QueryClient();
+    const beforeFailure = beginCardCorrectionRead(qc, card.householdId);
+    markCardCorrectionUncertain(qc, card.householdId, card.id);
+    beforeFailure([card]); expect(cardCorrectionRequiresRead(qc, card.householdId, card.id)).toBe(true);
+    const beforeSecondFailure = beginCardCorrectionRead(qc, card.householdId);
+    markCardCorrectionUncertain(qc, card.householdId, card.id);
+    beforeSecondFailure([card]); expect(cardCorrectionRequiresRead(qc, card.householdId, card.id)).toBe(true);
+    const current = beginCardCorrectionRead(qc, card.householdId);
+    current([{ ...card, householdId: "wrong-family" }, { ...card, id: "other-card" }]);
+    expect(cardCorrectionRequiresRead(qc, card.householdId, card.id)).toBe(true);
+    current([card]); expect(cardCorrectionRequiresRead(qc, card.householdId, card.id)).toBe(false);
+    qc.clear();
+  });
+
+  it("does not accept the late result of a cancelled real QueryClient GET", async () => {
+    const qc = new QueryClient(); const key = ["cards", card.householdId];
+    const response = deferred<CardSummary[]>(); const started = deferred<void>(); const finished = deferred<void>();
+    const old = qc.fetchQuery({ queryKey: key, queryFn: async ({ signal }) => {
+      const confirm = beginCardCorrectionRead(qc, card.householdId, signal); started.resolve();
+      try { const rows = await response.promise; confirm(rows); return rows; }
+      finally { finished.resolve(); }
+    } }).catch(() => undefined);
+    await started.promise;
+    markCardCorrectionUncertain(qc, card.householdId, card.id);
+    await qc.cancelQueries({ queryKey: key });
+    response.resolve([card]); await finished.promise; await old;
+    expect(cardCorrectionRequiresRead(qc, card.householdId, card.id)).toBe(true);
+    const cancelled = new AbortController();
+    const complete = beginCardCorrectionRead(qc, card.householdId, cancelled.signal);
+    cancelled.abort(); complete([card]);
+    expect(cardCorrectionRequiresRead(qc, card.householdId, card.id)).toBe(true);
+    qc.clear();
+  });
+
+  it("blocks the actual mutation boundary with successful stale cache and paused/cancelled GET until a fresh GET succeeds", async () => {
+    const qc = new QueryClient(); const key = ["cards", card.householdId]; const wasOnline = onlineManager.isOnline();
+    const send = vi.fn(async () => ({ ...card, maskedNumber: "0012" }));
+    const options = cardLast4MutationOptions(qc, send);
+    const mutation = new MutationObserver(qc, options);
+    qc.setQueryData(key, [card]); markCardCorrectionUncertain(qc, card.householdId, card.id);
+    onlineManager.setOnline(false);
+    const get = vi.fn(async () => [card]);
+    try {
+      const paused = qc.fetchQuery({ queryKey: key, queryFn: async ({ signal }) => {
+        const confirm = beginCardCorrectionRead(qc, card.householdId, signal);
+        const rows = await get(); confirm(rows); return rows;
+      } }).catch(() => undefined);
+      expect(qc.getQueryState(key)).toMatchObject({ status: "success", fetchStatus: "paused" });
+      await expect(mutation.mutate(input)).rejects.toBeInstanceOf(CardCorrectionReadRequiredError);
+      await expect(options.mutationFn(input)).rejects.toBeInstanceOf(CardCorrectionReadRequiredError);
+      expect(send).not.toHaveBeenCalled(); expect(get).not.toHaveBeenCalled();
+      await qc.cancelQueries({ queryKey: key }); await paused;
+      expect(cardCorrectionRequiresRead(qc, card.householdId, card.id)).toBe(true);
+      onlineManager.setOnline(true);
+      await qc.fetchQuery({ queryKey: key, queryFn: async ({ signal }) => {
+        const confirm = beginCardCorrectionRead(qc, card.householdId, signal);
+        const rows = await get(); confirm(rows); return rows;
+      } });
+      expect(cardCorrectionRequiresRead(qc, card.householdId, card.id)).toBe(false);
+      await mutation.mutate(input);
+      expect(send).toHaveBeenCalledExactlyOnceWith(input, expect.any(Function));
+    } finally { await qc.cancelQueries(); qc.clear(); onlineManager.setOnline(wasOnline); }
+  });
+
+  it("rechecks between onMutate and PATCH and records an uncertain response outside the view", async () => {
+    const qc = new QueryClient(); const send = vi.fn(async () => card);
+    const options = cardLast4MutationOptions(qc, send);
+    await options.onMutate(input);
+    markCardCorrectionUncertain(qc, card.householdId, card.id);
+    await expect(options.mutationFn(input)).rejects.toBeInstanceOf(CardCorrectionReadRequiredError);
+    expect(send).not.toHaveBeenCalled();
+    beginCardCorrectionRead(qc, card.householdId)([card]);
+    const lost = new MutationObserver(qc, cardLast4MutationOptions(qc, async () => { throw new TypeError("synthetic lost response"); }));
+    await expect(lost.mutate(input)).rejects.toThrow("synthetic lost response");
+    expect(cardCorrectionRequiresRead(qc, card.householdId, card.id)).toBe(true);
+    qc.clear();
+  });
+
+  it.each([
+    { name: "wrong last4", result: { ...card, maskedNumber: "9999" } },
+    { name: "different owner", result: { ...card, maskedNumber: "0012", ownerMemberId: "22222222-2222-4222-8222-222222222222" } },
+  ])("requires a new GET and does not cache an HTTP success with $name", async ({ result }) => {
+    const qc = new QueryClient(); qc.setQueryData(["cards", card.householdId], [card]);
+    const mutation = new MutationObserver(qc, cardLast4MutationOptions(qc, async () => result));
+    await expect(mutation.mutate(input)).rejects.toThrow("card_response_confirmation_mismatch");
+    expect(qc.getQueryData(["cards", card.householdId])).toEqual([card]);
+    expect(cardCorrectionIsPending(qc, card.householdId, card.id)).toBe(false);
+    expect(cardCorrectionRequiresRead(qc, card.householdId, card.id)).toBe(true);
+    const retry = vi.fn(async () => ({ ...card, maskedNumber: "0012" }));
+    const reopened = new MutationObserver(qc, cardLast4MutationOptions(qc, retry));
+    await expect(reopened.mutate(input)).rejects.toBeInstanceOf(CardCorrectionReadRequiredError);
+    expect(retry).not.toHaveBeenCalled(); qc.clear();
+  });
+
+  it("keeps one owned PATCH across remounts and ignores GETs begun during pending when it becomes uncertain", async () => {
+    const qc = new QueryClient(); const response = deferred<CardSummary>(); const started = deferred<void>();
+    let oldGuard!: () => void;
+    const send = vi.fn(async (_input, guard: () => void) => { oldGuard = guard; started.resolve(); return response.promise; });
+    const firstView = new MutationObserver(qc, cardLast4MutationOptions(qc, send));
+    const first = firstView.mutate(input).catch(() => undefined);
+    await started.promise;
+    expect(cardCorrectionIsPending(qc, card.householdId, card.id)).toBe(true);
+    const pendingGet = beginCardCorrectionRead(qc, card.householdId);
+    pendingGet([card]);
+    const reopened = new MutationObserver(qc, cardLast4MutationOptions(qc, send));
+    await expect(reopened.mutate(input)).rejects.toBeInstanceOf(CardCorrectionPendingError);
+    expect(send).toHaveBeenCalledTimes(1);
+    response.reject(new TypeError("synthetic response lost after navigation")); await first;
+    expect(cardCorrectionIsPending(qc, card.householdId, card.id)).toBe(false);
+    expect(cardCorrectionRequiresRead(qc, card.householdId, card.id)).toBe(true);
+    pendingGet([card]);
+    await expect(reopened.mutate(input)).rejects.toBeInstanceOf(CardCorrectionReadRequiredError);
+    expect(send).toHaveBeenCalledTimes(1);
+    beginCardCorrectionRead(qc, card.householdId)([card]);
+    const nextResponse = deferred<CardSummary>(); const nextStarted = deferred<void>();
+    const nextView = new MutationObserver(qc, cardLast4MutationOptions(qc, async (_input, guard) => {
+      guard(); nextStarted.resolve(); return nextResponse.promise;
+    }));
+    const second = nextView.mutate(input); await nextStarted.promise;
+    expect(oldGuard).toThrow(CardCorrectionPendingError);
+    pendingGet([card]);
+    expect(cardCorrectionIsPending(qc, card.householdId, card.id)).toBe(true);
+    nextResponse.resolve({ ...card, maskedNumber: "0012" }); await second;
+    expect(cardCorrectionIsPending(qc, card.householdId, card.id)).toBe(false);
+    expect(cardCorrectionRequiresRead(qc, card.householdId, card.id)).toBe(false);
+    qc.clear();
   });
 });
 
@@ -83,7 +245,7 @@ describe("household cache and correction lifecycle", () => {
     const gate = createCardCorrectionReadGate();
     gate.failed(new TypeError("synthetic lost response"));
     expect(gate.required).toBe(true);
-    expect(correctionRequest("0012", "1234").ok).toBe(true);
+    expect(correctionRequest("0012", "1234", ownerId).ok).toBe(true);
     expect(gate.required).toBe(true);
     gate.failed({ status: 403 }); expect(gate.required).toBe(true);
     gate.failed({ status: 500 }); expect(gate.required).toBe(true);

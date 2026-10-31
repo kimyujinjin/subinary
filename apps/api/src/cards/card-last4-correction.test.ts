@@ -17,7 +17,7 @@ const U = '44444444-4444-4444-8444-444444444444';
 const O = '55555555-5555-4555-8555-555555555555';
 const SECOND = '66666666-6666-4666-8666-666666666666';
 const DATE = '2026-11-01T00:00:00.000Z';
-const request = { last4: '5678', expectedLast4: '1234' } as const;
+const request = { last4: '5678', expectedLast4: '1234', expectedOwnerMemberId: M } as const;
 type Row = Record<string, unknown>;
 
 const target = (changes: Row = {}): Row => ({ id: C, householdId: H, ownerMemberId: M,
@@ -120,6 +120,9 @@ describe('strict last-four correction contract', () => {
   it.each([undefined, '', '123', '12345', '１２３４', '****1234', 1234])('rejects invalid expectedLast4: %j', expectedLast4 => {
     expect(cardLast4CorrectionRequestSchema.safeParse({ ...request, expectedLast4 }).success).toBe(false);
   });
+  it.each([undefined, null, '', '1234', 'not-a-uuid', 1234])('requires a valid expected owner UUID: %j', expectedOwnerMemberId => {
+    expect(cardLast4CorrectionRequestSchema.safeParse({ ...request, expectedOwnerMemberId }).success).toBe(false);
+  });
   it.each(['ownerMemberId', 'maskedNumber', 'alias', 'issuer', 'visibility', 'status', 'isShared'])('forbids extra field %s', key => {
     expect(cardLast4CorrectionRequestSchema.safeParse({ ...request, [key]: '1234' }).success).toBe(false);
   });
@@ -138,6 +141,7 @@ describe('dedicated last-four correction endpoint', () => {
   it.each([
     { ...request, last4: '0000000000000000' }, { ...request, ownerMemberId: O },
     { last4: '5678' }, { ...request, expectedLast4: '****1234' },
+    { last4: '5678', expectedLast4: '1234' }, { ...request, expectedOwnerMemberId: 'not-a-uuid' },
   ])('revalidates service calls before any query: %j', input => {
     const { service, queries, state } = setup();
     return expect(service.correctLast4(U, C, input as CardLast4CorrectionRequest)).rejects.toBeInstanceOf(BadRequestException)
@@ -181,7 +185,7 @@ describe('dedicated last-four correction endpoint', () => {
   });
   it.each(['owner', 'admin'])('permits the active household %s to correct another owner’s card', async role => {
     const { service, state } = setup({ card: { ownerMemberId: O }, member: { role } });
-    expect(await service.correctLast4(U, C, request)).toMatchObject({ ownerMemberId: O, maskedNumber: '5678' });
+    expect(await service.correctLast4(U, C, { ...request, expectedOwnerMemberId: O })).toMatchObject({ ownerMemberId: O, maskedNumber: '5678' });
     expect(state.cards[0]?.ownerMemberId).toBe(O);
   });
   it('refuses inactive members before locking', async () => {
@@ -206,6 +210,19 @@ describe('dedicated last-four correction endpoint', () => {
   it('rechecks current owner after locking, rather than trusting the preflight owner', async () => {
     const { service, queries } = setup({ beforeTransaction: s => { s.cards[0]!.ownerMemberId = O; } });
     await expect(service.correctLast4(U, C, request)).rejects.toBeInstanceOf(ForbiddenException); expect(writes(queries)).toEqual([]);
+  });
+  it('rejects a manager’s stale UI owner even when the expected digits still match', async () => {
+    const { service, state, queries } = setup({ card: { ownerMemberId: O }, member: { role: 'admin' } });
+    const before = structuredClone(state.cards);
+    expect(await responseCode(service.correctLast4(U, C, request))).toMatchObject({ code: 'card_last4_stale' });
+    expect(state.cards).toEqual(before); expect(state.rollbacks).toBe(1); expect(writes(queries)).toEqual([]);
+  });
+  it.each(['1234', '5678'])('checks a concurrently changed owner before update or same-value idempotence (%s)', async maskedNumber => {
+    const { service, state, queries } = setup({ card: { maskedNumber }, member: { role: 'admin' },
+      beforeTransaction: s => { s.cards[0]!.ownerMemberId = O; } });
+    expect(await responseCode(service.correctLast4(U, C, request))).toMatchObject({ code: 'card_last4_stale' });
+    expect(state.cards[0]).toMatchObject({ ownerMemberId: O, maskedNumber, updatedAt: DATE });
+    expect(state.rollbacks).toBe(1); expect(writes(queries)).toEqual([]);
   });
   it('does not mutate a missing household or deleted card', async () => {
     const missingHousehold = setup({ household: false });

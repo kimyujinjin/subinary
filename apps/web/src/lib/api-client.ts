@@ -609,9 +609,10 @@ export const api = {
   },
 
   cards: {
-    list: (accessToken: AccessToken, householdId: string) =>
+    list: (accessToken: AccessToken, householdId: string, signal?: AbortSignal) =>
       apiFetch<CardSummary[]>(`/v1/cards${buildQuery({ householdId })}`, {
         accessToken,
+        signal,
       }),
     // create additionally reports how many previously-unlinked transactions the
     // registration retroactively linked (server-side backfill), for disclosure.
@@ -621,8 +622,8 @@ export const api = {
         body,
         accessToken,
       }),
-    get: (accessToken: AccessToken, id: string) =>
-      apiFetch<CardSummary>(`/v1/cards/${id}`, { accessToken }),
+    get: (accessToken: AccessToken, id: string, signal?: AbortSignal) =>
+      apiFetch<CardSummary>(`/v1/cards/${id}`, { accessToken, signal }),
     update: (accessToken: AccessToken, id: string, body: CardUpdateRequest) =>
       apiFetch<CardSummary>(`/v1/cards/${id}`, {
         method: "PATCH",
@@ -632,7 +633,7 @@ export const api = {
     correctLast4: (accessToken: AccessToken, id: string, body: CardLast4CorrectionRequest) =>
       apiFetch<CardSummary>(`/v1/cards/${encodeURIComponent(id)}/last4`, {
         method: "PATCH",
-        body: { last4: body.last4, expectedLast4: body.expectedLast4 },
+        body: { last4: body.last4, expectedLast4: body.expectedLast4, expectedOwnerMemberId: body.expectedOwnerMemberId },
         accessToken,
       }),
   },

@@ -12,12 +12,14 @@ import { acceptsLast4Insertion, cardLast4, correctionError, correctionRequest, c
 import { registerTransactionDetailBack, type TransactionDetailBackSource } from "@/lib/transaction-detail-back";
 import { createTransactionEditSession } from "@/lib/transaction-edit";
 
-export function CardLast4CorrectionDialog({ card, ownerLabelOf, canManage, onCorrect, onRefresh, onClose }: {
+export function CardLast4CorrectionDialog({ card, ownerLabelOf, canManage, readRequired, attemptPending, onCorrect, onRefresh, onClose }: {
   card: CardSummary;
   ownerLabelOf: (card: CardSummary) => string;
   canManage: (card: CardSummary) => boolean;
+  readRequired: boolean;
+  attemptPending: boolean;
   onCorrect: (body: CardLast4CorrectionRequest) => Promise<CardSummary>;
-  onRefresh: () => Promise<CardSummary>;
+  onRefresh: (signal?: AbortSignal) => Promise<CardSummary>;
   onClose: () => void;
 }) {
   const [current, setCurrent] = useState(card);
@@ -28,16 +30,17 @@ export function CardLast4CorrectionDialog({ card, ownerLabelOf, canManage, onCor
   const [discardOpen, setDiscardOpen] = useState(false);
   const session = useRef(createTransactionEditSession());
   const readGate = useRef(createCardCorrectionReadGate());
+  const currentRead = useRef<AbortController | null>(null);
   const back = useRef<(source: TransactionDetailBackSource) => void>(() => undefined);
   const input = useRef<HTMLInputElement>(null);
   const inputId = useId();
-  const pending = phase !== "idle";
+  const pending = phase !== "idle" || attemptPending;
   const expected = cardLast4(current.maskedNumber);
   const unknownCurrent = hasUnknownCardLast4(current.maskedNumber);
 
   useEffect(() => {
     const cleanup = registerTransactionDetailBack(window, (source) => back.current(source));
-    return () => { cleanup(); session.current.invalidate(); };
+    return () => { cleanup(); currentRead.current?.abort(); session.current.invalidate(); };
   }, []);
   useEffect(() => {
     if (phase === "idle" && (error || notice)) input.current?.focus();
@@ -45,12 +48,13 @@ export function CardLast4CorrectionDialog({ card, ownerLabelOf, canManage, onCor
 
   const requestClose = () => {
     if (discardOpen) { setDiscardOpen(false); return; }
-    if (session.current.pending) { setNotice("처리 중이에요. 완료될 때까지 잠시 기다려 주세요."); return; }
+    if (session.current.pending || attemptPending) { setNotice("처리 중이에요. 완료될 때까지 잠시 기다려 주세요."); return; }
     if (draft && draft !== expected) { setDiscardOpen(true); return; }
     onClose();
   };
   back.current = (source) => {
     if (source === "browser") {
+      currentRead.current?.abort();
       session.current.invalidate();
       onClose();
     } else requestClose();
@@ -64,11 +68,11 @@ export function CardLast4CorrectionDialog({ card, ownerLabelOf, canManage, onCor
   };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (session.current.pending) return;
-    if (readGate.current.required) return;
+    if (session.current.pending || attemptPending) return;
+    if (readRequired || readGate.current.required) return;
     if (!canManage(current)) { fail({ status: 403 }); return; }
     if (unknownCurrent) return;
-    const validation = correctionRequest(draft, expected);
+    const validation = correctionRequest(draft, expected, current.ownerMemberId);
     if (!validation.ok) {
       setError({ message: validation.message, refresh: false });
       input.current?.focus();
@@ -84,10 +88,12 @@ export function CardLast4CorrectionDialog({ card, ownerLabelOf, canManage, onCor
     }, fail);
   };
   const refresh = async () => {
-    if (session.current.pending) return;
+    if (session.current.pending || attemptPending) return;
     setPhase("refreshing");
     setNotice(null);
-    await session.current.save(onRefresh, (updated) => {
+    const abort = new AbortController();
+    currentRead.current = abort;
+    await session.current.save(() => onRefresh(abort.signal), (updated) => {
       readGate.current.confirmed();
       setCurrent(updated);
       setPhase("idle");
@@ -135,15 +141,16 @@ export function CardLast4CorrectionDialog({ card, ownerLabelOf, canManage, onCor
             }}
             onChange={(event) => {
               if (!/^[0-9]{0,4}$/.test(event.target.value)) { rejectInput(); return; }
-              setDraft(event.target.value); if (!readGate.current.required) setError(null); setNotice(null);
+              setDraft(event.target.value); if (!readRequired && !readGate.current.required) setError(null); setNotice(null);
             }} />
           <p id={`${inputId}-hint`} className="text-muted-foreground text-xs">전체 카드번호는 입력하지 마세요. 앞자리 0도 그대로 입력해 주세요.</p>
           {error ? <p id={`${inputId}-error`} role="alert" className="text-destructive text-sm break-words">{error.message}</p> : null}
-          {error?.refresh || readGate.current.required ? <Button type="button" variant="outline" className="min-h-11 h-auto whitespace-normal" disabled={pending} onClick={() => void refresh()}>현재 카드 정보 다시 확인</Button> : null}
+          {readRequired && !error ? <p role="status" className="text-muted-foreground text-sm">이전 정정 결과가 아직 확인되지 않았어요. 다시 보내기 전에 현재 카드 정보를 확인해 주세요.</p> : null}
+          {error?.refresh || readRequired || readGate.current.required ? <Button type="button" variant="outline" className="min-h-11 h-auto whitespace-normal" disabled={pending} onClick={() => void refresh()}>현재 카드 정보 다시 확인</Button> : null}
           {notice ? <p role="status" className="text-muted-foreground text-sm">{notice}</p> : null}
-          {pending ? <p role="status" className="text-muted-foreground text-sm">{phase === "saving" ? "정정 중이에요. 완료될 때까지 잠시 기다려 주세요." : "현재 카드 정보를 확인하고 있어요."}</p> : null}
+          {pending ? <p role="status" className="text-muted-foreground text-sm">{phase === "saving" || attemptPending ? "정정 중이에요. 완료될 때까지 잠시 기다려 주세요." : "현재 카드 정보를 확인하고 있어요."}</p> : null}
           <DialogFooter className="flex-col gap-2 sm:flex-col">
-            <Button type="submit" className="min-h-11 w-full" disabled={pending || readGate.current.required || unknownCurrent || !canManage(current) || draft === expected}>{phase === "saving" ? "정정 중…" : "뒤 4자리 정정하기"}</Button>
+            <Button type="submit" className="min-h-11 w-full" disabled={pending || readRequired || readGate.current.required || unknownCurrent || !canManage(current) || draft === expected}>{phase === "saving" ? "정정 중…" : "뒤 4자리 정정하기"}</Button>
             <Button type="button" variant="ghost" className="min-h-11 w-full" disabled={pending} onClick={requestClose}>취소</Button>
           </DialogFooter>
         </form>
