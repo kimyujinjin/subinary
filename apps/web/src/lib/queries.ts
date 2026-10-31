@@ -24,6 +24,7 @@ import type {
   CardSmsReviewPolicy,
   CardBreakdown,
   CardSummary,
+  CardLast4CorrectionRequest,
   CategoryBreakdown,
   CategorySummary,
   DeviceSummary,
@@ -54,6 +55,7 @@ import { useAuth } from "./auth-context";
 import { useHousehold } from "./household-context";
 import { TRANSACTION_SCOPE_KEYS } from "./invalidation-scope";
 import { pollAcceptedPosting } from "./sms-posting";
+import { correctionError, writeCorrectedCard } from "./card-last4-correction";
 
 export { TRANSACTION_SCOPE_KEYS };
 
@@ -327,6 +329,34 @@ export function useCardList(): UseQueryResult<CardSummary[]> {
     queryFn: () =>
       authedFetch((token) => api.cards.list(token, householdId as string)),
   });
+}
+
+/** Dedicated correction: never combine owner/alias/visibility edits with last4. */
+export function useCardLast4Correction() {
+  const { authedFetch } = useHouseholdScope();
+  const qc = useQueryClient();
+  const mutation = useMutation({
+    retry: false,
+    onMutate: (input: { id: string; householdId: string; body: CardLast4CorrectionRequest }) =>
+      qc.cancelQueries({ queryKey: queryKeys.cards(input.householdId) }),
+    mutationFn: async (input: { id: string; householdId: string; body: CardLast4CorrectionRequest }) => {
+      const result = await authedFetch((token) => api.cards.correctLast4(token, input.id, input.body));
+      if (result.id !== input.id || result.householdId !== input.householdId) throw new Error("card_response_scope_mismatch");
+      return result;
+    },
+    onSuccess: (result) => writeCorrectedCard(qc, result),
+    onError: (error, input) => {
+      if (correctionError(error).readRequired) void qc.invalidateQueries({ queryKey: queryKeys.cards(input.householdId) });
+    },
+  });
+  const refresh = async (id: string, householdId: string) => {
+    await qc.cancelQueries({ queryKey: queryKeys.cards(householdId) });
+    const result = await authedFetch((token) => api.cards.get(token, id));
+    if (result.id !== id || result.householdId !== householdId) throw new Error("card_response_scope_mismatch");
+    writeCorrectedCard(qc, result);
+    return result;
+  };
+  return { ...mutation, refresh };
 }
 
 export function useCategoryList(): UseQueryResult<CategorySummary[]> {

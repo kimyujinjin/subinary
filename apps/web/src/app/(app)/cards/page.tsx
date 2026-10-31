@@ -14,7 +14,7 @@
  * ------------------------------------------------------------------------- */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CreditCard, MoreHorizontal, Plus } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
 import type {
@@ -86,6 +86,9 @@ import {
 } from "@/lib/queries";
 import { memberColorClass } from "@/lib/member-color";
 import { cn } from "@/lib/utils";
+import { canCorrectCardLast4 } from "@/lib/card-last4-correction";
+import { CardLast4CorrectionDialog } from "@/components/card-last4-correction-dialog";
+import { useCardLast4Correction } from "@/lib/queries";
 
 /** 표준 카드사 목록 — 분석 라벨('alias · issuer') 표기 일관성을 위해 자유입력 대신 고정. */
 const ISSUER_OPTIONS = [
@@ -211,6 +214,7 @@ export default function CardsPage() {
   const { authedFetch, user } = useAuth();
   const { householdId, activeMembership } = useHousehold();
   const queryClient = useQueryClient();
+  const correction = useCardLast4Correction();
 
   const cardsQuery = useCardList();
   const membersQuery = useHouseholdMembers();
@@ -257,7 +261,9 @@ export default function CardsPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const createOwnerId = ownerMemberId || myMemberId || "";
 
-  // 수정 다이얼로그 상태(alias/visibility 만 — maskedNumber 는 계약상 수정 불가).
+  // 일반 수정과 뒤 4자리 정정은 별도 요청/상태를 사용한다.
+  const [correcting, setCorrecting] = useState<CardSummary | null>(null);
+  useEffect(() => { setCorrecting(null); }, [householdId]);
   const [editing, setEditing] = useState<CardSummary | null>(null);
   const [editAlias, setEditAlias] = useState("");
   const [editVisibility, setEditVisibility] =
@@ -487,6 +493,14 @@ export default function CardsPage() {
                           >
                             수정
                           </DropdownMenuItem>
+                          {canCorrectCardLast4(c, myMemberId, activeMembership?.role) ? (
+                            <DropdownMenuItem
+                              disabled={updateMutation.isPending || correction.isPending || cardsQuery.isFetching}
+                              onSelect={() => setCorrecting(c)}
+                            >
+                              뒤 4자리 정정
+                            </DropdownMenuItem>
+                          ) : null}
                           {c.status === "active" ? (
                             <DropdownMenuItem
                               variant="destructive"
@@ -536,6 +550,17 @@ export default function CardsPage() {
       ) : null}
 
       {/* 등록 Dialog */}
+      {correcting && correcting.householdId === householdId && canCorrectCardLast4(correcting, myMemberId, activeMembership?.role) ? (
+        <CardLast4CorrectionDialog
+          key={`${householdId}:${correcting.id}`}
+          card={correcting}
+          ownerLabelOf={(card) => cardOwnerLabel(card, memberNames)}
+          canManage={(card) => canCorrectCardLast4(card, myMemberId, activeMembership?.role)}
+          onCorrect={(body) => correction.mutateAsync({ id: correcting.id, householdId: correcting.householdId, body })}
+          onRefresh={() => correction.refresh(correcting.id, correcting.householdId)}
+          onClose={() => setCorrecting(null)}
+        />
+      ) : null}
       <Dialog open={registerOpen} onOpenChange={setRegisterOpen}>
         <DialogContent>
           <DialogHeader>
@@ -679,7 +704,7 @@ export default function CardsPage() {
           <DialogHeader>
             <DialogTitle>카드 수정</DialogTitle>
             <DialogDescription>
-              별칭·소유자·공동사용 여부를 바꿀 수 있어요. 뒤 4자리는 변경할 수 없어요.
+              별칭·소유자·공동사용 여부를 바꿀 수 있어요. 뒤 4자리는 카드 관리 메뉴의 ‘뒤 4자리 정정’에서 따로 확인해 주세요.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onEditSubmit} className="flex flex-col gap-4" noValidate>

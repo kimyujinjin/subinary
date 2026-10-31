@@ -15,6 +15,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -25,6 +26,7 @@ import { z } from 'zod';
 import {
   cardCreateRequestSchema,
   cardUpdateRequestSchema,
+  cardLast4CorrectionRequestSchema,
   type CardSummary,
 } from '@family/contracts';
 
@@ -36,6 +38,7 @@ import { CardService, type CardCreateResult } from './card.service';
 
 class CardCreateDto extends createZodDto(cardCreateRequestSchema) {}
 class CardUpdateDto extends createZodDto(cardUpdateRequestSchema) {}
+class CardLast4CorrectionDto extends createZodDto(cardLast4CorrectionRequestSchema) {}
 
 /** `GET /v1/cards?householdId=` — the household scope is required. */
 const cardListQuerySchema = z.object({ householdId: z.string().uuid() });
@@ -81,5 +84,15 @@ export class CardController {
     @Body() dto: CardUpdateDto,
   ): Promise<CardSummary> {
     return this.cardService.update(user.userId, id, dto);
+  }
+
+  /** PATCH /v1/cards/:id/last4 — correct only the last four digits, without transaction backfill. */
+  @Patch(':id/last4')
+  correctLast4(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: CardLast4CorrectionDto,
+  ): Promise<CardSummary> {
+    return this.cardService.correctLast4(user.userId, id, dto);
   }
 }

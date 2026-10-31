@@ -15,6 +15,7 @@ import type {
   AuthResult,
   CardBreakdown,
   CardCreateRequest,
+  CardLast4CorrectionRequest,
   CardSummary,
   CardUpdateRequest,
   CardSmsDeclineListResponse,
@@ -626,6 +627,12 @@ export const api = {
       apiFetch<CardSummary>(`/v1/cards/${id}`, {
         method: "PATCH",
         body,
+        accessToken,
+      }),
+    correctLast4: (accessToken: AccessToken, id: string, body: CardLast4CorrectionRequest) =>
+      apiFetch<CardSummary>(`/v1/cards/${encodeURIComponent(id)}/last4`, {
+        method: "PATCH",
+        body: { last4: body.last4, expectedLast4: body.expectedLast4 },
         accessToken,
       }),
   },

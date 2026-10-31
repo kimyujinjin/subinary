@@ -317,12 +317,14 @@ export {
   cardVisibilitySchema,
   cardCreateRequestSchema,
   cardUpdateRequestSchema,
+  cardLast4CorrectionRequestSchema,
   cardSummarySchema,
 } from './card.js';
 export type {
   CardVisibility,
   CardCreateRequest,
   CardUpdateRequest,
+  CardLast4CorrectionRequest,
   CardSummary,
 } from './card.js';
 
