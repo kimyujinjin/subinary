@@ -109,8 +109,18 @@ node scripts/parser-maintenance-apply.mjs <runDirectory>
 로컬 설정의 `compose`는 `project`, `directory`, `files` 배열, `envFiles` 배열을 가진다.
 실제 운영 label에서 경로와 순서를 읽어 저장하며 env 파일 내용은 복사하거나 출력하지 않는다.
 
-4. 두 컨테이너 image ID/health와 공개 API health를 제한 시간 안에 확인한다. 실패하면 동일
-   명령의 override만 `rollback.compose.json`으로 바꾸어 복구한다. 복구 실패를 성공으로 보고하지 않는다.
+4. 두 컨테이너 image ID/health와 공개 API health를 제한 시간 안에 확인한다. 실패하면 먼저
+   실제 상태를 다시 읽는다. 이번 실행의 고유 candidate override 라벨과 새 container ID로
+   교체가 확인된 서비스만 `rollback.compose.json`으로 복구한다. 원래 baseline container ID가
+   그대로인 서비스는 재생성하지 않는다. 다른 배포의 이미지·ID·라벨이 섞이거나 소유권을
+   읽을 수 없으면 `held`로 보류하고 어느 서비스도 덮어쓰지 않는다. 배포 전 검사에서 멈췄거나
+   실제 변경이 없으면 rollback 명령을 실행하지 않는다. 복구 실패를 성공으로 보고하지 않는다.
+   rollback 명령의 성공 응답 여부와 무관하게 이번 복구의 실제 container ID·이전 image ID·
+   rollback 라벨·고정 설정과 health를 새 읽기로 다시 확인한다. 명령 또는 직후 조회의
+   응답이 유실돼도 rollback 명령을 다시 보내지 않는다. 모두 확인되면
+   `rolled_back`으로 기록해 정상적인 설정 승계를 진행하고, 불명확하면
+   `held / rollback_outcome_unknown`으로 보류한다. 아직 candidate인 healthy 상태를
+   rollback 성공으로 취급하지 않는다.
 5. 배포 성공 이후에만 확인한 **container ID**에 고정해 scoped `plan → apply --expected-count=N
    → verify`를 실행한다. 각 단계에서 이름의 대상 교체 여부와 ESM/CJS/helper의 바이트 해시를
    다시 확인한다. 본인 member/household와 증명한 SMS ID·원본 hash만 허용한다. 기존 수동 repair
@@ -122,12 +132,33 @@ node scripts/parser-maintenance-apply.mjs <runDirectory>
    실제 runtime label을 재조회하고 현재 image-only override와 검증 영수증 hash를 로컬 설정에
    원자적으로 승계한다. 다음 실행은 이 영수증으로 증명된 마지막 override만 제거/교체하고
    원래 compose/MCP/env 순서는 유지한다. 알 수 없는 override는 자동 제거하지 않는다.
+   한 서비스만 복구한 부분 rollback은 가용성을 확인해도 `requiresManualReconciliation`으로
+   기록하고 설정을 자동 승계하지 않는다. 서로 다른 Compose 라벨을 운영자가 확인해야 한다.
+   최종 설정 승계가 충돌하면 `config-handoff-held.json`을 별도로 남기고 보류한다.
 8. 실제 완료 이후에만 `gate.json.changedPaths`의 허용한 파서·새 fixture를 한국어 메시지로
    로컬 커밋하고 다음 clean 기준으로 사용한다. 다른 사용자 변경이나 저장소 전체를 add하지
    않는다. push는 하지 않는다. 실패한 후보는 별도 작업트리/패치와 실행 근거로 보존하며
    삭제하거나 기준 source를 덮어쓰지 않는다. 실패 후보가 현재 checkout에 남아 dirty이면
    다음 prepare는 보류한다. 보존 후 clean 기준으로 복귀하는 작업도 같은 후보를 무한
    재시도할 근거가 되지 않는다.
+
+### 배포 경합 보호의 범위
+
+같은 Mac의 parser apply는 작업 트리와 무관하게
+`~/.config/family-memory-ai/parser-maintenance-apply.lock`의 독점 생성(`wx`, 0600)으로
+직렬화한다. 기존 lock은 stale로 추정해 자동 삭제하지 않는다. 정상 종료 시에도 inode와
+소유 token이 같은 자기 lock만 해제한다. 운영 설정이나 예약은 이 lock 설치를 위해 바꾸지 않는다.
+
+최초 점검의 API·worker container ID/이미지와 Compose project·directory·파일/env 파일 순서를
+보존한다. 실제 Compose 호출 직전에 설정·파일 해시·소스·후보 이미지 layer와 runtime 상태를
+재검증한다. rollback도 허용 여부 검사 뒤 호출 직전에 다시 확인한다. 이미지가 같아도 다른
+container ID나 override 라벨이면 같은 배포로 추정하지 않는다. scoped repair 및 최종 설정
+승계 직전에도 해당 배포의 소유권을 확인한다. 상태 조회는 환경 값이 아닌 허용된 메타데이터만 쓴다.
+
+이 lock을 사용하지 않는 일반 배포·수동 Docker 명령까지 직렬화하는 것은 아니다. Docker
+Compose에는 `inspect`와 `up`을 하나로 묶는 원자적 CAS가 없으므로, 비협조 배포자가 마지막
+점검과 실제 명령 사이에 끼어들 가능성은 남는다. 완전한 경합 제어에는 모든 배포 경로의
+공유 lock 참여가 필요하며, 이 변경에서 다른 배포 명령·예약·기준을 임의 변경하지 않는다.
 
 ## 검증 명령
 
@@ -138,6 +169,11 @@ PARSER_MAINTENANCE_DOCKER_TEST=1 node --test scripts/parser-maintenance.docker.t
 PARSER_MAINTENANCE_DB_TEST=1 node --test scripts/parser-maintenance-scope.integration.test.mjs
 PARSER_MAINTENANCE_WORKER_TEST=1 node --test scripts/parser-maintenance-worker.integration.test.mjs
 ```
+
+배포 경합 회귀는 가짜 Docker runner와 순수 flow로 검사한다. 설정·라벨·이미지·ID 교체,
+명령 응답 유실, 실제 변경 없음, 부분 변경의 선택 rollback, 외부 배포 혼합, 상태 조회 불명,
+repair/최종 승계 전 교체, 중복 lock·stale lock·다른 소유 lock 보존을 포함한다.
+이 결과는 실제 운영 Compose 배포나 서로 독립적인 배포 도구 간 원자적 경합 제어의 증거가 아니다.
 
 2026-10-29 단위 52개, 격리 Docker에서 baseline/금액·입력 변조/안내 위장 차단과
 fixture 자식 프로세스/산출물의 배포 빌드 전이 차단 2개,
