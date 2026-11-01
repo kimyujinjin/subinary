@@ -9,6 +9,7 @@ import type {
 import {
   HOME_SMS_WINDOW_MS,
   partitionSmsByWindow,
+  partitionTodoSms,
   pendingCountText,
   pendingReviewTransactions,
   todoTotal,
@@ -188,6 +189,63 @@ describe("todoTotal", () => {
 
   it("모두 0이면 0(홈 카드가 숨는 조건)", () => {
     expect(todoTotal({ declines: 0, reviews: 0, sms: 0 })).toBe(0);
+  });
+  it("추가 판단 필요 문자만 더하고 자동 처리 건수는 받지 않는다", () => {
+    expect(todoTotal({ declines: 1, reviews: 2, sms: 3, unpostedNeedsReview: 4 })).toBe(10);
+  });
+});
+
+describe("partitionTodoSms", () => {
+  const posting = (status: "pending" | "needs_review" | "posted" | "not_applicable", reason: NonNullable<CardSmsEventSummary["posting"]>["reason"] = null) =>
+    ({ status, reason, transactionId: status === "posted" ? "synthetic-transaction" : null, transactionStatus: null });
+
+  it("자동 파싱·승격·환율 대기는 사용자 할일 합계에서 제외한다", () => {
+    const result = partitionTodoSms([], [
+      sms({ id: "p", parseStatus: "pending", posting: posting("pending", "parsing") }),
+      sms({ id: "f", parseStatus: "parsed", posting: posting("pending", "fx_snapshot_missing") }),
+      sms({ id: "w", parseStatus: "parsed", posting: posting("pending", "processing") }),
+    ]);
+    expect(result.processing.map(row => row.id)).toEqual(["p", "f", "w"]);
+    expect(todoTotal({ declines: 0, reviews: 0, sms: result.sms.length, unpostedNeedsReview: result.unpostedNeedsReview.length })).toBe(0);
+  });
+  it.each(["parse_failed", "quarantined", "pending_review"] as const)("legacy %s를 자동 대기로 숨기지 않는다", parseStatus => {
+    const result = partitionTodoSms([], [sms({ parseStatus })]);
+    expect(result.unpostedNeedsReview).toHaveLength(1);
+    expect(result.processing).toEqual([]);
+  });
+  it("명시적인 posting 상태가 이전 parse 상태보다 우선한다", () => {
+    const result = partitionTodoSms([sms({ id: "stale", parseStatus: "quarantined" })], [
+      sms({ id: "stale", parseStatus: "quarantined", posting: posting("pending", "processing") }),
+      sms({ id: "review", parseStatus: "parsed", posting: posting("needs_review", "quarantined") }),
+      sms({ id: "posted", posting: posting("posted") }),
+      sms({ id: "not-applicable", posting: posting("not_applicable") }),
+    ]);
+    expect(result.sms).toEqual([]);
+    expect(result.processing.map(row => row.id)).toEqual(["stale"]);
+    expect(result.unpostedNeedsReview.map(row => row.id)).toEqual(["review"]);
+  });
+  it("두 조회에 겹친 판단 필요 문자는 한 번만 세고 원본은 바꾸지 않는다", () => {
+    const source = sms(); const before = structuredClone(source);
+    const result = partitionTodoSms([source, source], [source, sms({ id: "extra", posting: posting("needs_review") })]);
+    expect(result.sms.map(row => row.id)).toEqual(["e1"]);
+    expect(result.unpostedNeedsReview.map(row => row.id)).toEqual(["extra"]);
+    expect(source).toEqual(before);
+  });
+  it("posting 없는 parsed는 자동 복구라고 추정하지 않고 별도 상태로 보존한다", () => {
+    const result = partitionTodoSms([], [sms({ parseStatus: "parsed" })]);
+    expect(result.unpostedUnknown).toHaveLength(1);
+    expect(result.processing).toEqual([]); expect(result.unpostedNeedsReview).toEqual([]);
+  });
+  it("서로 다른 캐시의 처리 대기가 명시적인 판단 필요나 완료 상태를 덮지 않는다", () => {
+    const result = partitionTodoSms([
+      sms({ id: "review", posting: posting("needs_review") }),
+      sms({ id: "posted", posting: posting("posted") }),
+    ], [sms({ id: "review", posting: posting("pending", "fx_snapshot_missing") }), sms({ id: "posted", posting: posting("needs_review") })]);
+    expect(result.sms.map(row => row.id)).toEqual(["review"]);
+    expect(result.processing).toEqual([]); expect(result.unpostedNeedsReview).toEqual([]);
+  });
+  it("조회 전에는 검토/처리 상태를 지어내지 않는다", () => {
+    expect(partitionTodoSms(undefined, undefined)).toEqual({ sms: [], processing: [], unpostedNeedsReview: [], unpostedUnknown: [] });
   });
 });
 

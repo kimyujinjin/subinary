@@ -216,3 +216,20 @@ export type {
   MiniappRouteCheck,
 } from './miniapp-bridge.js';
 export { isMiniappResponse } from "./miniapp-bridge.js";
+
+export {
+  assertManualFinanceNotFuture,
+  manualFinanceCanRead,
+  manualFinanceCanWrite,
+  manualFinanceSeoulDate,
+  summarizeManualAssets,
+  summarizeManualHousingPlans,
+} from './manual-finance.js';
+export type {
+  ManualFinancePolicyActor,
+  ManualFinancePolicyRecord,
+  ManualAssetSummaryInput,
+  ManualAssetTotals,
+  ManualHousingSummaryInput,
+  ManualHousingTotals,
+} from './manual-finance.js';

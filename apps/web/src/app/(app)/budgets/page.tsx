@@ -47,6 +47,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { BudgetCardPicker } from "@/components/budget-card-picker";
+import { LedgerNav } from "@/components/ledger-nav";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -550,6 +551,7 @@ function BudgetsView() {
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
+      <LedgerNav active="budgets" month={month} />
       {/* 페이지 헤더 + 월 스위처 + 주 CTA ---------------------------------
           좁은 화면에서는 세로로 쌓는다. 한 줄에 두면 월 스위처(~172px)와
           '예산 만들기'(~110px)가 `shrink-0`라 360px 기기에서 가로 오버플로가 나고,

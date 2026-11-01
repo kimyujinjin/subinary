@@ -72,7 +72,7 @@ import {
   formatMonth,
   currentMonth,
 } from "@/lib/format";
-import { isMonthKey, monthRange, recentMonths } from "@/lib/month";
+import { monthRange, recentMonths } from "@/lib/month";
 import { memberColorClass, sharedColorClass } from "@/lib/member-color";
 import {
   attributedMemberId,
@@ -108,6 +108,8 @@ import {
 import { registerTransactionDetailBack, type TransactionDetailBackSource } from "@/lib/transaction-detail-back";
 import { AddTransactionDialog } from "./add-transaction-dialog";
 import { TransactionFxDetails } from "@/components/transaction-fx-details";
+import { LedgerNav } from "@/components/ledger-nav";
+import { initialTransactionMonth, transactionReviewPeriodQuery } from "@/lib/transaction-review-filter";
 import {
   matchesCandidateSearch,
   retainSelection,
@@ -289,10 +291,7 @@ function TransactionsView() {
   const router = useRouter();
   const initial = (key: string): string => searchParams.get(key) ?? "";
 
-  const [month, setMonth] = useState<string>(() => {
-    const m = searchParams.get("month");
-    return m && isMonthKey(m) ? m : currentMonth();
-  });
+  const [month, setMonth] = useState<string>(() => initialTransactionMonth(searchParams, currentMonth()));
   const [memberId, setMemberId] = useState<string>(() => initial("memberId"));
   const [cardId, setCardId] = useState<string>(() => initial("cardId"));
   const [categoryId, setCategoryId] = useState<string>(() =>
@@ -300,6 +299,7 @@ function TransactionsView() {
   );
   const [type, setType] = useState<string>(() => initial("type"));
   const [status, setStatus] = useState<string>(() => initial("status"));
+  const [reviewOnly, setReviewOnly] = useState(() => initial("review") === "1");
   /** 검색 입력값(즉시 반영) — 실제 쿼리는 아래 디바운스된 `q`를 쓴다. */
   const [qInput, setQInput] = useState<string>(() => initial("q"));
   const [q, setQ] = useState<string>(qInput);
@@ -345,6 +345,7 @@ function TransactionsView() {
     setCategoryId("");
     setType("");
     setStatus("");
+    setReviewOnly(false);
     setQInput("");
     setQ("");
     setExcludedOnly(false);
@@ -357,6 +358,7 @@ function TransactionsView() {
     categoryId !== "" ||
     type !== "" ||
     status !== "" ||
+    reviewOnly ||
     q !== "" ||
     excludedOnly ||
     sharedOnly ||
@@ -371,8 +373,7 @@ function TransactionsView() {
   // 필터 상태 → URL. 기본값은 파라미터에서 빼 링크를 짧게 유지한다.
   // `txn`(알림 딥링크)은 아래 상세 열기 effect가 소유하므로 여기서 건드리지 않는다.
   useEffect(() => {
-    const params = new URLSearchParams();
-    if (month !== currentMonth()) params.set("month", month);
+    const params = transactionReviewPeriodQuery(month, reviewOnly, currentMonth());
     if (memberId) params.set("memberId", memberId);
     if (cardId) params.set("cardId", cardId);
     if (categoryId) params.set("categoryId", categoryId);
@@ -381,6 +382,8 @@ function TransactionsView() {
     if (q) params.set("q", q);
     if (excludedOnly) params.set("excluded", "only");
     if (sharedOnly) params.set("attribution", "shared");
+    const selectedTransaction = new URLSearchParams(window.location.search).get("txn");
+    if (selectedTransaction) params.set("txn", selectedTransaction);
     const qs = params.toString();
     // replace: 필터를 다섯 번 바꿨다고 뒤로가기를 다섯 번 눌러야 하면 안 된다.
     router.replace(qs ? `/transactions?${qs}` : "/transactions", {
@@ -393,6 +396,7 @@ function TransactionsView() {
     categoryId,
     type,
     status,
+    reviewOnly,
     q,
     excludedOnly,
     sharedOnly,
@@ -467,6 +471,7 @@ function TransactionsView() {
       categoryId: categoryId || undefined,
       type: type || undefined,
       status: status || undefined,
+      review: reviewOnly ? ("1" as const) : undefined,
       q: q || undefined,
       excluded: excludedOnly ? ("only" as const) : undefined,
       attribution: sharedOnly ? ("shared" as const) : undefined,
@@ -480,6 +485,7 @@ function TransactionsView() {
       categoryId,
       type,
       status,
+      reviewOnly,
       q,
       excludedOnly,
       sharedOnly,
@@ -767,6 +773,7 @@ function TransactionsView() {
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
+      <LedgerNav active="transactions" month={month} />
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-1">
           <h1 className="sr-only">거래 내역</h1>
@@ -777,6 +784,21 @@ function TransactionsView() {
         <Button size="sm" onClick={() => setAddOpen(true)}>
           거래 추가
         </Button>
+      </div>
+
+      <div className="space-y-2">
+        <Button
+          variant={reviewOnly ? "tint" : "outline"}
+          aria-pressed={reviewOnly}
+          className="min-h-11"
+          onClick={() => {
+            setReviewOnly(!reviewOnly);
+            if (!reviewOnly) { setMonth(""); setStatus(""); setExcludedOnly(false); }
+          }}
+        >
+          확인 필요한 거래
+        </Button>
+        {reviewOnly ? <p className="text-muted-foreground text-xs">직접 확인할 수 있는 거래만 모아요. 문자 처리·환율 대기는 포함하지 않아요.</p> : null}
       </div>
 
       {/* 검색 — 가맹점 이름과 메모를 부분 일치로 찾는다. 타인의 summary_only 거래는
@@ -1001,7 +1023,7 @@ function TransactionsView() {
               {hasActiveFilter ? (
                 <>
                   <p className="pt-1 text-[15px] font-semibold">
-                    조건에 맞는 거래가 없어요
+                    {reviewOnly ? "조건에 맞는 확인 필요한 거래가 없어요" : "조건에 맞는 거래가 없어요"}
                   </p>
                   <p className="text-muted-foreground text-sm">
                     필터를 바꿔서 다시 찾아볼까요?

@@ -1,13 +1,5 @@
 "use client";
-/* ---------------------------------------------------------------------------
- * 헤더 아바타 = 관리 화면(`/more`) 진입점 (IA 개편)
- *
- * '더보기' 탭 자리를 '할 일'에 내주면서 관리 화면 진입점이 헤더로 올라왔다.
- * **탭 한 번으로 `/more`에 닿아야 한다** — 아바타를 눌러 메뉴가 열리고 거기서 또
- * 눌러야 하면 예전보다 한 번 더 누르는 것이고, 그건 개선이 아니라 후퇴다.
- * 그래서 드롭다운이 아니라 링크다. 로그아웃·계정 정보는 `/more`의 '내 계정' 묶음이
- * 갖는다(가족이 없어 `/more`가 안 열리는 온보딩 화면만 예전 드롭다운을 그대로 쓴다).
- * ------------------------------------------------------------------------- */
+/** Header account entry remains a direct link to 전체 and account settings. */
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -25,9 +17,8 @@ function initial(name?: string | null, email?: string | null): string {
 export function AccountLink() {
   const { user } = useAuth();
   const pathname = usePathname();
-  // 관리 화면에 있는 동안 링(ring)으로 표시한다 — 예전 '더보기' 탭의 활성 표시가
-  // 사라지면 사용자는 자기가 어느 영역에 있는지 알 수 없다.
-  const active = activeTabFor(pathname) === "account";
+  // 전체 아래의 기존 계정·관리 화면에서도 같은 활성 표시를 유지한다.
+  const active = activeTabFor(pathname) === "more";
 
   return (
     <Link

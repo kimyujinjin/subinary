@@ -286,7 +286,7 @@ export default function AiPage() {
       // 당겨서 새로고침 제외 — 이 패널은 fixed라 조상 transform이 걸리면
       // 기준이 뷰포트에서 그 조상으로 바뀌어 헤더/탭바 정렬이 깨진다.
       data-no-pull-refresh
-      className="bg-background fixed inset-x-0 top-[var(--app-header-h)] bottom-[max(var(--app-tabbar-h),var(--kb-inset))] z-10"
+      className="bg-background fixed inset-x-0 top-[var(--app-header-h)] bottom-[max(var(--app-tabbar-h),var(--kb-inset))] z-10 lg:bottom-0 lg:left-52"
     >
       <div className="mx-auto flex h-full w-full max-w-2xl flex-col px-4">
         {/* 범위 선택 — 어떤 근거로 답하는지가 바뀌므로 항상 보이게 둔다. */}

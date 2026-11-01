@@ -38,6 +38,26 @@ describe("transaction response cache reconciliation", () => {
     expect(replaceTransactionInCache(undefined, updated)).toBeUndefined();
   });
 
+  it("removes resolved/excluded rows from review caches even when the refresh fails", async () => {
+    for (const patch of [{ status: "approved" as const }, { status: "pending_review" as const, excludedAt: "2026-10-31T00:00:00.000Z" }, { status: "pending_review" as const, masked: true }]) {
+      const qc = client();
+      const before = { ...oldRow, status: "pending_review" as const, excludedAt: null };
+      const reviewKey = ["transactions", oldRow.householdId, { review: "1" }];
+      const infiniteKey = [...reviewKey, "infinite"];
+      const generalKey = ["transactions", oldRow.householdId, {}];
+      qc.setQueryData(reviewKey, { items: [before], nextCursor: null });
+      qc.setQueryData(infiniteKey, { pageParams: [null], pages: [{ items: [before], nextCursor: "next" }] });
+      qc.setQueryData(generalKey, { items: [before], nextCursor: null });
+      const after = { ...before, ...patch };
+      writeTransactionResult(qc, after);
+      await qc.fetchQuery({ queryKey: reviewKey, queryFn: async () => { throw new Error("synthetic offline"); } }).catch(() => undefined);
+      expect(qc.getQueryData(reviewKey)).toEqual({ items: [], nextCursor: null });
+      expect(qc.getQueryData(infiniteKey)).toEqual({ pageParams: [null], pages: [{ items: [], nextCursor: "next" }] });
+      expect(qc.getQueryData(generalKey)).toEqual({ items: [after], nextCursor: null });
+      expect(qc.getQueryData(transactionDetailKey(after.householdId, after.id))).toEqual(after);
+    }
+  });
+
   it("prevents a GET started before PATCH from replacing the confirmed edit with stale data", async () => {
     const qc = client(); const key = transactionDetailKey(oldRow.householdId, oldRow.id);
     let resolve!: (row: TransactionSummary) => void;

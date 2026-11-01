@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { isTabRoot, parentTabHref, TAB_ROOTS } from "./nav-tabs";
+
 import {
   EXIT_CONFIRM_WINDOW_MS,
   decideBackAction,
@@ -77,8 +79,8 @@ describe("decideBackAction — 하위 화면", () => {
     expect(decideBackAction({ ...base, canGoBackInApp: true })).toBe("back");
   });
 
-  it("딥링크로 방금 연 화면은 홈으로 — back()은 앱 밖으로 나가거나 무반응이다", () => {
-    expect(decideBackAction({ ...base, canGoBackInApp: false })).toBe("home");
+  it("딥링크로 방금 연 화면은 상위로 — back()은 앱 밖으로 나가거나 무반응이다", () => {
+    expect(decideBackAction({ ...base, canGoBackInApp: false })).toBe("parent");
   });
 
   it("하위 화면에서는 종료 안내 상태와 무관하다", () => {
@@ -89,5 +91,34 @@ describe("decideBackAction — 하위 화면", () => {
         lastExitPromptAt: base.now,
       }),
     ).toBe("back");
+  });
+});
+
+
+describe("V2 route hierarchy and native back", () => {
+  it("only the five primary destinations offer exit confirmation", () => {
+    for (const path of TAB_ROOTS) {
+      expect(decideBackAction({ ...base, atTabRoot: isTabRoot(path) })).toBe("confirm-exit");
+    }
+  });
+
+  it.each([
+    ["/todo", "/more"],
+    ["/ai/", "/more"],
+    ["/declines", "/todo"],
+    ["/budgets", "/transactions"],
+    ["/ledger/analysis/", "/transactions"],
+    ["/cards", "/assets"],
+    ["/plan/housing", "/plan"],
+  ])("cold entry %s returns to %s without exiting", (path, parent) => {
+    const decision = decideBackAction({ ...base, atTabRoot: isTabRoot(path) });
+    expect(decision).toBe("parent");
+    expect(parentTabHref(path)).toBe(parent);
+  });
+
+  it("a task opened from an existing list returns to that actual list", () => {
+    for (const path of ["/todo", "/declines", "/budgets", "/cards", "/ledger/analysis"]) {
+      expect(decideBackAction({ ...base, atTabRoot: isTabRoot(path), canGoBackInApp: true })).toBe("back");
+    }
   });
 });

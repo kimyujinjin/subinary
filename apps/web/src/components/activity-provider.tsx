@@ -33,6 +33,7 @@ import { useHousehold } from "@/lib/household-context";
 import { initPushNotifications } from "@/lib/native";
 import { invalidateTransactionScope } from "@/lib/queries";
 import { nextBackoff, readSseStream } from "@/lib/realtime";
+import { isManualFinanceHint, refreshManualFinanceQueries, resetSharedManualFinanceQueries } from "@/lib/manual-finance-realtime";
 
 /** SSE 힌트 디바운스(ms) — 연속 승격(백필 등) 폭주를 1회 무효화로 합친다. */
 const HINT_DEBOUNCE_MS = 400;
@@ -298,7 +299,11 @@ export function ActivityProvider() {
                 res.body,
                 (msg) => {
                   arm();
-                  if (msg.event === "hint") scheduleHint();
+                  if (msg.event === "hint" && !stopped && !signal.aborted) {
+                    if (isManualFinanceHint(msg.data)) {
+                      void resetSharedManualFinanceQueries(queryClient, householdId).catch(() => undefined);
+                    } else scheduleHint();
+                  }
                 },
                 signal,
               );
@@ -324,6 +329,7 @@ export function ActivityProvider() {
         return;
       }
       invalidateTransactionScope(queryClient);
+      void resetSharedManualFinanceQueries(queryClient, householdId).catch(() => undefined);
       void checkActivityRef.current();
       void connect();
     };
@@ -334,6 +340,7 @@ export function ActivityProvider() {
     const tick = window.setInterval(() => {
       if (document.visibilityState === "visible") {
         void checkActivityRef.current();
+        void refreshManualFinanceQueries(queryClient, householdId).catch(() => undefined);
       }
     }, FALLBACK_POLL_MS);
 

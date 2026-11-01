@@ -54,7 +54,7 @@ import {
 import { useAuth } from "./auth-context";
 import { useHousehold } from "./household-context";
 import { TRANSACTION_SCOPE_KEYS } from "./invalidation-scope";
-import { pollAcceptedPosting } from "./sms-posting";
+import { pollAcceptedPosting, shouldKeepUnpostedSummary } from "./sms-posting";
 import { beginCardCorrectionRead, cardCorrectionIsPending, cardCorrectionRequiresRead, cardCorrectionStateVersion, cardLast4MutationOptions, subscribeCardCorrectionState, writeCorrectedCard } from "./card-last4-correction";
 
 export { TRANSACTION_SCOPE_KEYS };
@@ -437,8 +437,9 @@ export function useUnpostedSms(): UseQueryResult<CardSmsEventSummary[]> {
         `/v1/card-sms-events?householdId=${encodeURIComponent(householdId as string)}&posting=unposted&limit=${REVIEW_SCAN_LIMIT}`,
         { accessToken: token },
       ));
-      // An older API may ignore the filter; never label its unrelated rows pending.
-      return items.filter((item) => item.posting?.status === "pending" || item.posting?.status === "needs_review");
+      // Retain explicit legacy review states, but never infer that parsed rows
+      // with missing posting metadata are unposted or require a second ingestion.
+      return items.filter(shouldKeepUnpostedSummary);
     },
   });
 }

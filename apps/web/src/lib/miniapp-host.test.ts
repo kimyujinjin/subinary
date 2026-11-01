@@ -48,7 +48,7 @@ describe('호스트 메시지 경계', () => {
     expect(frame.postMessage).toHaveBeenCalledWith(expect.objectContaining({ kind: 'ready', permissions: [] }), '*');
     await runtime.receive({ source: frame, data: request('merchant.list') });
     expect(frame.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ error: expect.objectContaining({ code: 'permission_denied' }) }), '*');
-    expect(activeTabFor('/play/app/')).toBe('account');
+    expect(activeTabFor('/play/app/')).toBe('more');
   });
 
   it('등록부의 모든 항목이 iframe 실행 계약을 지킨다', () => {

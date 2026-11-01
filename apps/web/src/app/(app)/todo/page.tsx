@@ -25,7 +25,7 @@
  * ------------------------------------------------------------------------- */
 import { AlertTriangle, CheckCircle2, CircleAlert, MailWarning } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import type { CardSmsEventSummary, TransactionSummary } from "@family/contracts";
 
@@ -55,6 +55,7 @@ export default function TodoPage() {
   const smsGroups = useCardSmsReviewGroups();
   const cardQuery = useCardList();
   const stopPolicy = useDisableSmsReviewPolicy();
+  const scrolledProcessing = useRef(false);
   const policies = smsGroups.data?.policies ?? [];
   const groups = smsGroups.data?.items ?? [];
   useEffect(() => {
@@ -63,13 +64,19 @@ export default function TodoPage() {
       setSelectedSms(requested);
     }
   }, []);
+  useEffect(() => {
+    if (!scrolledProcessing.current && new URLSearchParams(window.location.search).get("section") === "processing") {
+      const section = document.getElementById("processing");
+      if (section) { section.scrollIntoView({ block: "start" }); scrolledProcessing.current = true; }
+    }
+  }, [todo.processingLoading, todo.processing.length, todo.unpostedUnknown.length]);
 
   const loading =
     todo.declinesLoading || todo.reviewsLoading || smsGroups.isLoading || todo.unpostedLoading;
   const anyError = todo.declinesError || todo.reviewsError || smsGroups.isError || todo.unpostedError;
   // 빈 상태는 **다 읽어낸 뒤에만** 보여준다. 못 읽은 것을 "할 일 없음"으로 쓰면
   // 사용자는 처리할 게 없다고 믿는다.
-  const showEmpty = !loading && !anyError && todo.declines.length + todo.reviews.length + groups.length + todo.unposted.length === 0;
+  const showEmpty = !loading && !anyError && todo.declines.length + todo.reviews.length + groups.length + todo.unpostedNeedsReview.length === 0;
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-5">
@@ -77,7 +84,7 @@ export default function TodoPage() {
       <div>
         <h1 className="text-xl font-semibold">확인할 내역</h1>
         <p className="text-muted-foreground text-sm">
-          결제 실패·거래 확인·문자 검토를 기간 제한 없이 모아뒀어요.
+          결제 실패·거래 확인·문자 검토를 모았어요. 자동 처리 상태는 따로 보여드려요.
         </p>
       </div>
 
@@ -92,9 +99,9 @@ export default function TodoPage() {
       {showEmpty ? (
         <Card className="p-8 text-center">
           <CheckCircle2 className="text-muted-foreground mx-auto mb-3 size-8" />
-          <p className="text-sm font-medium">지금은 처리할 게 없어요</p>
+          <p className="text-sm font-medium">지금은 사용자 확인이 필요한 내역이 없어요</p>
           <p className="text-muted-foreground mt-1 text-sm">
-            확인이 필요한 거래·문자나 실패한 결제가 생기면 여기에 모아드려요
+            문자 접수와 거래 반영의 처리 상태는 아래에서 따로 확인할 수 있어요.
           </p>
         </Card>
       ) : null}
@@ -156,18 +163,12 @@ export default function TodoPage() {
         )}
         error={todo.reviewsError}
         errorText="거래를 불러오지 못했어요"
-        footer={
-          todo.reviewsTruncated ? (
-            <FooterLink href="/transactions?status=pending_review">
-              거래 화면에서 이어서 보기
-            </FooterLink>
-          ) : null
-        }
+        footer={<FooterLink href="/transactions?review=1">가계부에서 확인이 필요한 거래 보기</FooterLink>}
       >
         {todo.reviews.map((t) => (
           <ListRow
             key={t.id}
-            href={transactionDetailHref(t.id)}
+            href={`${transactionDetailHref(t.id)}&review=1`}
             icon={<CircleAlert />}
             iconClassName="bg-warning/15 text-warning-strong"
             title={merchantLabel(t)}
@@ -180,19 +181,17 @@ export default function TodoPage() {
       </Section>
 
       <Section
-        show={todo.unpostedError || todo.unposted.length > 0}
-        title="아직 거래에 반영되지 않았어요"
-        description="접수된 문자와 실제 거래 반영을 따로 확인해요. 같은 문자를 다시 등록할 필요는 없어요."
-        countText={pendingCountText(todo.unpostedLoading, todo.unpostedError, todo.unposted.length, todo.unpostedTruncated)}
+        show={todo.unpostedNeedsReview.length > 0}
+        title="확인이 필요한 문자"
+        description="거래 반영 전에 사용자 판단이 필요하다고 확인된 문자예요. 자동 처리 대기와 구분해요."
+        countText={pendingCountText(todo.unpostedLoading, todo.unpostedError, todo.unpostedNeedsReview.length, todo.unpostedTruncated)}
         error={todo.unpostedError}
         errorText="거래 반영 상태를 확인하지 못했어요. 잠시 후 새로고침해 주세요."
-        footer={todo.unpostedTruncated ? <p className="text-muted-foreground px-4 py-3 text-xs">최근 미반영 {todo.unposted.length}건이에요. 반영되면 이전 내역이 이어서 나타나요.</p> : null}
       >
-        {todo.unposted.map((event) => (
-          <div key={event.id} className="space-y-1 px-3 py-3">
-            <p className="text-sm font-medium">{event.currency ?? "통화 확인 중"} · {formatRelativeTime(event.receivedAt)}</p>
-            <p className="text-muted-foreground text-sm leading-relaxed">{postingMessage(event)}</p>
-          </div>
+        {todo.unpostedNeedsReview.map((event) => (
+          <ListRow key={event.id} onClick={() => setSelectedSms(event.id)} icon={<MailWarning />}
+            title={event.sender} subtitle={postingMessage(event)}
+            value={<span className="text-muted-foreground text-xs">{formatRelativeTime(event.receivedAt)}</span>} chevron />
         ))}
       </Section>
 
@@ -243,6 +242,21 @@ export default function TodoPage() {
         </section>
       ) : null}
 
+      <Section id="processing"
+        show={todo.processingLoading || todo.processingError || todo.processing.length + todo.unpostedUnknown.length > 0}
+        title="처리 상태"
+        description="문자 접수·거래 반영 상태예요. 사용자 확인 건수에는 포함하지 않으며 같은 문자를 다시 등록할 필요는 없어요."
+        countText={pendingCountText(todo.processingLoading, todo.processingError, todo.processing.length + todo.unpostedUnknown.length, todo.processingTruncated)}
+        error={todo.processingError} errorText="처리 상태를 확인하지 못했어요. 확인이 필요한 내역이 없다는 뜻은 아니에요."
+        footer={todo.processingTruncated ? <p className="text-muted-foreground px-4 py-3 text-xs">조회 상한이 있어 일부 상태만 표시될 수 있어요.</p> : null}>
+        {[...todo.processing, ...todo.unpostedUnknown].map((event) => (
+          <div key={event.id} className="space-y-1 px-3 py-3">
+            <p className="text-sm font-medium">{event.currency ?? "통화 확인 중"} · {formatRelativeTime(event.receivedAt)}</p>
+            <p className="text-muted-foreground text-sm leading-relaxed">{postingMessage(event)}</p>
+          </div>
+        ))}
+      </Section>
+
       <ReviewInboxDialog
         open={selectedSms != null}
         events={selectedSms ? [{ id: selectedSms }] : []}
@@ -257,6 +271,7 @@ export default function TodoPage() {
 
 /** 섹션 1개(제목 + 건수 + 행 목록). `show`가 false면 아무것도 렌더하지 않는다. */
 function Section({
+  id,
   show,
   title,
   description,
@@ -266,6 +281,7 @@ function Section({
   footer,
   children,
 }: Readonly<{
+  id?: string;
   show: boolean;
   title: string;
   description?: string;
@@ -277,7 +293,7 @@ function Section({
 }>) {
   if (!show) return null;
   return (
-    <section className="space-y-2">
+    <section id={id} className="space-y-2 scroll-mt-4">
       <div className="flex items-baseline justify-between gap-2 px-1">
         <h2 className="text-[15px] font-semibold">{title}</h2>
         <span className="text-muted-foreground text-[13px] tabular-nums">

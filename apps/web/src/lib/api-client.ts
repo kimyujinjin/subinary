@@ -356,6 +356,8 @@ export interface TransactionListParams {
   cardId?: string;
   type?: string;
   status?: string;
+  /** Unexcluded pending/duplicate rows this actor can resolve; server filtered. */
+  review?: "1";
   categoryId?: string;
   from?: string;
   to?: string;

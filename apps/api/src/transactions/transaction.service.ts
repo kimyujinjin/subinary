@@ -75,6 +75,7 @@ import { MoneyShadowService } from '../money/money-shadow.service';
 import { MoneyWriteService } from '../money/money-write.service';
 import { RealtimePublisherService } from '../realtime/realtime-publisher.service';
 import { transactionFx, transactionFxColumns, type TransactionFxSnapshot } from './transaction-fx';
+import { transactionReviewScope } from './review-filter';
 import {
   actorCanSeeApproval,
   cancellationCandidateFilter,
@@ -126,6 +127,8 @@ export interface TransactionListQuery {
   cardId?: string;
   type?: string;
   status?: string;
+  /** Actionable, unresolved pending/duplicate transactions across both statuses. */
+  review?: string;
   categoryId?: string;
   from?: string;
   to?: string;
@@ -219,6 +222,8 @@ export class TransactionService {
       eq(schema.cardTransactions.householdId, householdId),
       visibilityScope(actor.memberId),
     ];
+    const reviewScope = transactionReviewScope(query.review, actor);
+    if (reviewScope) conditions.push(reviewScope);
 
     if (query.memberId) {
       conditions.push(eq(schema.cardTransactions.memberId, query.memberId));

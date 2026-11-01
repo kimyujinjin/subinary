@@ -1,22 +1,8 @@
 "use client";
-/* ---------------------------------------------------------------------------
- * Family Memory AI — web · 관리 허브 (/more)
- *
- * 매일 오는 목적지(홈·거래·예산·할 일)와 AI는 하단 탭이 갖고, 여기는 **가끔 오는
- * 화면**을 모은다. 진입점은 헤더 아바타 1탭이다(IA 개편에서 '더보기' 탭이 여기로
- * 올라왔다 — 이유는 `(app)/layout.tsx` 상단 주석).
- *
- * **묶는 기준은 "언제 오는가"이지 기능 분류가 아니다.** 평평한 10줄 목록에서는
- * 사용자가 매번 처음부터 읽어야 했다. 세 묶음의 방문 이유가 서로 다르다:
- *  - 가계 설정 — 가족의 돈을 어떻게 기록할지. 처음에 몰아서 하고 가끔 손본다.
- *  - 수집     — 문자가 잘 들어오고 있는지. 뭔가 안 맞을 때 온다.
- *  - 내 계정   — 나 개인의 것(동의·알림·비밀번호·로그아웃). 드물게 온다.
- * 운영자 도구는 owner/admin에게만 보이고, 개발자 화면이라 일반 목록과 섞지 않는다.
- *
- * 앱 설정(생체인식 잠금) 행은 마운트 후 생체인식 가용성이 확인된 기기에서만
- * 나타난다 — 프리렌더 HTML과의 하이드레이션 불일치를 피하려고 렌더 시점
- * 분기 대신 effect 이후 상태로 가른다(웹/미지원 기기에서는 영구 숨김).
- * ------------------------------------------------------------------------- */
+/**
+ * 전체: 새 자산·계획과 기존 가계부·관리 도구를 한곳에서 찾는다.
+ * 기존 메뉴, 네이티브 생체인식 설정과 owner/admin 운영 도구의 조건을 보존한다.
+ */
 import {
   Activity,
   AlertTriangle,
@@ -24,14 +10,19 @@ import {
   ChevronRight,
   CreditCard,
   Fingerprint,
+  Flag,
   KeyRound,
   LogOut,
+  ListChecks,
+  Receipt,
   Repeat,
   ShieldCheck,
   Smartphone,
   Store,
+  Sparkles,
   Tags,
   Users,
+  Wallet,
   Wand2,
   type LucideIcon,
 } from "lucide-react";
@@ -65,6 +56,25 @@ interface MoreGroup {
 }
 
 const GROUPS: ReadonlyArray<MoreGroup> = [
+  {
+    key: "position",
+    title: "자산과 계획",
+    items: [
+      { href: "/assets", icon: Wallet, title: "자산", description: "현재 자산의 기준과 결제 카드 관리를 확인해요" },
+      { href: "/plan", icon: Flag, title: "계획", description: "주택 지급 일정과 준비할 정보를 살펴봐요" },
+    ],
+  },
+  {
+    key: "records",
+    title: "돈의 기록과 확인",
+    items: [
+      { href: "/transactions", icon: Receipt, title: "거래 검색", description: "카드 승인·취소와 확인이 필요한 거래를 찾아요" },
+      { href: "/ledger/analysis", icon: Activity, title: "소비 분석", description: "기록된 카드 지출을 월별로 살펴봐요" },
+      { href: "/budgets", icon: Wallet, title: "예산", description: "선택한 달의 예산과 사용률을 확인해요" },
+      { href: "/todo", icon: ListChecks, title: "확인할 일", description: "문자 검토·실패한 결제와 반영 상태를 확인해요" },
+      { href: "/ai", icon: Sparkles, title: "AI 도우미", description: "기존 AI 대화와 가져오기 기능으로 이동해요" },
+    ],
+  },
   {
     key: "household",
     title: "가계 설정",
@@ -118,12 +128,12 @@ const GROUPS: ReadonlyArray<MoreGroup> = [
         description: "카드 문자를 보내는 휴대폰을 등록·관리해요",
       },
       {
-        // 처리는 '할 일' 탭이 갖는다 — 여기는 **해결된 것까지 남는 기록**이다.
+        // 처리는 '확인할 일' 화면이 갖는다 — 여기는 해결된 것까지 남는 기록이다.
         // 링크를 지우지 않는 이유: 지난 실패를 볼 수 있는 상시 경로가 여기뿐이다.
         href: "/declines",
         icon: AlertTriangle,
         title: "실패한 결제 기록",
-        description: "해결된 것까지 모두 남아 있어요 · 처리는 할 일 탭에서 해요",
+        description: "해결된 것까지 모두 남아 있어요 · 처리는 확인할 일에서 해요",
       },
     ],
   },
@@ -329,7 +339,7 @@ export default function MorePage() {
       {/* 누구로 로그인해 있는지 — 예전에는 아바타 드롭다운에만 있던 정보다.
           아바타가 링크가 되면서 이 화면이 그 자리를 대신한다. */}
       <div>
-        <h1 className="sr-only">내 계정과 관리</h1>
+        <h1 className="mb-2 text-2xl font-bold tracking-tight">전체</h1>
         <p className="text-[15px] font-semibold">{user?.name ?? "사용자"}</p>
         <p className="text-muted-foreground text-sm">
           {user?.email ?? ""}

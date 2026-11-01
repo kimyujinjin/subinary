@@ -630,3 +630,5 @@ export type {
   CategoryRule,
   CategoryRuleList,
 } from './recategorize.js';
+
+export * from './manual-finance.js';
