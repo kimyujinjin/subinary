@@ -5,7 +5,7 @@ import type {
   ManualHousingPaymentKind,
   ManualHousingPlanResponse,
 } from "@family/contracts";
-import { Plus } from "lucide-react";
+import { ChevronDown, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/auth-context";
@@ -102,8 +102,40 @@ export function PlanEditor({
       invalidate={editor.invalidate}
       onClose={onClose}
       footer={
-        editor.canEdit ? (
-          <>
+        <>
+          {editor.error ? (
+            <p role="alert" className="text-destructive w-full text-sm break-words">
+              {editor.error}
+            </p>
+          ) : null}
+          {editor.notice ? (
+            <p role="status" className="text-muted-foreground w-full text-sm break-words">
+              {editor.notice}
+            </p>
+          ) : null}
+          {editor.busy ? (
+            <p role="status" className="text-muted-foreground w-full text-sm">
+              {editor.phase === "reading"
+                ? "현재 기록을 확인하고 있어요."
+                : editor.phase === "removing"
+                ? "삭제 결과를 확인하고 있어요."
+                : "주택 계획을 저장하고 있어요."}
+            </p>
+          ) : null}
+          {editor.readRequired ? (
+            <div className="w-full">
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 h-auto w-full whitespace-normal"
+                disabled={editor.busy}
+                onClick={() => void editor.read()}
+              >
+                저장 상태 확인
+              </Button>
+            </div>
+          ) : null}
+          {editor.canEdit ? (
             <Button
               form={formId}
               type="submit"
@@ -112,27 +144,27 @@ export function PlanEditor({
             >
               {editor.phase === "saving" ? "저장 중…" : "저장"}
             </Button>
-            {editor.current ? (
-              <ConfirmAction
-                label="계획 삭제"
-                title="이 주택 계획을 삭제할까요?"
-                description="계획과 납부 일정이 목록에서 제외돼요. 실제 계약과 납부는 취소되지 않아요. 개인정보 전체 삭제와는 달라요."
-                destructive
-                disabled={disabled}
-                onConfirm={() => void editor.remove()}
-              />
-            ) : null}
-          </>
-        ) : (
-          <p className="text-muted-foreground text-sm">
-            추가한 사람만 내용을 수정할 수 있어요.
-          </p>
-        )
+          ) : (
+            <p className="text-muted-foreground w-full text-sm">
+              추가한 사람만 내용을 수정할 수 있어요.
+            </p>
+          )}
+        </>
       }
     >
       <form
         id={formId}
         onSubmit={(event) => void editor.save(event)}
+        onSubmitCapture={(event) => {
+          // 같은 검증 오류가 반복되어도 접은 입력란을 다시 찾을 수 있게 한다.
+          if (editor.error) {
+            event.currentTarget
+              .querySelectorAll<HTMLDetailsElement>("[data-plan-inputs]")
+              .forEach((details) => {
+                details.open = true;
+              });
+          }
+        }}
         noValidate
         className="grid min-w-0 gap-4"
         aria-busy={editor.busy}
@@ -196,117 +228,125 @@ export function PlanEditor({
             </p>
           ) : null}
           {editor.draft.payments.map((payment, index) => (
-            <fieldset
+            <details
               key={payment.id}
-              disabled={disabled}
-              className="grid min-w-0 gap-3 rounded-xl border p-3"
+              data-plan-inputs="true"
+              open={Boolean(editor.error) || !existingPayments.has(payment.id)}
+              className="group min-w-0 rounded-xl border"
             >
-              <legend className="px-1 text-sm font-semibold">
-                납부 일정 {index + 1}
-              </legend>
-              <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+              <summary className="focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-xl p-3 focus-visible:outline-2 focus-visible:outline-offset-2 [&::-webkit-details-marker]:hidden">
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold">납부 일정 {index + 1} · {PAYMENT_LABELS[payment.kind]}{payment.installment ? ` ${payment.installment}회차` : ""}</span>
+                  <span className="text-muted-foreground mt-1 block text-xs">납부 예정일 {payment.dueDate || "미입력"}</span>
+                </span>
+                <ChevronDown className="text-muted-foreground size-4 shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />
+              </summary>
+              <fieldset disabled={disabled} className="grid min-w-0 gap-3 border-t p-3">
+                <legend className="sr-only">납부 일정 {index + 1} 입력</legend>
+                <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+                  <label className="grid gap-2 text-sm">
+                    항목
+                    <select
+                      aria-label={`납부 일정 ${index + 1} 항목`}
+                      className="bg-background h-11 rounded-md border px-3"
+                      value={payment.kind}
+                      onChange={(e) =>
+                        updatePayment(
+                          payment.id,
+                          "kind",
+                          e.target.value as ManualHousingPaymentKind
+                        )
+                      }
+                    >
+                      {Object.entries(PAYMENT_LABELS).map(([kind, label]) => (
+                        <option key={kind} value={kind}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-2 text-sm">
+                    회차 · 선택
+                    <Input
+                      className="h-11"
+                      value={payment.installment}
+                      maxLength={4}
+                      inputMode="numeric"
+                      placeholder="미입력"
+                      onChange={(e) =>
+                        updatePayment(payment.id, "installment", e.target.value)
+                      }
+                    />
+                  </label>
+                </div>
                 <label className="grid gap-2 text-sm">
-                  항목
-                  <select
-                    aria-label={`납부 일정 ${index + 1} 항목`}
-                    className="bg-background h-11 rounded-md border px-3"
-                    value={payment.kind}
-                    onChange={(e) =>
-                      updatePayment(
-                        payment.id,
-                        "kind",
-                        e.target.value as ManualHousingPaymentKind
-                      )
-                    }
-                  >
-                    {Object.entries(PAYMENT_LABELS).map(([kind, label]) => (
-                      <option key={kind} value={kind}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="grid gap-2 text-sm">
-                  회차 · 선택
+                  예정 금액 · 원
                   <Input
-                    className="h-11"
-                    value={payment.installment}
-                    maxLength={4}
+                    className="h-11 tabular-nums"
+                    value={payment.amount}
+                    maxLength={26}
                     inputMode="numeric"
-                    placeholder="미입력"
+                    placeholder="모르면 비워두세요"
                     onChange={(e) =>
-                      updatePayment(payment.id, "installment", e.target.value)
+                      updatePayment(payment.id, "amount", e.target.value)
                     }
                   />
                 </label>
-              </div>
-              <label className="grid gap-2 text-sm">
-                예정 금액 · 원
-                <Input
-                  className="h-11 tabular-nums"
-                  value={payment.amount}
-                  maxLength={26}
-                  inputMode="numeric"
-                  placeholder="모르면 비워두세요"
-                  onChange={(e) =>
-                    updatePayment(payment.id, "amount", e.target.value)
-                  }
-                />
-              </label>
-              <label className="grid gap-2 text-sm">
-                납부 예정일 · 선택
-                <Input
-                  type="date"
-                  className="h-11 min-w-0"
-                  value={payment.dueDate}
-                  onChange={(e) =>
-                    updatePayment(payment.id, "dueDate", e.target.value)
-                  }
-                />
-              </label>
-              <label className="grid gap-2 text-sm">
-                이미 납부한 금액 · 원
-                <Input
-                  className="h-11 tabular-nums"
-                  value={payment.paidAmount}
-                  maxLength={26}
-                  inputMode="numeric"
-                  placeholder="미확인이면 비워두세요"
-                  onChange={(e) =>
-                    updatePayment(payment.id, "paidAmount", e.target.value)
-                  }
-                />
-                <span className="text-muted-foreground text-xs">
-                  아직 낸 돈이 없으면 0을, 확인하지 못했다면 빈칸으로 두세요.
-                </span>
-              </label>
-              <label className="grid gap-2 text-sm">
-                실제 납부일 · 선택
-                <Input
-                  type="date"
-                  className="h-11 min-w-0"
-                  value={payment.paidDate}
-                  onChange={(e) =>
-                    updatePayment(payment.id, "paidDate", e.target.value)
-                  }
-                />
-              </label>
-              {!existingPayments.has(payment.id) && editor.canEdit ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="min-h-11 whitespace-normal"
-                  onClick={() =>
-                    set(
-                      "payments",
-                      editor.draft.payments.filter((p) => p.id !== payment.id)
-                    )
-                  }
-                >
-                  이 일정 빼기
-                </Button>
-              ) : null}
-            </fieldset>
+                <label className="grid gap-2 text-sm">
+                  납부 예정일 · 선택
+                  <Input
+                    type="date"
+                    className="h-11 min-w-0"
+                    value={payment.dueDate}
+                    onChange={(e) =>
+                      updatePayment(payment.id, "dueDate", e.target.value)
+                    }
+                  />
+                </label>
+                <label className="grid gap-2 text-sm">
+                  이미 납부한 금액 · 원
+                  <Input
+                    className="h-11 tabular-nums"
+                    value={payment.paidAmount}
+                    maxLength={26}
+                    inputMode="numeric"
+                    placeholder="미확인이면 비워두세요"
+                    onChange={(e) =>
+                      updatePayment(payment.id, "paidAmount", e.target.value)
+                    }
+                  />
+                  <span className="text-muted-foreground text-xs">
+                    아직 낸 돈이 없으면 0을, 확인하지 못했다면 빈칸으로 두세요.
+                  </span>
+                </label>
+                <label className="grid gap-2 text-sm">
+                  실제 납부일 · 선택
+                  <Input
+                    type="date"
+                    className="h-11 min-w-0"
+                    value={payment.paidDate}
+                    onChange={(e) =>
+                      updatePayment(payment.id, "paidDate", e.target.value)
+                    }
+                  />
+                </label>
+                {!existingPayments.has(payment.id) && editor.canEdit ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="min-h-11 whitespace-normal"
+                    onClick={() =>
+                      set(
+                        "payments",
+                        editor.draft.payments.filter((p) => p.id !== payment.id)
+                      )
+                    }
+                  >
+                    이 일정 빼기
+                  </Button>
+                ) : null}
+              </fieldset>
+            </details>
           ))}
           {editor.canEdit ? (
             <Button
@@ -326,57 +366,37 @@ export function PlanEditor({
             </Button>
           ) : null}
         </section>
-        <label className="grid gap-2 text-sm font-medium">
-          자금 마련 메모 · 선택
-          <textarea
-            rows={4}
-            maxLength={2000}
-            className="bg-background min-h-24 min-w-0 rounded-md border p-3 font-normal"
-            value={editor.draft.fundingNote}
-            disabled={disabled}
-            placeholder="어디서 자금을 마련할지 적어주세요. 전체 계좌번호나 비밀번호는 적지 마세요."
-            onChange={(e) => set("fundingNote", e.target.value)}
-          />
-          <span className="text-muted-foreground text-xs font-normal leading-relaxed">
-            가족과 공유한 계획은 이 메모도 함께 보여요.
-          </span>
-        </label>
+        <details
+          data-plan-inputs="true"
+          open={Boolean(editor.error) || Boolean(editor.current?.item.fundingNote?.trim())}
+          className="group min-w-0 rounded-xl border"
+        >
+          <summary className="focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-xl p-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 [&::-webkit-details-marker]:hidden">
+            자금 마련 메모 · 선택
+            <ChevronDown className="text-muted-foreground size-4 shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />
+          </summary>
+          <label className="grid min-w-0 gap-2 border-t p-3 text-sm font-medium">
+            <span className="sr-only">자금 마련 메모</span>
+            <textarea
+              rows={4}
+              maxLength={2000}
+              className="bg-background min-h-24 min-w-0 rounded-md border p-3 font-normal"
+              value={editor.draft.fundingNote}
+              disabled={disabled}
+              placeholder="어디서 자금을 마련할지 적어주세요. 전체 계좌번호나 비밀번호는 적지 마세요."
+              onChange={(e) => set("fundingNote", e.target.value)}
+            />
+            <span className="text-muted-foreground text-xs font-normal leading-relaxed">
+              가족과 공유한 계획은 이 메모도 함께 보여요.
+            </span>
+          </label>
+        </details>
         <details className="text-muted-foreground text-xs leading-relaxed">
           <summary className="min-h-11 cursor-pointer py-3">납부 기록 안내</summary>
           <p className="pb-3">이 화면은 일정과 납부 내역을 적는 곳이에요. 실제 이체나 계약 변경은 하지 않아요. 아직 확인하지 못한 금액과 날짜는 비워두세요.</p>
           <p className="pb-3">자금 마련 메모는 참고용이며 자금 배정이나 현금 흐름 예측에 반영되지 않아요. 계약금액과 납부액도 현재 자산 합계에 포함하지 않아요.</p>
         </details>
       </form>
-      {editor.error ? (
-        <p role="alert" className="text-destructive text-sm break-words">
-          {editor.error}
-        </p>
-      ) : null}
-      {editor.notice ? (
-        <p role="status" className="text-muted-foreground text-sm break-words">
-          {editor.notice}
-        </p>
-      ) : null}
-      {editor.busy ? (
-        <p role="status" className="text-muted-foreground text-sm">
-          {editor.phase === "reading"
-            ? "현재 기록을 확인하고 있어요."
-            : editor.phase === "removing"
-            ? "삭제 결과를 확인하고 있어요."
-            : "주택 계획을 저장하고 있어요."}
-        </p>
-      ) : null}
-      {editor.readRequired ? (
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11 h-auto whitespace-normal"
-          disabled={editor.busy}
-          onClick={() => void editor.read()}
-        >
-          저장 상태 확인
-        </Button>
-      ) : null}
       {editor.latest ? (
         <section className="bg-muted grid gap-2 rounded-lg p-3 text-sm">
           <h3 className="font-semibold">현재 저장된 기록</h3>
@@ -393,6 +413,21 @@ export function PlanEditor({
             onConfirm={editor.resetLatest}
           />
         </section>
+      ) : null}
+      {editor.current && editor.canEdit ? (
+        <details className="text-muted-foreground text-xs leading-relaxed">
+          <summary className="min-h-11 cursor-pointer py-3">계획 삭제</summary>
+          <div className="pb-2">
+            <ConfirmAction
+              label="계획 삭제"
+              title="이 주택 계획을 삭제할까요?"
+              description="계획과 납부 일정이 목록에서 제외돼요. 실제 계약과 납부는 취소되지 않아요. 개인정보 전체 삭제와는 달라요."
+              destructive
+              disabled={disabled}
+              onConfirm={() => void editor.remove()}
+            />
+          </div>
+        </details>
       ) : null}
     </RecordDialog>
   );

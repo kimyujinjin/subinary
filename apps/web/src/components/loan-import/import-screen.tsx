@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import type { ImportedLoanRecord, LoanImportPreviewResponse } from "@family/contracts";
 import { Button } from "@/components/ui/button";
 import { FinanceLoadError, FinanceLoading } from "@/components/manual-finance/shared";
+import { PageBackHeader } from "@/components/widgets/page-back-header";
 import { displayManualKrw, visibilityLabel } from "@/components/manual-finance/model";
 import { useAuth } from "@/lib/auth-context";
 import { loanImportApi, useOwnedLoanImports } from "@/lib/loan-import-client";
@@ -21,6 +21,7 @@ export function LoanImportScreen({ householdId, userId, canCreate }: { household
   const [reading, setReading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [showRecords, setShowRecords] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const session = useRef(createLoanTaskSession());
   useEffect(() => () => { session.current.invalidate(); if (fileInput.current) fileInput.current.value = ""; }, []);
@@ -49,12 +50,13 @@ export function LoanImportScreen({ householdId, userId, canCreate }: { household
   };
   return (
     <div className="min-w-0 space-y-5">
-      <Link href="/assets" className="text-muted-foreground inline-flex min-h-11 items-center text-sm">← 자산으로</Link>
-      <header><h1 className="text-2xl font-bold tracking-tight">신한 대출 가져오기</h1><p className="text-muted-foreground mt-2 text-sm">전세·중도금 대출의 남은 원금과 만기일을 저장해요.</p></header>
+      <header className="pl-2.5"><PageBackHeader title="신한 대출 가져오기" subtitle="전세·중도금 대출의 남은 원금과 만기일을 저장해요." backHref="/assets" /></header>
       <section className="bg-card grid min-w-0 grid-cols-1 gap-4 rounded-2xl border p-4 sm:p-5">
         <div>
           <h2 className="font-semibold">대출 내역 파일</h2>
-          <p className="text-muted-foreground mt-2 text-sm leading-relaxed">파일 선택 → 내용 확인 → 저장</p>
+          <ol className="text-muted-foreground mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs" aria-label="가져오기 순서">
+            {["파일 선택", "내용 확인", "저장"].map((step, index) => <li key={step}><span className="mr-1.5 font-semibold text-foreground" aria-hidden="true">{index + 1}.</span>{step}</li>)}
+          </ol>
         </div>
         <p className="text-muted-foreground text-xs leading-relaxed">파일을 선택하면 미리보기를 위해 내용이 앱 서버로 전송돼요. 확인 후 저장을 눌러야 기록이 추가돼요.</p>
         <label className="grid min-w-0 grid-cols-1 gap-2 text-sm font-medium">
@@ -76,9 +78,12 @@ export function LoanImportScreen({ householdId, userId, canCreate }: { household
         {!canCreate ? <p role="status" className="text-sm">현재 가족 권한으로는 가져온 대출을 추가하거나 수정할 수 없어요.</p> : null}
         {reading ? <div className="flex flex-wrap items-center gap-3"><p role="status" className="text-sm">확인 파일을 읽고 있어요.</p><Button variant="outline" onClick={() => { session.current.invalidate(); setReading(false); setError(null); }}>불러오기 취소</Button></div> : null}
       </section>
-      {error ? <p role="alert" className="text-destructive text-sm">{error}</p> : null}
+      {error ? <section role="alert" className="space-y-3 rounded-xl border p-4">
+        <p className="text-destructive text-sm leading-relaxed">{error}</p>
+        {canCreate ? <Button variant="outline" className="min-h-11 w-full" disabled={reading || Boolean(preview || editing)} onClick={() => fileInput.current?.click()}>파일 다시 선택</Button> : null}
+      </section> : null}
       {notice ? <p role="status" className="text-sm">{notice}</p> : null}
-      <details className="min-w-0 rounded-xl border p-4">
+      <details open={showRecords} onToggle={(event) => setShowRecords(event.currentTarget.open)} className="min-w-0 rounded-xl border p-4">
         <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">가져온 기록</summary>
         <p className="text-muted-foreground mb-4 text-xs">이 가족에 내가 저장한 대출이에요. 공유하지 않은 기록도 볼 수 있어요.</p>
         {records.isPending ? <FinanceLoading /> : records.isError ? <FinanceLoadError retry={() => void records.refetch()} /> : records.data?.items.length ? (
@@ -101,7 +106,7 @@ export function LoanImportScreen({ householdId, userId, canCreate }: { household
           </div>
         ) : <p className="text-muted-foreground text-sm">아직 가져온 대출이 없어요.</p>}
       </details>
-      {preview && canCreate ? <LoanCaptureReview preview={preview} householdId={householdId} userId={userId} onClose={() => setPreview(null)} onSaved={() => { setPreview(null); setNotice("대출을 저장했어요. 가져온 기록에서 확인할 수 있어요."); }} /> : null}
+      {preview && canCreate ? <LoanCaptureReview preview={preview} householdId={householdId} userId={userId} onClose={() => setPreview(null)} onSaved={() => { setPreview(null); setShowRecords(true); setNotice("대출을 저장했어요. 아래 가져온 기록에서 확인해 주세요."); }} /> : null}
       {editing && !unavailable && canCreate ? <LoanRecordEditor key={editing.id} item={editing} observedVersion={records.data?.items.find((item) => item.id === editing.id)?.version} householdId={householdId} userId={userId} onClose={() => setEditing(null)} /> : null}
     </div>
   );

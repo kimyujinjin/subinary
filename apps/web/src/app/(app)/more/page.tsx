@@ -16,6 +16,7 @@ import {
   LogOut,
   ListChecks,
   Repeat,
+  Search,
   ShieldCheck,
   Smartphone,
   Store,
@@ -31,8 +32,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
-import { Card } from "@/components/ui/card";
 import { ThemeSettingRow } from "@/components/theme-toggle";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -58,10 +59,10 @@ interface MoreGroup {
 
 const GROUPS: ReadonlyArray<MoreGroup> = [
   { key: "household", title: "가족 · 연결", items: [
-    { href: "/household", icon: Users, title: "가족 관리" },
-    { href: "/cards", icon: CreditCard, title: "결제 카드" },
     { href: "/more/connections", icon: Link2, title: "연결 관리", description: "토스증권 계좌 조회" },
+    { href: "/cards", icon: CreditCard, title: "결제 카드" },
     { href: "/devices", icon: Smartphone, title: "문자 연동", description: "카드 문자를 보내는 휴대폰" },
+    { href: "/household", icon: Users, title: "가족 관리" },
   ] },
   { key: "account", title: "내 계정", items: [
     { href: "/more/notifications", icon: Bell, title: "알림" },
@@ -97,24 +98,24 @@ const OPERATIONS_GROUP: MoreGroup = {
   ],
 };
 
-/** 목록 행 1개(원형 아이콘 + 제목/설명 + chevron). 높이 72px → 터치 타깃 충족. */
+/** 아이콘과 설명을 나란히 놓는 설정 행. */
 function MoreRow({ item, divided }: Readonly<{ item: MoreItem; divided: boolean }>) {
   const Icon = item.icon;
   return (
     <Link
       href={item.href}
-      className={`hover:bg-muted flex items-center gap-3 px-4 py-4 transition-colors active:scale-[0.99] ${
-        divided ? "border-t" : ""
+      className={`hover:bg-muted/60 focus-visible:ring-ring flex min-h-16 items-center gap-3 px-4 py-3.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset ${
+        divided ? "border-t border-border/50" : ""
       }`}
     >
-      <span className="bg-muted text-muted-foreground flex size-10 shrink-0 items-center justify-center rounded-xl">
-        <Icon className="size-5" />
+      <span className={`flex size-9 shrink-0 items-center justify-center rounded-md ${item.href === "/more/connections" ? "bg-finance-highlight text-finance-highlight-foreground" : "text-muted-foreground"}`}>
+        <Icon className="size-5" strokeWidth={1.8} aria-hidden="true" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="text-[15px] font-medium">{item.title}</span>
-        {item.description ? <span className="text-muted-foreground text-[13px]">{item.description}</span> : null}
+        {item.description ? <span className="text-muted-foreground text-xs leading-5 [overflow-wrap:anywhere]">{item.description}</span> : null}
       </span>
-      <ChevronRight className="text-muted-foreground/50 size-4 shrink-0" />
+      <ChevronRight className="text-muted-foreground/40 size-4 shrink-0" aria-hidden="true" />
     </Link>
   );
 }
@@ -124,16 +125,16 @@ function MoreSection({
   children,
 }: Readonly<{ group: MoreGroup; children?: ReactNode }>) {
   return (
-    <section className="flex flex-col gap-2">
-      <h2 className="text-muted-foreground px-1 text-[13px] font-semibold">
+    <section className="flex min-w-0 flex-col gap-2.5">
+      <h2 className="text-foreground px-1 text-sm font-bold">
         {group.title}
       </h2>
-      <Card className="gap-0 overflow-hidden p-0">
+      <div className="border-y border-border">
         {group.items.map((item, i) => (
           <MoreRow key={item.href} item={item} divided={i > 0} />
         ))}
         {children}
-      </Card>
+      </div>
     </section>
   );
 }
@@ -190,22 +191,25 @@ function BiometricToggleRow() {
   }
 
   return (
-    <div className="flex items-center gap-3 border-t px-4 py-4">
-      <span className="bg-muted text-muted-foreground flex size-10 shrink-0 items-center justify-center rounded-xl">
-        <Fingerprint className="size-5" />
+    <div className="flex min-h-16 items-center gap-3 border-t border-border/50 px-4 py-3.5">
+      <span className="text-muted-foreground flex size-9 shrink-0 items-center justify-center">
+        <Fingerprint className="size-5" strokeWidth={1.8} aria-hidden="true" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="text-[15px] font-medium">생체인식 잠금</span>
-        <span className="text-muted-foreground text-[13px]">
+        <span className="text-muted-foreground text-xs leading-5">
           앱을 열 때 Face ID·지문으로 본인을 확인해요
         </span>
       </span>
-      <Switch
-        checked={enabled}
-        disabled={busy}
-        onCheckedChange={(next) => void onToggle(next)}
-        aria-label="생체인식 잠금"
-      />
+      <span className="flex min-h-11 min-w-11 shrink-0 items-center justify-center">
+        <Switch
+          className="relative before:absolute before:-inset-x-1 before:-inset-y-3 before:content-['']"
+          checked={enabled}
+          disabled={busy}
+          onCheckedChange={(next) => void onToggle(next)}
+          aria-label="생체인식 잠금"
+        />
+      </span>
     </div>
   );
 }
@@ -234,12 +238,12 @@ function LogoutRow() {
       type="button"
       disabled={busy}
       onClick={() => void onLogout()}
-      className="hover:bg-muted flex w-full items-center gap-3 border-t px-4 py-4 text-left transition-colors active:scale-[0.99] disabled:opacity-60"
+      className="hover:bg-muted/60 focus-visible:ring-ring flex min-h-16 w-full items-center gap-3 border-t border-border/50 px-4 py-3.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset disabled:opacity-60"
     >
-      <span className="bg-destructive/10 text-destructive flex size-10 shrink-0 items-center justify-center rounded-full">
-        <LogOut className="size-5" />
+      <span className="text-muted-foreground flex size-9 shrink-0 items-center justify-center">
+        <LogOut className="size-5" strokeWidth={1.8} aria-hidden="true" />
       </span>
-      <span className="text-destructive text-[15px] font-medium">
+      <span className="text-muted-foreground text-[15px] font-medium">
         {busy ? "로그아웃하는 중…" : "로그아웃"}
       </span>
     </button>
@@ -251,20 +255,47 @@ export default function MorePage() {
   const { user } = useAuth();
   const canViewOperations =
     activeMembership?.role === "owner" || activeMembership?.role === "admin";
+  const [search, setSearch] = useState("");
+  const query = search.replace(/\s+/g, "").toLocaleLowerCase("ko-KR");
+  // 권한으로 걸러진 메뉴만 검색한다. 검색이 숨겨진 운영 메뉴를 노출하지 않는다.
+  const searchableGroups = [
+    ...GROUPS, ADVANCED_GROUP, LEGACY_RECORDS_GROUP,
+    ...(canViewOperations ? [OPERATIONS_GROUP] : []),
+  ];
+  const matchingItems = searchableGroups.flatMap((group) => group.items).filter(
+    (item) => `${item.title} ${item.description ?? ""}`.replace(/\s+/g, "").toLocaleLowerCase("ko-KR").includes(query),
+  );
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
+    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-7">
       {/* 누구로 로그인해 있는지 — 예전에는 아바타 드롭다운에만 있던 정보다.
           아바타가 링크가 되면서 이 화면이 그 자리를 대신한다. */}
-      <div>
-        <h1 className="mb-2 text-2xl font-bold tracking-tight">설정</h1>
-        <p className="text-[15px] font-semibold">{user?.name ?? "사용자"}</p>
-        <p className="text-muted-foreground text-sm">
-          {user?.email ?? ""}
-          {activeMembership ? ` · ${activeMembership.name}` : ""}
-        </p>
+      <header className="space-y-5">
+        <h1 className="text-2xl font-bold tracking-tight">설정</h1>
+        <div className="min-w-0 space-y-1 border-b border-foreground/20 pb-5">
+          <p className="text-lg font-semibold [overflow-wrap:anywhere]">{user?.name ?? "사용자"}</p>
+          <p className="text-muted-foreground text-sm [overflow-wrap:anywhere]">
+            {user?.email ?? ""}
+            {activeMembership ? ` · ${activeMembership.name}` : ""}
+          </p>
+        </div>
+      </header>
+
+      <div className="space-y-2">
+        <label htmlFor="settings-search" className="sr-only">설정 검색</label>
+        <div className="relative">
+          <Search aria-hidden="true" className="text-muted-foreground pointer-events-none absolute left-3 top-3.5 size-4" />
+          <Input id="settings-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="카드, 알림, 자동 분류 검색" className="min-h-11 pl-10" />
+        </div>
+        {query ? <p role="status" className="text-muted-foreground text-xs">검색 결과 {matchingItems.length}개</p> : null}
       </div>
 
+      {query ? (
+        matchingItems.length ? <MoreSection group={{ key: "search", title: "검색 결과", items: matchingItems }} /> :
+          <div className="space-y-2 py-6 text-center"><p className="font-medium">일치하는 메뉴가 없어요</p><p className="text-muted-foreground text-sm">카드, 가족, 알림처럼 짧게 검색해 보세요.</p></div>
+      ) : null}
+
+      <div className={query ? "hidden" : "space-y-7"}>
       {GROUPS.map((group) =>
         group.key === "account" ? (
           <MoreSection key={group.key} group={group}>
@@ -277,14 +308,15 @@ export default function MorePage() {
         ),
       )}
 
-      <details className="bg-card rounded-xl border p-4">
-        <summary className="min-h-11 cursor-pointer py-3 font-medium">상세 설정</summary>
-        <div className="mt-3 space-y-6">
+      <details className="min-w-0 border-t border-border/70 pt-1">
+        <summary className="text-muted-foreground focus-visible:outline-ring min-h-11 cursor-pointer rounded-lg py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2">상세 설정</summary>
+        <div className="mt-4 space-y-7">
           <MoreSection group={ADVANCED_GROUP} />
           <MoreSection group={LEGACY_RECORDS_GROUP} />
           {canViewOperations ? <MoreSection group={OPERATIONS_GROUP} /> : null}
         </div>
       </details>
+      </div>
     </div>
   );
 }

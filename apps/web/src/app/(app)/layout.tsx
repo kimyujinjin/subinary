@@ -2,7 +2,6 @@
 /** Three main destinations; management tools remain reachable through 설정. */
 import {
   Bell,
-  CreditCard,
   Home,
   Landmark,
   Receipt,
@@ -43,11 +42,8 @@ const NAV_ITEMS: ReadonlyArray<NavItem> = PRIMARY_TABS.map((tab) => ({
 
 function BrandMark() {
   return (
-    <Link href="/dashboard" aria-label="모아 홈" className="flex min-h-11 min-w-11 shrink-0 items-center gap-2">
-      <span className="bg-primary text-primary-foreground flex size-8 items-center justify-center rounded-lg">
-        <CreditCard className="size-4" />
-      </span>
-      <span className="hidden text-sm font-bold tracking-tight sm:inline">
+    <Link href="/dashboard" aria-label="모아 홈" className="text-primary flex min-h-11 min-w-11 shrink-0 items-center rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+      <span className="text-xl font-extrabold tracking-tight">
         모아
       </span>
     </Link>
@@ -90,18 +86,18 @@ function NavigationItem({
       href={item.href}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 px-1 py-2 text-[11px] transition-colors active:scale-95 lg:min-h-12 lg:flex-row lg:justify-start lg:gap-3 lg:rounded-xl lg:px-4 lg:py-3 lg:text-sm",
+        "flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:min-h-12 lg:flex-row lg:justify-start lg:gap-3 lg:px-4 lg:py-3 lg:text-sm",
         active
-          ? "text-primary font-semibold lg:bg-primary/10"
+          ? "text-primary font-semibold lg:bg-accent"
           : "text-muted-foreground hover:text-foreground lg:hover:bg-muted",
       )}
     >
-      <span className="relative shrink-0">
+      <span className="relative flex h-8 w-11 shrink-0 items-center justify-center lg:h-auto lg:w-auto">
         <Icon className="size-5" strokeWidth={active ? 2.4 : 1.8} aria-hidden="true" />
         {dot ? (
           <span
             aria-label="새 거래가 있어요"
-            className="bg-accent-foreground ring-background absolute -top-0.5 -right-1 size-2 rounded-full ring-2"
+            className="bg-accent-foreground ring-background absolute top-0 right-2 size-2 rounded-full ring-2 lg:-top-0.5 lg:-right-1"
           />
         ) : null}
       </span>
@@ -118,7 +114,7 @@ function PrimaryNav({ pathname }: { pathname: string }) {
     <nav
       aria-label="주 메뉴"
       data-bottom-nav
-      className="bg-card/95 fixed inset-x-0 bottom-0 z-40 border-t pb-[env(safe-area-inset-bottom)] backdrop-blur lg:inset-x-auto lg:top-[var(--app-header-h)] lg:bottom-0 lg:left-0 lg:w-52 lg:border-r lg:border-t-0 lg:bg-card lg:p-4"
+      className="bg-card/95 fixed inset-x-0 bottom-0 z-40 border-t pb-[var(--safe-bottom)] backdrop-blur lg:inset-x-auto lg:top-[var(--app-header-h)] lg:bottom-0 lg:left-0 lg:w-52 lg:border-r lg:border-t-0 lg:bg-card lg:p-4"
     >
       <div className="mx-auto grid h-20 w-full max-w-lg grid-cols-3 items-center lg:h-auto lg:grid-cols-1 lg:gap-2">
         {NAV_ITEMS.map((item) => (
@@ -141,8 +137,8 @@ function AppShell({
   return (
     <div className="flex min-h-dvh flex-col">
       <a href="#app-main" className="sr-only z-50 focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:rounded-lg focus:bg-background focus:p-3 focus:shadow-lg">본문으로 건너뛰기</a>
-      {/* pt-[env(safe-area-inset-top)]: 상태바(노치) 영역만큼 헤더를 밀어 겹침 방지 */}
-      <header className="bg-card/95 sticky top-0 z-30 border-b pt-[env(safe-area-inset-top)] backdrop-blur">
+      {/* 웹과 Android가 제공하는 안전 영역을 셸 치수와 동일하게 반영한다. */}
+      <header className="bg-background/95 sticky top-0 z-30 border-b pt-[var(--safe-top)] backdrop-blur">
         <div className="flex h-14 items-center justify-between gap-2 px-4">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <BrandMark />
@@ -162,7 +158,7 @@ function AppShell({
           고정값(pb-28=112px)은 iPhone(inset 34px)에서 탭바 총높이(114px)보다 작아
           마지막 콘텐츠가 탭바 밑에 깔렸다 — 변수 참조로 기기별 편차를 흡수한다. */}
       {/* 당겨서 새로고침 — 화면의 활성 쿼리만 다시 가져온다(전역 1회 배선). */}
-      <main id="app-main" tabIndex={-1} className="min-w-0 flex-1 px-4 pt-6 pb-[calc(var(--app-tabbar-h)+1.5rem)] focus:outline-none lg:ml-52 lg:px-8 lg:pb-8">
+      <main id="app-main" tabIndex={-1} className="min-w-0 flex-1 px-4 pt-4 pb-[calc(var(--app-tabbar-h)+1.5rem)] focus:outline-none lg:ml-52 lg:px-8 lg:pt-6 lg:pb-8">
         <PullToRefresh><div className="mx-auto w-full max-w-6xl">{children}</div></PullToRefresh>
       </main>
 

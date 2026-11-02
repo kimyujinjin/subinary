@@ -97,36 +97,64 @@ export function AssetEditor({
       invalidate={editor.invalidate}
       onClose={onClose}
       footer={
-        editor.canEdit ? (
-          <>
+        <>
+        {editor.error ? (
+          <p role="alert" className="text-destructive text-sm break-words">
+            {editor.error}
+          </p>
+        ) : null}
+        {editor.notice ? (
+          <p role="status" className="text-muted-foreground text-sm break-words">
+            {editor.notice}
+          </p>
+        ) : null}
+        {editor.busy ? (
+          <p role="status" className="text-muted-foreground text-sm">
+            {editor.phase === "reading"
+              ? "현재 기록을 확인하고 있어요."
+              : editor.phase === "removing"
+              ? "삭제 결과를 확인하고 있어요."
+              : "자산을 저장하고 있어요."}
+          </p>
+        ) : null}
+        {editor.readRequired ? (
+          <div className="w-full">
             <Button
-              form={formId}
-              type="submit"
-              className="min-h-11 w-full"
-              disabled={disabled}
+              type="button"
+              variant="outline"
+              className="min-h-11 h-auto w-full whitespace-normal"
+              disabled={editor.busy}
+              onClick={() => void editor.read()}
             >
-              {editor.phase === "saving" ? "저장 중…" : "저장"}
+              저장 상태 확인
             </Button>
-            {editor.current ? (
-              <ConfirmAction
-                label="자산 삭제"
-                title="이 자산을 삭제할까요?"
-                description="목록과 합계에서 제외돼요. 실제 계좌와 잔액은 그대로예요. 개인정보 전체 삭제와는 달라요."
-                destructive
-                disabled={disabled}
-                onConfirm={() => void editor.remove()}
-              />
-            ) : null}
-          </>
+          </div>
+        ) : null}
+        {editor.canEdit ? (
+          <Button
+            form={formId}
+            type="submit"
+            className="min-h-11 w-full"
+            disabled={disabled}
+          >
+            {editor.phase === "saving" ? "저장 중…" : "저장"}
+          </Button>
         ) : (
           <p className="text-muted-foreground text-sm">
             추가한 사람만 수정할 수 있어요.
           </p>
-        )
+        )}
+        </>
       }
     >
       <form
         id={formId}
+        onSubmitCapture={(event) => {
+          // 같은 오류로 다시 제출해도 접어 둔 입력을 확인할 수 있게 한다.
+          if (editor.error) {
+            event.currentTarget.querySelectorAll<HTMLDetailsElement>("details[data-optional-input]").forEach((details) => { details.open = true; });
+          }
+        }}
         onSubmit={(event) => void editor.save(event)}
         noValidate
         className="grid min-w-0 gap-4"
@@ -192,72 +220,62 @@ export function AssetEditor({
         <p className="bg-muted rounded-lg p-3 text-xs">
           출처: {editor.draft.amount.trim() ? "직접 입력" : "금액 미입력"}
         </p>
-        <label className="grid gap-2 text-sm font-medium">
-          명의자 메모 · 선택
-          <Input
-            className="h-11"
-            value={editor.draft.legalOwnerLabel}
-            disabled={disabled}
-            maxLength={100}
-            autoComplete="off"
-            placeholder="미확정이면 비워두세요"
-            onChange={(e) => set("legalOwnerLabel", e.target.value)}
-          />
-          <span className="text-muted-foreground text-xs font-normal">
-            참고용 메모예요. 소유권이나 공동 지분을 확인하지는 않아요.
-          </span>
-        </label>
         <VisibilityField
           value={editor.draft.visibility}
           creating={!editor.current}
         />
-        <label className="grid gap-2 text-sm font-medium">
-          메모 · 선택
-          <textarea
-            rows={3}
-            maxLength={1000}
-            className="bg-background min-h-22 min-w-0 rounded-md border p-3 font-normal"
-            value={editor.draft.note}
-            disabled={disabled}
-            placeholder="전체 계좌번호·카드번호·인증정보는 적지 마세요"
-            onChange={(e) => set("note", e.target.value)}
-          />
-        </label>
+        <details data-optional-input open={Boolean(editor.current?.item.legalOwnerLabel || editor.current?.item.note || editor.error)} className="min-w-0 border-y">
+          <summary className="focus-visible:outline-ring min-h-11 cursor-pointer py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2">추가 메모 · 선택</summary>
+          <div className="grid min-w-0 gap-4 pb-4">
+            <label className="grid gap-2 text-sm font-medium">
+              명의자 메모 · 선택
+              <Input
+                className="h-11"
+                value={editor.draft.legalOwnerLabel}
+                disabled={disabled}
+                maxLength={100}
+                autoComplete="off"
+                placeholder="미확정이면 비워두세요"
+                onChange={(e) => set("legalOwnerLabel", e.target.value)}
+              />
+              <span className="text-muted-foreground text-xs font-normal">
+                참고용 메모예요. 소유권이나 공동 지분을 확인하지는 않아요.
+              </span>
+            </label>
+            <label className="grid gap-2 text-sm font-medium">
+              메모 · 선택
+              <textarea
+                rows={3}
+                maxLength={1000}
+                className="bg-background min-h-22 min-w-0 rounded-md border p-3 font-normal"
+                value={editor.draft.note}
+                disabled={disabled}
+                placeholder="전체 계좌번호·카드번호·인증정보는 적지 마세요"
+                onChange={(e) => set("note", e.target.value)}
+              />
+            </label>
+          </div>
+        </details>
         <details className="text-muted-foreground text-xs leading-relaxed">
           <summary className="min-h-11 cursor-pointer py-3">금액 입력 기준</summary>
           <p className="pb-3">통장·현금은 잔액, 적금은 현재 적립액, 주식은 현재 평가액, 대출은 남은 원금을 적어주세요. 만기 예상액이나 대출 한도는 제외해요.</p>
           <p className="pb-3">금액과 날짜는 직접 확인한 원화 기준이에요. 계좌 자동 조회나 외화 환산 없이 입력한 값을 사용해요. 모르는 금액은 비워두고, 실제로 0원일 때만 0을 입력해 주세요.</p>
         </details>
       </form>
-      {editor.error ? (
-        <p role="alert" className="text-destructive text-sm break-words">
-          {editor.error}
-        </p>
-      ) : null}
-      {editor.notice ? (
-        <p role="status" className="text-muted-foreground text-sm break-words">
-          {editor.notice}
-        </p>
-      ) : null}
-      {editor.busy ? (
-        <p role="status" className="text-muted-foreground text-sm">
-          {editor.phase === "reading"
-            ? "현재 기록을 확인하고 있어요."
-            : editor.phase === "removing"
-            ? "삭제 결과를 확인하고 있어요."
-            : "자산을 저장하고 있어요."}
-        </p>
-      ) : null}
-      {editor.readRequired ? (
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11 h-auto whitespace-normal"
-          disabled={editor.busy}
-          onClick={() => void editor.read()}
-        >
-          저장 상태 확인
-        </Button>
+      {editor.current && editor.canEdit ? (
+        <details className="border-t text-sm">
+          <summary className="text-muted-foreground focus-visible:outline-ring min-h-11 cursor-pointer py-3 focus-visible:outline-2 focus-visible:outline-offset-2">자산 삭제</summary>
+          <div className="pb-3">
+            <ConfirmAction
+              label="자산 삭제"
+              title="이 자산을 삭제할까요?"
+              description="목록과 합계에서 제외돼요. 실제 계좌와 잔액은 그대로예요. 개인정보 전체 삭제와는 달라요."
+              destructive
+              disabled={disabled}
+              onConfirm={() => void editor.remove()}
+            />
+          </div>
+        </details>
       ) : null}
       {editor.latest ? (
         <section className="bg-muted grid gap-2 rounded-lg p-3 text-sm">

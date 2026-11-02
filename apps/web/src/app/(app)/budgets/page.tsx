@@ -13,7 +13,7 @@
  * - 수정(이름/금액/카드 묶음) Dialog / 삭제 AlertDialog(질문형). CRUD는 owner/admin만
  *   (PRD §7.2, 서버에서도 강제). 조건부 대상 필드가 있어 폼은 useState 유지.
  * ------------------------------------------------------------------------- */
-import { Suspense, useCallback, useMemo, useState, type FormEvent } from "react";
+import { Suspense, useCallback, useMemo, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -364,6 +364,10 @@ function BudgetsView() {
   const [amount, setAmount] = useState("");
   const [name, setName] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const [formErrorField, setFormErrorField] = useState<"amount" | "scopeRef" | "cards" | null>(null);
+  const createAmountInput = useRef<HTMLInputElement>(null);
+  const createScopeInput = useRef<HTMLButtonElement>(null);
+  const createCardsInput = useRef<HTMLDivElement>(null);
 
   // --- 수정 모달 상태 -------------------------------------------------------
   const [editing, setEditing] = useState<BudgetSummary | null>(null);
@@ -395,6 +399,7 @@ function BudgetsView() {
       setAmount("");
       setName("");
       setFormError(null);
+      setFormErrorField(null);
       setCreateOpen(false);
     },
   });
@@ -455,26 +460,38 @@ function BudgetsView() {
     setScopeType(next);
     setScopeRefId("");
     setSelectedCardIds([]);
+    setFormError(null);
+    setFormErrorField(null);
   }
 
   function onCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError(null);
+    setFormErrorField(null);
     if (!householdId) return;
 
     const parsedAmount = parsePositiveInt(amount);
     if (parsedAmount === null) {
       setFormError("예산 금액은 1원 이상의 정수로 입력해 주세요.");
+      setFormErrorField("amount");
+      createAmountInput.current?.focus();
       return;
     }
     if (scopeType !== "household" && scopeType !== "card_group" && scopeRefId === "") {
       setFormError("예산을 적용할 대상을 선택해 주세요.");
+      setFormErrorField("scopeRef");
+      createScopeInput.current?.focus();
       return;
     }
 
     if (scopeType === "card_group") {
       const selectionError = budgetCardGroupError(selectedCardIds, cardsQuery.data ?? []);
-      if (selectionError) { setFormError(selectionError); return; }
+      if (selectionError) {
+        setFormError(selectionError);
+        setFormErrorField("cards");
+        createCardsInput.current?.focus();
+        return;
+      }
     }
 
     const body: BudgetCreateRequest = {
@@ -548,18 +565,18 @@ function BudgetsView() {
 
   const items = budgetsQuery.data?.items ?? [];
   const editGroupChanged = editing !== null && editCardGroup && Object.keys(budgetCardGroupUpdate(editing, editCardIds)).length > 0;
+  const createAmount = parsePositiveInt(amount);
+  const createScopeLabel = scopeType === "household"
+    ? SCOPE_TYPE_LABEL.household
+    : scopeType === "card_group"
+      ? `${SCOPE_TYPE_LABEL.card_group} · ${selectedCardIds.length}개 선택`
+      : `${SCOPE_TYPE_LABEL[scopeType]} · ${scopeRefOptions.find((option) => option.value === scopeRefId)?.label ?? "대상 선택 전"}`;
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
-      <LedgerNav active="budgets" month={month} />
-      {/* 페이지 헤더 + 월 스위처 + 주 CTA ---------------------------------
-          좁은 화면에서는 세로로 쌓는다. 한 줄에 두면 월 스위처(~172px)와
-          '예산 만들기'(~110px)가 `shrink-0`라 360px 기기에서 가로 오버플로가 나고,
-          그러면 `fixed`인 하단 탭바와 `sticky`인 상단 헤더가 가로 스크롤을 따라
-          흔들려 화면 전체가 깨져 보인다. */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex flex-col gap-1">
-          <h1 className="sr-only">예산</h1>
+    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-5">
+      <header className="flex min-w-0 items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h1 className="text-2xl font-bold tracking-tight">예산</h1>
           <p className="text-muted-foreground text-sm">
             {isCurrentMonth
               ? "이번 달 얼마나 썼는지 한눈에 확인해요"
@@ -568,19 +585,16 @@ function BudgetsView() {
               : "그 달에 세운 계획을 그대로 확인해요"}
           </p>
         </div>
-        <div className="flex items-center justify-between gap-1 sm:shrink-0">
-          <MonthSwitcher
-            month={month}
-            months={availableMonths}
-            onChange={setMonth}
-          />
           {canEdit && items.length > 0 ? (
-            <Button type="button" onClick={() => setCreateOpen(true)}>
+            <Button type="button" className="min-h-11 shrink-0" onClick={() => setCreateOpen(true)}>
               <Plus />
               예산 만들기
             </Button>
           ) : null}
-        </div>
+      </header>
+      <LedgerNav active="budgets" month={month} />
+      <div className="flex min-w-0 items-center justify-start">
+        <MonthSwitcher month={month} months={availableMonths} onChange={setMonth} className="-ml-2 [&>button]:size-11 [&>span]:text-2xl [&>span]:font-bold [&>span]:tracking-tight" />
       </div>
 
       {/* 목록 ------------------------------------------------------------- */}
@@ -855,15 +869,15 @@ function BudgetsView() {
       <Dialog
         open={createOpen}
         onOpenChange={(o) => {
-          if (!o) setFormError(null);
+          if (!o) { setFormError(null); setFormErrorField(null); }
           setCreateOpen(o);
         }}
       >
         <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>얼마까지 쓸까요?</DialogTitle>
+            <DialogTitle>{formatMonth(month)} 예산 만들기</DialogTitle>
             <DialogDescription>
-              한 달 예산을 정해 두면 사용률을 함께 지켜봐 드려요
+              적용할 대상과 한 달 동안 쓸 금액을 정해 주세요.
             </DialogDescription>
           </DialogHeader>
           <form className="flex flex-col gap-4" onSubmit={onCreate} noValidate>
@@ -873,7 +887,7 @@ function BudgetsView() {
                 value={scopeType}
                 onValueChange={(v) => onScopeTypeChange(v as BudgetScopeType)}
               >
-                <SelectTrigger id="budget-scope" className="w-full">
+                <SelectTrigger id="budget-scope" className="min-h-11 w-full min-w-0">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -889,8 +903,8 @@ function BudgetsView() {
             {scopeType !== "household" && scopeType !== "card_group" ? (
               <div className="flex flex-col gap-2">
                 <Label htmlFor="budget-scope-ref">대상</Label>
-                <Select value={scopeRefId} onValueChange={setScopeRefId}>
-                  <SelectTrigger id="budget-scope-ref" className="w-full">
+                <Select value={scopeRefId} onValueChange={(value) => { setScopeRefId(value); if (formErrorField === "scopeRef") { setFormError(null); setFormErrorField(null); } }}>
+                  <SelectTrigger id="budget-scope-ref" ref={createScopeInput} className="min-h-11 w-full min-w-0" aria-invalid={formErrorField === "scopeRef"} aria-describedby={formErrorField === "scopeRef" ? "budget-create-error" : undefined}>
                     <SelectValue placeholder="누구(무엇)의 예산인지 골라 주세요" />
                   </SelectTrigger>
                   <SelectContent>
@@ -905,7 +919,9 @@ function BudgetsView() {
             ) : null}
 
             {scopeType === "card_group" ? (
-              <BudgetCardPicker cards={cardsQuery.data ?? []} selectedIds={selectedCardIds} memberNames={memberNames} onChange={setSelectedCardIds} disabled={createMutation.isPending || cardsQuery.isLoading} isLoading={cardsQuery.isLoading} loadError={cardsQuery.isError} />
+              <div ref={createCardsInput} tabIndex={-1} role="group" aria-label="예산에 포함할 카드" aria-describedby={formErrorField === "cards" ? "budget-create-error" : undefined} className="min-w-0 rounded-md focus-visible:outline-2 focus-visible:outline-ring">
+                <BudgetCardPicker cards={cardsQuery.data ?? []} selectedIds={selectedCardIds} memberNames={memberNames} onChange={(value) => { setSelectedCardIds(value); if (formErrorField === "cards") { setFormError(null); setFormErrorField(null); } }} disabled={createMutation.isPending || cardsQuery.isLoading} isLoading={cardsQuery.isLoading} loadError={cardsQuery.isError} />
+              </div>
             ) : null}
             <div className="flex flex-col gap-2">
               <Label htmlFor="budget-name">예산 이름 (선택)</Label>
@@ -923,6 +939,7 @@ function BudgetsView() {
               <Label htmlFor="budget-amount">한 달 예산 (원)</Label>
               <Input
                 id="budget-amount"
+                ref={createAmountInput}
                 name="budget-amount"
                 type="number"
                 inputMode="numeric"
@@ -930,13 +947,16 @@ function BudgetsView() {
                 step={1}
                 placeholder="500000"
                 required
+                className="min-h-11"
+                aria-invalid={formErrorField === "amount"}
+                aria-describedby={formErrorField === "amount" ? "budget-create-error" : undefined}
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(e) => { setAmount(e.target.value); if (formErrorField === "amount") { setFormError(null); setFormErrorField(null); } }}
               />
             </div>
 
             {formError ? (
-              <p className="text-destructive text-sm" role="alert">
+              <p id="budget-create-error" className="text-destructive text-sm" role="alert">
                 {formError}
               </p>
             ) : null}
@@ -948,6 +968,12 @@ function BudgetsView() {
                 )}
               </p>
             ) : null}
+
+            <dl aria-label="만들 예산 요약" className="space-y-2 border-y py-3 text-sm">
+              <div className="flex flex-wrap justify-between gap-x-3 gap-y-1"><dt className="text-muted-foreground">적용 월</dt><dd className="font-medium">{formatMonth(month)}</dd></div>
+              <div className="flex flex-wrap justify-between gap-x-3 gap-y-1"><dt className="text-muted-foreground">적용 범위</dt><dd className="min-w-0 text-right font-medium [overflow-wrap:anywhere]">{createScopeLabel}</dd></div>
+              <div className="flex flex-wrap justify-between gap-x-3 gap-y-1"><dt className="text-muted-foreground">한 달 예산</dt><dd className="font-semibold tabular-nums">{createAmount === null ? "금액 입력 전" : formatMoney(createAmount, "KRW")}</dd></div>
+            </dl>
 
             <DialogFooter className="flex-col sm:flex-col">
               <Button

@@ -51,6 +51,7 @@ import { registerTransactionDetailBack } from "@/lib/transaction-detail-back";
 const NONE = "__none__";
 
 type Mode = "text" | "fields";
+type FieldErrors = Partial<Record<"amount" | "merchant" | "occurredAt", string>>;
 
 /** datetime-local 기본값(현재 시각, 로컬). `YYYY-MM-DDTHH:mm`. */
 function nowLocalInput(): string {
@@ -89,6 +90,11 @@ export function AddTransactionDialog({
   const [occurredAt, setOccurredAt] = useState(nowLocalInput);
   const [categoryId, setCategoryId] = useState<string>(NONE);
   const [cardId, setCardId] = useState<string>(NONE);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [submitErrors, setSubmitErrors] = useState<Partial<Record<Mode, string>>>({});
+  const amountInput = useRef<HTMLInputElement>(null);
+  const merchantInput = useRef<HTMLInputElement>(null);
+  const occurredAtInput = useRef<HTMLInputElement>(null);
 
   const preview = useParsePreview();
   const textEntry = useManualTextEntry();
@@ -110,6 +116,8 @@ export function AddTransactionDialog({
     setOccurredAt(nowLocalInput());
     setCategoryId(NONE);
     setCardId(NONE);
+    setFieldErrors({});
+    setSubmitErrors({});
     preview.reset();
     textEntry.reset();
     fieldsEntry.reset();
@@ -141,6 +149,7 @@ export function AddTransactionDialog({
   }, [content, mode]);
 
   const previewData = mode === "text" && preview.variables?.content === content.trim() ? preview.data : undefined;
+  const previewError = mode === "text" && preview.isError && preview.variables?.content === content.trim() ? preview.error : null;
   const canRegisterText = Boolean(previewData?.parseable);
 
   const submitting = textEntry.isPending || fieldsEntry.isPending;
@@ -157,6 +166,7 @@ export function AddTransactionDialog({
     onOpenChange(false);
   };
   closeHandler.current = requestClose;
+  const clearSubmitError = (entryMode: Mode) => setSubmitErrors((errors) => ({ ...errors, [entryMode]: undefined }));
 
   /** 미리보기 결과를 직접 입력 폼에 채우고 폼 모드로 전환. */
   function switchToFieldsPrefilled() {
@@ -180,11 +190,14 @@ export function AddTransactionDialog({
         }
       }
     }
+    setFieldErrors({});
+    clearSubmitError("fields");
     setMode("fields");
   }
 
   async function handleTextRegister() {
     if (inFlight.current || !canRegisterText) return;
+    clearSubmitError("text");
     inFlight.current = true;
     const activeSession = session.current;
     try {
@@ -199,7 +212,7 @@ export function AddTransactionDialog({
       }
       onOpenChange(false);
     } catch (error) {
-      if (session.current === activeSession) toast.error(errorMessage(error));
+      if (session.current === activeSession) setSubmitErrors((errors) => ({ ...errors, text: errorMessage(error) }));
     } finally {
       inFlight.current = false;
     }
@@ -207,18 +220,22 @@ export function AddTransactionDialog({
 
   async function handleFieldsRegister() {
     if (inFlight.current) return;
+    clearSubmitError("fields");
     const amountInt = Number(amount.replace(/[,\s]/g, ""));
+    const occurred = new Date(occurredAt);
+    const errors: FieldErrors = {};
     if (!Number.isSafeInteger(amountInt) || amountInt <= 0) {
-      toast.error("금액을 올바르게 입력해 주세요");
-      return;
+      errors.amount = "금액을 1원 이상의 정수로 입력해 주세요.";
     }
     if (merchant.trim().length === 0) {
-      toast.error("가맹점을 입력해 주세요");
-      return;
+      errors.merchant = "가맹점을 입력해 주세요.";
     }
-    const occurred = new Date(occurredAt);
     if (Number.isNaN(occurred.getTime())) {
-      toast.error("날짜/시각을 올바르게 입력해 주세요");
+      errors.occurredAt = "날짜와 시각을 올바르게 입력해 주세요.";
+    }
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      (errors.amount ? amountInput : errors.merchant ? merchantInput : occurredAtInput).current?.focus();
       return;
     }
     inFlight.current = true;
@@ -237,7 +254,7 @@ export function AddTransactionDialog({
       toast.success("거래가 등록됐어요");
       onOpenChange(false);
     } catch (error) {
-      if (session.current === activeSession) toast.error(errorMessage(error));
+      if (session.current === activeSession) setSubmitErrors((errors) => ({ ...errors, fields: errorMessage(error) }));
     } finally {
       inFlight.current = false;
     }
@@ -277,9 +294,10 @@ export function AddTransactionDialog({
             <button
               key={value}
               type="button"
-              onClick={() => setMode(value)}
+              onClick={() => { setMode(value); clearSubmitError(value); }}
+              aria-pressed={mode === value}
               className={cn(
-                "flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition",
+                "min-h-11 flex-1 rounded-lg px-3 py-2 text-sm font-medium transition",
                 mode === value
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground",
@@ -296,8 +314,10 @@ export function AddTransactionDialog({
             <textarea
               id="paste-content"
               value={content}
-              onChange={(e) => setContent(e.target.value)}
+              onChange={(e) => { setContent(e.target.value); clearSubmitError("text"); }}
               rows={5}
+              aria-invalid={Boolean(previewError)}
+              aria-describedby={previewError ? "paste-preview-error" : undefined}
               placeholder={
                 "예) 13,380원 결제\n공룡통장 카드 | 쿠팡(쿠페이)\n잔액 126,713원"
               }
@@ -306,7 +326,14 @@ export function AddTransactionDialog({
 
             {/* 파싱 미리보기 */}
             {preview.isPending ? (
-              <p className="text-muted-foreground text-sm">인식 중…</p>
+              <p role="status" className="text-muted-foreground text-sm">인식 중…</p>
+            ) : previewError ? (
+              <div className="space-y-2">
+                <p id="paste-preview-error" role="alert" className="text-destructive text-sm">
+                  문자 미리보기를 불러오지 못했어요. {errorMessage(previewError)}
+                </p>
+                <Button type="button" variant="tint" className="min-h-11" onClick={switchToFieldsPrefilled}>직접 입력으로 전환</Button>
+              </div>
             ) : previewData ? (
               <div className="bg-muted/50 flex flex-col gap-2 rounded-xl p-3 text-sm">
                 {previewData.parseable ? (
@@ -341,6 +368,7 @@ export function AddTransactionDialog({
                       type="button"
                       variant="tint"
                       size="sm"
+                      className="min-h-11"
                       onClick={switchToFieldsPrefilled}
                     >
                       직접 입력으로 전환
@@ -350,6 +378,7 @@ export function AddTransactionDialog({
               </div>
             ) : null}
 
+            {submitErrors.text ? <p role="alert" className="text-destructive text-sm">{submitErrors.text}</p> : null}
             <DialogFooter>
               <Button
                 type="button"
@@ -373,34 +402,49 @@ export function AddTransactionDialog({
               <Label htmlFor="f-amount">금액 (원)</Label>
               <Input
                 id="f-amount"
+                ref={amountInput}
                 inputMode="numeric"
+                className="min-h-11"
+                aria-invalid={Boolean(fieldErrors.amount)}
+                aria-describedby={fieldErrors.amount ? "f-amount-error" : undefined}
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(e) => { setAmount(e.target.value); setFieldErrors((errors) => ({ ...errors, amount: undefined })); clearSubmitError("fields"); }}
                 placeholder="13380"
               />
+              {fieldErrors.amount ? <p id="f-amount-error" role="alert" className="text-destructive text-sm">{fieldErrors.amount}</p> : null}
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="f-merchant">가맹점</Label>
               <Input
                 id="f-merchant"
+                ref={merchantInput}
+                className="min-h-11"
+                aria-invalid={Boolean(fieldErrors.merchant)}
+                aria-describedby={fieldErrors.merchant ? "f-merchant-error" : undefined}
                 value={merchant}
-                onChange={(e) => setMerchant(e.target.value)}
+                onChange={(e) => { setMerchant(e.target.value); setFieldErrors((errors) => ({ ...errors, merchant: undefined })); clearSubmitError("fields"); }}
                 placeholder="쿠팡(쿠페이)"
               />
+              {fieldErrors.merchant ? <p id="f-merchant-error" role="alert" className="text-destructive text-sm">{fieldErrors.merchant}</p> : null}
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="f-occurred">날짜/시각</Label>
+              <Label htmlFor="f-occurred">날짜/시각 (이 기기의 시간)</Label>
               <Input
                 id="f-occurred"
+                ref={occurredAtInput}
                 type="datetime-local"
+                className="min-h-11 min-w-0 w-full"
+                aria-invalid={Boolean(fieldErrors.occurredAt)}
+                aria-describedby={fieldErrors.occurredAt ? "f-occurred-error" : undefined}
                 value={occurredAt}
-                onChange={(e) => setOccurredAt(e.target.value)}
+                onChange={(e) => { setOccurredAt(e.target.value); setFieldErrors((errors) => ({ ...errors, occurredAt: undefined })); clearSubmitError("fields"); }}
               />
+              {fieldErrors.occurredAt ? <p id="f-occurred-error" role="alert" className="text-destructive text-sm">{fieldErrors.occurredAt}</p> : null}
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="f-category">카테고리 (선택)</Label>
-              <Select value={categoryId} onValueChange={setCategoryId}>
-                <SelectTrigger id="f-category">
+              <Select value={categoryId} onValueChange={(value) => { setCategoryId(value); clearSubmitError("fields"); }}>
+                <SelectTrigger id="f-category" className="min-h-11 w-full min-w-0">
                   <SelectValue placeholder="선택 안 함" />
                 </SelectTrigger>
                 <SelectContent>
@@ -415,8 +459,8 @@ export function AddTransactionDialog({
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="f-card">카드 (선택)</Label>
-              <Select value={cardId} onValueChange={setCardId}>
-                <SelectTrigger id="f-card">
+              <Select value={cardId} onValueChange={(value) => { setCardId(value); clearSubmitError("fields"); }}>
+                <SelectTrigger id="f-card" className="min-h-11 w-full min-w-0">
                   <SelectValue placeholder="선택 안 함" />
                 </SelectTrigger>
                 <SelectContent>
@@ -430,6 +474,7 @@ export function AddTransactionDialog({
               </Select>
             </div>
 
+            {submitErrors.fields ? <p role="alert" className="text-destructive text-sm">{submitErrors.fields}</p> : null}
             <DialogFooter>
               <Button
                 type="button"

@@ -1,6 +1,6 @@
 "use client";
 /* ---------------------------------------------------------------------------
- * Family Memory AI — web · 거래 내역 페이지 (오늘의집 디자인 언어)
+ * Family Memory AI — web · 거래 내역 페이지
  *
  * 기간·검색 + 접는 상세 필터 + 무한 스크롤(useInfiniteQuery).
  * 목록은 날짜별 그룹("7월 17일" 헤더) + ListRow(카테고리 아이콘 · 가맹점 ·
@@ -32,7 +32,6 @@ import { Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -777,43 +776,15 @@ function TransactionsView() {
   const showError = listQuery.isError;
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
-      <LedgerNav active="transactions" month={month} />
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h1 className="sr-only">거래 내역</h1>
-          <p className="text-muted-foreground text-sm">카드 사용 내역</p>
-        </div>
-        <Button size="sm" className="min-h-11" onClick={() => setAddOpen(true)}>
+    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-5">
+      <header className="flex min-h-11 items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold tracking-tight">가계부</h1>
+        <Button size="sm" variant="ghost" className="bg-finance-highlight text-finance-highlight-foreground hover:bg-finance-highlight/80 min-h-11 rounded-md px-4" onClick={() => setAddOpen(true)}>
           거래 추가
         </Button>
-      </div>
+      </header>
 
-      {/* 검색 — 가맹점 이름과 메모를 부분 일치로 찾는다. 타인의 summary_only 거래는
-          서버가 검색 대상에서 제외한다(결과 존재만으로 프라이버시가 새므로). */}
-      <div className="relative">
-        <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-        <Input
-          type="search"
-          inputMode="search"
-          value={qInput}
-          onChange={(e) => setQInput(e.target.value)}
-          maxLength={SEARCH_MAX_LENGTH}
-          placeholder="가맹점이나 메모로 찾기"
-          aria-label="거래 검색"
-          className="min-h-11 pl-9 pr-12"
-        />
-        {qInput ? (
-          <button
-            type="button"
-            onClick={() => setQInput("")}
-            aria-label="검색어 지우기"
-            className="text-muted-foreground hover:text-foreground absolute top-1/2 right-0 flex size-11 -translate-y-1/2 items-center justify-center rounded-full"
-          >
-            <X className="size-4" />
-          </button>
-        ) : null}
-      </div>
+      <LedgerNav active="transactions" month={month} />
 
       <TransactionFilters
         month={month}
@@ -828,7 +799,32 @@ function TransactionsView() {
           setReviewOnly(!reviewOnly);
           if (!reviewOnly) { setMonth(""); setStatus(""); setExcludedOnly(false); }
         }}
-      />
+      >
+        {/* 검색은 기존 가맹점·메모 조건을 그대로 사용한다. */}
+        <div className="relative">
+          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-1 size-4 -translate-y-1/2" aria-hidden="true" />
+          <Input
+            type="search"
+            inputMode="search"
+            value={qInput}
+            onChange={(e) => setQInput(e.target.value)}
+            maxLength={SEARCH_MAX_LENGTH}
+            placeholder="가맹점이나 메모로 찾기"
+            aria-label="거래 검색"
+            className="min-h-11 rounded-none border-0 border-b border-border bg-transparent pl-8 pr-12 shadow-none"
+          />
+          {qInput ? (
+            <button
+              type="button"
+              onClick={() => setQInput("")}
+              aria-label="검색어 지우기"
+              className="text-muted-foreground hover:text-foreground focus-visible:outline-ring absolute top-1/2 right-0 flex size-11 -translate-y-1/2 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2"
+            >
+              <X className="size-4" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+      </TransactionFilters>
 
       {actionError ? (
         <div
@@ -840,19 +836,19 @@ function TransactionsView() {
       ) : null}
 
       {/* 목록 — 날짜별 그룹 + ListRow */}
-      <Card>
-        <CardContent className="flex flex-col gap-5">
+      <section aria-label="거래 내역" className="min-w-0">
+        <div className="flex min-w-0 flex-col gap-6">
           {showLoading ? (
             <div className="flex flex-col gap-1" role="status" aria-live="polite">
               <span className="sr-only">거래를 불러오고 있어요</span>
               {[0, 1, 2, 3, 4].map((i) => (
-                <div key={i} className="flex items-center gap-3 px-2 py-3">
-                  <Skeleton className="size-10 rounded-full" />
-                  <div className="flex flex-1 flex-col gap-2">
-                    <Skeleton className="h-4 w-32" />
-                    <Skeleton className="h-3 w-44" />
+                <div key={i} className="flex min-w-0 items-center gap-2.5 px-1 py-3.5 sm:gap-3 sm:px-2">
+                  <Skeleton className="size-9 shrink-0 rounded-full sm:size-10" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-2">
+                    <Skeleton className="h-4 w-3/4 max-w-32" />
+                    <Skeleton className="h-3 w-full max-w-44" />
                   </div>
-                  <Skeleton className="h-4 w-16" />
+                  <Skeleton className="h-4 w-16 shrink-0" />
                 </div>
               ))}
             </div>
@@ -873,7 +869,7 @@ function TransactionsView() {
                   <p className="text-muted-foreground text-sm">
                     필터를 바꿔서 다시 찾아볼까요?
                   </p>
-                  <Button variant="tint" className="mt-3" onClick={resetFilters}>
+                  <Button variant="tint" className="mt-3 min-h-11" onClick={resetFilters}>
                     필터 초기화하기
                   </Button>
                 </>
@@ -885,7 +881,7 @@ function TransactionsView() {
                   <p className="text-muted-foreground text-sm">
                     카드 문자가 도착하면 자동으로 정리해 드려요
                   </p>
-                  <Button variant="tint" className="mt-3" asChild>
+                  <Button variant="tint" className="mt-3 min-h-11" asChild>
                     <Link href="/devices">장치 연결하러 가기</Link>
                   </Button>
                 </>
@@ -894,16 +890,14 @@ function TransactionsView() {
           ) : (
             <>
               {groups.map((group) => (
-                <section key={group.key} className="flex flex-col gap-1">
-                  <div className="flex items-baseline justify-between px-2">
-                    <h2 className="text-muted-foreground text-[13px] font-semibold">
+                <section key={group.key} className="flex min-w-0 flex-col">
+                  <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-foreground/20 px-1 pb-3 sm:px-2">
+                    <h2 className="text-foreground text-xs font-bold">
                       {group.label}
                     </h2>
-                    <Money
-                      amount={group.total}
-                      muted
-                      className="text-[13px]"
-                    />
+                    <p className="text-muted-foreground ml-auto min-w-0 text-right text-xs [overflow-wrap:anywhere]">
+                      원화 승인 소계 <Money amount={group.total} className="ml-1 font-medium" />
+                    </p>
                   </div>
                   <div className="flex flex-col">
                     {group.items.map((txn) => {
@@ -914,12 +908,13 @@ function TransactionsView() {
                       return (
                         <ListRow
                           key={txn.id}
-                          icon={<Icon />}
-                          iconClassName={
+                          icon={<Icon aria-hidden="true" />}
+                          iconClassName={cn(
+                            "rounded-md",
                             txn.masked || excluded
                               ? "bg-muted text-muted-foreground"
                               : sharedIconClass(txn)
-                          }
+                          )}
                           title={
                             txn.masked ? (
                               <span className="text-muted-foreground">
@@ -933,7 +928,7 @@ function TransactionsView() {
                           value={
                             <span
                               className={cn(
-                                "flex flex-col items-end",
+                                "flex min-w-0 max-w-full flex-col items-end",
                                 excluded && "line-through opacity-60",
                               )}
                             >
@@ -943,14 +938,14 @@ function TransactionsView() {
                                 <Money amount={txn.netAmount} currency={txn.currency} />
                               )}
                               {txn.originalCurrency && txn.originalAmount != null ? (
-                                <span className="text-muted-foreground text-[11px]">
+                                <span className="text-muted-foreground max-w-full text-[11px]">
                                   {formatMoney(txn.originalAmount, txn.originalCurrency)}
                                 </span>
                               ) : null}
                             </span>
                           }
                           valueSub={
-                            <span className="flex items-center justify-end gap-1.5">
+                            <span className="flex max-w-full flex-wrap items-center justify-end gap-1.5">
                               {isCancellation ? (
                                 <span className="text-xs">
                                   {TYPE_LABELS[txn.transactionType]}
@@ -968,12 +963,12 @@ function TransactionsView() {
                           onClick={
                             txn.masked ? undefined : () => setDetailId(txn.id)
                           }
-                          chevron={!txn.masked}
-                          className={
+                          className={cn(
+                            "rounded-none border-b border-border/60 py-4 hover:bg-card/60",
                             busyId === txn.id
                               ? "pointer-events-none opacity-60"
                               : undefined
-                          }
+                          )}
                         />
                       );
                     })}
@@ -994,7 +989,7 @@ function TransactionsView() {
                   <button
                     type="button"
                     onClick={() => void fetchNextPage()}
-                    className="text-accent-foreground text-[13px] font-medium"
+                    className="text-accent-foreground hover:bg-muted focus-visible:outline-ring min-h-11 rounded-xl px-5 text-[13px] font-medium focus-visible:outline-2 focus-visible:outline-offset-2"
                   >
                     더 보기
                   </button>
@@ -1006,14 +1001,16 @@ function TransactionsView() {
               </div>
             </>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       {detailTxn ? (
         <TransactionDetailDialog
           key={`${householdId}:${detailTxn.id}`}
           txn={detailTxn}
           busy={mutation.isPending || deleteMutation.isPending}
+          actionStatus={mutation.variables?.id === detailTxn.id ? mutation.status : "idle"}
+          actionError={mutation.variables?.id === detailTxn.id && mutation.isError ? errorMessage(mutation.error) : null}
           cardLabel={detailCard
             ? cardIdentityLabel(detailCard, memberNameById)
             : detailTxn.cardId ? "카드 정보 확인 불가" : "카드 미연결"}
@@ -1114,6 +1111,8 @@ function TransactionsView() {
 function TransactionDetailDialog({
   txn,
   busy: actionBusy,
+  actionStatus,
+  actionError,
   cardLabel,
   memberName,
   ownershipMismatch,
@@ -1136,6 +1135,8 @@ function TransactionDetailDialog({
 }: Readonly<{
   txn: TransactionSummary;
   busy: boolean;
+  actionStatus: "idle" | "pending" | "success" | "error";
+  actionError: string | null;
   cardLabel: string;
   memberName: string;
   ownershipMismatch: boolean;
@@ -1310,7 +1311,7 @@ function TransactionDetailDialog({
           {editing ? (
             <div className="flex w-full flex-col gap-2">
               <span className="text-muted-foreground text-[13px]" id={`${inputId}-heading`}>
-                금액·날짜 수정
+                금액·날짜 수정 · 저장을 눌러야 반영돼요
               </span>
               <div className="flex flex-col gap-2">
                 <Label htmlFor={`${inputId}-amount`}>금액</Label>
@@ -1459,8 +1460,19 @@ function TransactionDetailDialog({
         </div>
 
         {editNotice ? <p role="status" aria-live="polite" className="text-muted-foreground text-sm">{editNotice}</p> : null}
+        {actionBusy ? (
+          <p role="status" className="text-muted-foreground text-sm">변경 내용을 처리하고 있어요.</p>
+        ) : actionError && !editing ? (
+          <p role="alert" className="text-destructive text-sm">{actionError}</p>
+        ) : actionStatus === "success" && !editNotice && !editing ? (
+          <p role="status" className="text-primary text-sm">변경 내용을 저장했어요.</p>
+        ) : null}
 
         <div className="flex min-w-0 flex-col gap-3">
+          <div className="space-y-1 border-t pt-4">
+            <h2 className="text-sm font-semibold">카드 · 분류 · 공개 범위</h2>
+            <p className="text-muted-foreground text-xs">아래 항목은 선택하면 바로 저장돼요.</p>
+          </div>
           {/* 카드 연결/재지정 — 미연결·모호(pending_review) 거래 해소 경로 */}
           <div className="flex flex-col gap-2">
             <Label htmlFor="detail-card">카드</Label>
@@ -1469,7 +1481,7 @@ function TransactionDetailDialog({
               disabled={busy}
               onValueChange={onChangeCard}
             >
-              <SelectTrigger id="detail-card" className="min-w-0 w-full max-w-full">
+              <SelectTrigger id="detail-card" className="min-h-11 min-w-0 w-full max-w-full">
                 <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder="카드 미연결" />
               </SelectTrigger>
               <SelectContent>
@@ -1491,12 +1503,23 @@ function TransactionDetailDialog({
           {/* 카테고리 변경(+applyRule) */}
           <div className="flex flex-col gap-2">
             <Label htmlFor="detail-category">카테고리</Label>
+            <label className="flex min-h-11 cursor-pointer items-center gap-2">
+              <Checkbox
+                checked={applyRule}
+                disabled={busy}
+                onChange={(e) => onApplyRuleChange(e.target.checked)}
+              />
+              <span className="text-muted-foreground text-xs">
+                같은 가맹점도 다음부터 자동 분류하기
+              </span>
+            </label>
+            <p className="text-muted-foreground text-xs">자동 분류를 원하면 먼저 체크한 뒤 카테고리를 선택해 주세요. 지난 거래는 바뀌지 않아요.</p>
             <Select
               value={txn.categoryId ?? ""}
               disabled={busy}
               onValueChange={onChangeCategory}
             >
-              <SelectTrigger id="detail-category" className="min-w-0 w-full max-w-full">
+              <SelectTrigger id="detail-category" className="min-h-11 min-w-0 w-full max-w-full">
                 <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder="미분류" />
               </SelectTrigger>
               <SelectContent>
@@ -1563,15 +1586,6 @@ function TransactionDetailDialog({
               </button>
             )}
 
-            <label className="flex w-fit cursor-pointer items-center gap-2">
-              <Checkbox
-                checked={applyRule}
-                onChange={(e) => onApplyRuleChange(e.target.checked)}
-              />
-              <span className="text-muted-foreground text-[13px]">
-                같은 가맹점은 다음부터 이 카테고리로 자동 분류해요
-              </span>
-            </label>
           </div>
 
           {/* 공개 범위 */}
@@ -1582,7 +1596,7 @@ function TransactionDetailDialog({
               disabled={busy}
               onValueChange={onChangeVisibility}
             >
-              <SelectTrigger id="detail-visibility" className="min-w-0 w-full max-w-full">
+              <SelectTrigger id="detail-visibility" className="min-h-11 min-w-0 w-full max-w-full">
                 <SelectValue className="min-w-0 flex-1 truncate text-left" />
               </SelectTrigger>
               <SelectContent>

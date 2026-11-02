@@ -1,6 +1,6 @@
 "use client";
 /* ---------------------------------------------------------------------------
- * Family Memory AI — web · 장치 (오늘의집 톤)
+ * 문자 연동 — 연결 확인과 실제 문자 수신을 구분한다.
  *
  * - 장치 행은 **두 신호를 분리**해 보여준다: 연결 확인(lastSeenAt) / 마지막 문자
  *   수신(lastEventAt). 하나로 합치면 자동화의 문자 트리거가 죽어도(인증만 계속
@@ -226,17 +226,19 @@ export default function DevicesPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
-      <PageBackHeader
-        title="장치"
-        subtitle="휴대폰을 등록하면 카드 문자를 자동으로 모아요."
-      />
+      <div className="pl-2.5">
+        <PageBackHeader
+          title="문자 연동"
+          subtitle="기기를 등록한 뒤 문자 전송 설정을 이어가요."
+        />
+      </div>
 
       {/* 장치 목록 */}
       <Card>
         <CardHeader>
-          <CardTitle>등록된 장치</CardTitle>
+          <CardTitle>등록한 기기</CardTitle>
           <CardDescription>
-            플랫폼과 마지막 수신 상태를 한눈에 볼 수 있어요.
+            연결 확인과 카드 문자 수신 상태를 따로 확인해요.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -259,18 +261,18 @@ export default function DevicesPage() {
               </span>
               <div className="flex flex-col gap-1">
                 <p className="text-[15px] font-semibold">
-                  아직 등록된 장치가 없어요
+                  아직 등록한 기기가 없어요
                 </p>
                 <p className="text-muted-foreground text-[13px]">
-                  휴대폰을 등록하면 카드 문자를 자동으로 모아요
+                  휴대폰의 카드 승인·취소 문자를 가계부로 가져와요
                 </p>
               </div>
               <Button
                 type="button"
-                className="mt-1"
+                className="mt-1 min-h-11"
                 onClick={() => setRegisterOpen(true)}
               >
-                <Plus /> 장치 등록하기
+                <Plus /> 기기 등록
               </Button>
             </div>
           ) : (
@@ -287,7 +289,7 @@ export default function DevicesPage() {
                       /* 두 신호를 한 줄로 합치지 않는다 — 인증만 성공하고 문자가
                          끊긴 상태가 정상으로 보이던 것이 이 화면의 버그였다. */
                       <span className="flex flex-col gap-0.5">
-                        <span>문자 귀속: {memberNames.get(d.memberId) ?? "구성원 확인 필요"}</span>
+                        <span>문자 소유자: {memberNames.get(d.memberId) ?? "구성원 확인 필요"}</span>
                         <span>
                           {PLATFORM_LABEL[d.platform]} · 연결 확인{" "}
                           {d.lastSeenAt ? formatDate(d.lastSeenAt) : "아직 없어요"}
@@ -352,16 +354,17 @@ export default function DevicesPage() {
                 </div>
                 {/* 첫 문자가 오기 전까지는 등록이 끝난 게 아니다 — 다음 행동을 남겨둔다. */}
                 {d.status === "active" && !isSetupComplete(d) ? (
-                  <div className="flex items-center justify-between gap-2 rounded-lg px-2 pb-3">
-                    <span className="text-muted-foreground text-[13px]">
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg px-2 pb-3">
+                    <span className="text-muted-foreground min-w-0 flex-1 basis-36 text-[13px]">
                       {d.lastSeenAt
-                        ? "연결은 됐어요. 문자만 아직이에요."
-                        : "아직 연결 확인 전이에요."}
+                        ? "기기는 연결됐지만 아직 받은 문자가 없어요."
+                        : "기기 연결을 아직 확인하지 못했어요."}
                     </span>
                     <Button
                       type="button"
                       variant="tint"
                       size="sm"
+                      className="min-h-11 shrink-0"
                       onClick={() =>
                         setWizard({
                           deviceId: d.id,
@@ -402,7 +405,7 @@ export default function DevicesPage() {
           className="w-full"
           onClick={() => setRegisterOpen(true)}
         >
-          <Plus /> 장치 등록
+          <Plus /> 기기 등록
         </Button>
       ) : null}
 
@@ -410,10 +413,10 @@ export default function DevicesPage() {
       <Dialog open={registerOpen} onOpenChange={setRegisterOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>장치 등록</DialogTitle>
+            <DialogTitle>기기 등록</DialogTitle>
             <DialogDescription>
-              등록하면 secret이 딱 한 번 표시돼요. 장치 앱에 안전하게 저장해
-              주세요.
+              등록하면 인증키(secret)가 한 번만 표시돼요. 설정 안내에 따라
+              휴대폰이나 수집 도구에 안전하게 저장해 주세요.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onRegister} className="flex flex-col gap-4" noValidate>
@@ -430,7 +433,7 @@ export default function DevicesPage() {
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="device-platform">플랫폼</Label>
+              <Label htmlFor="device-platform">기기 종류</Label>
               <Select
                 value={platform}
                 onValueChange={(value) => setPlatform(value as DevicePlatform)}

@@ -1,6 +1,6 @@
 "use client";
 /* ---------------------------------------------------------------------------
- * Family Memory AI — web · 결제 카드 (오늘의집 톤, devices 화면 벤치마킹)
+ * Family Memory AI — web · 결제 카드와 사용 내역 진입
  *
  * 이 화면이 없던 동안 api.cards.create/update 는 호출자 0건의 데드 코드였고,
  * payment_cards 행이 생기지 않아 SMS→거래 자동연결(worker resolveCard)이 항상
@@ -410,10 +410,12 @@ export default function CardsPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
-      <PageBackHeader
-        title="결제 카드"
-        subtitle="카드를 등록하면 카드 문자가 이 카드에 자동으로 연결돼요."
-      />
+      <div className="pl-2.5">
+        <PageBackHeader
+          title="결제 카드"
+          subtitle="등록한 카드와 카드별 사용 내역을 관리해요."
+        />
+      </div>
 
       {/* 카드 목록 */}
       <Card>
@@ -457,6 +459,8 @@ export default function CardsPage() {
                   <div key={c.id} className="flex items-center gap-1">
                     <ListRow
                       className="min-w-0 flex-1"
+                      href={`/transactions?cardId=${encodeURIComponent(c.id)}`}
+                      ariaLabel={`${c.alias} ${owner} ${tail ?? ""} 사용 내역`}
                       icon={<CreditCard />}
                       iconClassName={memberColorClass(
                         c.ownerMemberId,
@@ -471,7 +475,7 @@ export default function CardsPage() {
                         </>
                       }
                       subtitleClassName="whitespace-normal break-words"
-                      valueSub={<StatusBadge status={c.status} />}
+                      valueSub={<span className="flex flex-col items-end gap-2"><StatusBadge status={c.status} /><span className="text-primary font-medium">사용 내역 ›</span></span>}
                     />
                     {canManage(c) ? (
                       <DropdownMenu>

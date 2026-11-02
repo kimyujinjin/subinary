@@ -1,5 +1,5 @@
 /* 모아 — 숫자와 상태를 먼저 읽을 수 있는 가족 가계부.
- * 밝은 바탕, 흰 카드, 짙은 청록색 행동 버튼. 실제 금액은 tabular-nums로 정렬한다.
+ * 밝은 종이색 바탕, 짙은 자산 요약, 평면 목록. 실제 금액은 tabular-nums로 정렬한다.
  * 라이트·다크의 본문/버튼/상태색 대비는 color-contrast.test.ts에서 확인한다.
  */
 @import "tailwindcss";
@@ -9,27 +9,34 @@
 
 /* --- 디자인 토큰 (라이트) -------------------------------------------------- */
 :root {
-  --radius: 0.75rem;
+  --radius: 0.625rem;
 
-  --background: #f5f7f8;
-  --foreground: #202d35;
+  --background: #fbfcf9;
+  --foreground: #1b2822;
 
   --card: #ffffff;
-  --card-foreground: #202d35;
+  --card-foreground: #1b2822;
   --popover: #ffffff;
-  --popover-foreground: #202d35;
+  --popover-foreground: #1b2822;
 
-  --primary: #116c5d;
+  --primary: #185d43;
   --primary-foreground: #ffffff;
 
-  --secondary: #edf1f3;
-  --secondary-foreground: #3d515c;
+  --secondary: #f0f3ec;
+  --secondary-foreground: #405247;
 
-  --muted: #edf1f3;
-  --muted-foreground: #586b76;
+  --muted: #f0f3ec;
+  --muted-foreground: #58665d;
 
-  --accent: #e6f3ef;
-  --accent-foreground: #116c5d;
+  --accent: #eaf4e2;
+  --accent-foreground: #185d43;
+
+  /* 짙은 요약 영역과 연두색 강조는 본문·상태 색과 분리한다. */
+  --finance-hero: #12382e;
+  --finance-hero-foreground: #f5fff7;
+  --finance-hero-muted: #b9d1c3;
+  --finance-highlight: #d1f5a9;
+  --finance-highlight-foreground: #203522;
 
   --destructive: #c43443;
   --destructive-foreground: #ffffff;
@@ -45,47 +52,53 @@
   --success-strong: #017044;
   --warning-strong: #b45309;
 
-  --border: #e0e6e9;
-  --input: #cbd5db;
-  --ring: #116c5d;
+  --border: #e0e6dd;
+  --input: #c6d0c3;
+  --ring: #185d43;
 
-  --chart-1: #116c5d;
+  --chart-1: #185d43;
   --chart-2: #00a05b;
   --chart-3: #ff9500;
   --chart-4: #f04452;
   --chart-5: #7b61ff;
 
   --sidebar: #ffffff;
-  --sidebar-foreground: #202d35;
-  --sidebar-primary: #116c5d;
+  --sidebar-foreground: #1b2822;
+  --sidebar-primary: #185d43;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e6f3ef;
-  --sidebar-accent-foreground: #116c5d;
-  --sidebar-border: #e0e6e9;
-  --sidebar-ring: #116c5d;
+  --sidebar-accent: #eaf4e2;
+  --sidebar-accent-foreground: #185d43;
+  --sidebar-border: #e0e6dd;
+  --sidebar-ring: #185d43;
 }
 
 /* --- 디자인 토큰 (다크) ---------------------------------------------------- */
 .dark {
-  --background: #131b21;
-  --foreground: #edf2f5;
+  --background: #111a16;
+  --foreground: #eef4ed;
 
-  --card: #1c282f;
-  --card-foreground: #edf2f5;
-  --popover: #24343d;
-  --popover-foreground: #edf2f5;
+  --card: #19261f;
+  --card-foreground: #eef4ed;
+  --popover: #24362a;
+  --popover-foreground: #eef4ed;
 
-  --primary: #79d6bd;
-  --primary-foreground: #10372e;
+  --primary: #b1d7aa;
+  --primary-foreground: #14281b;
 
-  --secondary: #273740;
-  --secondary-foreground: #d3dfe5;
+  --secondary: #28392e;
+  --secondary-foreground: #d8e6d6;
 
-  --muted: #273740;
-  --muted-foreground: #adbdc6;
+  --muted: #28392e;
+  --muted-foreground: #b3c4b5;
 
-  --accent: #203d35;
-  --accent-foreground: #79d6bd;
+  --accent: #283a30;
+  --accent-foreground: #b1d7aa;
+
+  --finance-hero: #183d31;
+  --finance-hero-foreground: #f5fff7;
+  --finance-hero-muted: #bfd5c7;
+  --finance-highlight: #d1f5a9;
+  --finance-highlight-foreground: #203522;
 
   --destructive: #ff8a96;
   --destructive-foreground: #3b111a;
@@ -99,22 +112,22 @@
 
   --border: #ffffff14;
   --input: #ffffff1f;
-  --ring: #79d6bd;
+  --ring: #b1d7aa;
 
-  --chart-1: #79d6bd;
+  --chart-1: #b1d7aa;
   --chart-2: #34c77b;
   --chart-3: #ffb020;
   --chart-4: #f55b66;
   --chart-5: #9b8afb;
 
-  --sidebar: #1c282f;
-  --sidebar-foreground: #edf2f5;
-  --sidebar-primary: #79d6bd;
-  --sidebar-primary-foreground: #10372e;
-  --sidebar-accent: #203d35;
-  --sidebar-accent-foreground: #79d6bd;
+  --sidebar: #19261f;
+  --sidebar-foreground: #eef4ed;
+  --sidebar-primary: #b1d7aa;
+  --sidebar-primary-foreground: #14281b;
+  --sidebar-accent: #283a30;
+  --sidebar-accent-foreground: #b1d7aa;
   --sidebar-border: #ffffff14;
-  --sidebar-ring: #79d6bd;
+  --sidebar-ring: #b1d7aa;
 }
 
 /* --- @theme inline: 토큰 → Tailwind 유틸리티 매핑 -------------------------- */
@@ -138,6 +151,11 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-finance-hero: var(--finance-hero);
+  --color-finance-hero-foreground: var(--finance-hero-foreground);
+  --color-finance-hero-muted: var(--finance-hero-muted);
+  --color-finance-highlight: var(--finance-highlight);
+  --color-finance-highlight-foreground: var(--finance-highlight-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-success: var(--success);

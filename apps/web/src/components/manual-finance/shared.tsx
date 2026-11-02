@@ -31,6 +31,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { registerTransactionDetailBack } from "@/lib/transaction-detail-back";
+import { guardRepeatedDialogClick } from "@/lib/dialog-click-guard";
 import { createManualEditorHistory } from "./edit-history";
 
 const RecordDialogContext = createContext<{
@@ -264,26 +265,31 @@ export function RecordDialog({
       <Dialog open onOpenChange={(open) => !open && close.current()}>
         <DialogContent
           onClickCapture={(event) => {
+            if (event.detail === 1 && event.target instanceof Element && event.target.closest("button")) {
+              guardRepeatedDialogClick(window, event.nativeEvent);
+            }
             if (event.detail > 1) {
               event.preventDefault();
               event.stopPropagation();
             }
           }}
-          className="max-h-[calc(100dvh-2rem)] grid-cols-[minmax(0,1fr)] overflow-y-auto p-4 [&>*]:min-w-0 [&>button]:top-1 [&>button]:right-1 [&>button]:inline-flex [&>button]:size-11 [&>button]:items-center [&>button]:justify-center sm:max-w-xl sm:p-6"
+          className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 [&>*]:min-w-0 [&>button]:top-1 [&>button]:right-1 [&>button]:inline-flex [&>button]:size-11 [&>button]:items-center [&>button]:justify-center sm:max-w-xl"
         >
-          <DialogHeader className="pr-8">
+          <DialogHeader className="shrink-0 border-b px-4 py-4 pr-12 sm:px-6 sm:pr-12">
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription className="break-words">
               {description}
             </DialogDescription>
           </DialogHeader>
-          {children}
+          <div data-record-dialog-body className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6">
+            {children}
+          </div>
           {notice ? (
-            <p role="status" className="text-muted-foreground text-sm">
+            <p role="status" className="text-muted-foreground shrink-0 border-t px-4 py-2 text-sm sm:px-6">
               {notice}
             </p>
           ) : null}
-          <DialogFooter className="flex-col gap-2 sm:flex-col">
+          <DialogFooter className="bg-background shrink-0 flex-row flex-wrap gap-2 border-t px-4 py-3 sm:flex-row sm:px-6 [&>button]:w-auto [&>button]:min-w-0 [&>button]:flex-[1_1_7rem] [&>p]:w-full">
             {footer}
             <Button
               type="button"

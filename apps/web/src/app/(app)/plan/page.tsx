@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { House, Plus } from "lucide-react";
+import { ArrowLeft, ArrowRight, House, Plus } from "lucide-react";
 import type {
   ManualFinanceScope,
   ManualHousingPlanResponse,
@@ -117,6 +117,13 @@ function ScopedPlans({
   const next = records.data?.summary.nextPayment;
   return (
     <div className="space-y-5">
+      <Link
+        href={`/assets?scope=${scope}`}
+        className="text-muted-foreground hover:text-primary focus-visible:outline-ring inline-flex min-h-11 items-center gap-2 rounded-lg text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2"
+      >
+        <ArrowLeft className="size-4 shrink-0" aria-hidden="true" />
+        자산으로 돌아가기
+      </Link>
       <div className="flex flex-col items-start justify-between gap-3 sm:flex-row">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">주택 납부 일정</h1>
@@ -165,6 +172,17 @@ function ScopedPlans({
                 금액·날짜·납부 내역이 비어 있는 항목이 있어요.
               </p>
             ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-primary mt-4 h-auto min-h-11 w-full justify-between gap-2 rounded-none border-t px-0 text-left whitespace-normal"
+              disabled={opening !== null}
+              onClick={() => void open(next.planId)}
+              aria-label={`${next.label} 납부 일정 보기`}
+            >
+              {opening === next.planId ? "납부 일정 여는 중…" : "이 주택의 납부 일정 보기"}
+              <ArrowRight className="size-4 shrink-0" aria-hidden="true" />
+            </Button>
           </section> : records.data.items.length > 0 ? (
             <p className="text-muted-foreground text-sm" role="status">
               {records.data.summary.hasIncompletePayments ? "금액·날짜·납부 내역이 비어 있는 항목이 있어요. 주택을 선택해 확인해 주세요." : "예정된 납부 일정이 없어요."}
@@ -236,12 +254,6 @@ function ScopedPlans({
           {openError}
         </p>
       ) : null}
-      <Link
-        href={`/assets?scope=${scope}`}
-        className="text-primary inline-flex min-h-11 items-center gap-2 text-sm font-medium"
-      >
-        <span aria-hidden="true">←</span> 자산으로
-      </Link>
       <details className="text-muted-foreground text-xs leading-relaxed">
         <summary className="min-h-11 cursor-pointer py-3">납부액 계산 기준</summary>
         <p className="pb-3">입력한 납부 일정에서 이미 낸 금액을 빼서 보여줘요. 통장 잔액과 비교한 부족 금액은 아니에요. 자금 마련 메모는 계산에 반영되지 않으며, 자금 배정이나 현금 흐름 예측은 지원하지 않아요.</p>

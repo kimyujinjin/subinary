@@ -140,6 +140,8 @@ function LedgerAnalysisView() {
   const isCurrentMonth = month === thisMonth;
 
   const { activeMembership } = useHousehold();
+  const canCreateBudget = month >= thisMonth &&
+    (activeMembership?.role === "owner" || activeMembership?.role === "admin");
 
   // 이번 달이면 쿼리스트링을 없애 링크를 짧게 유지한다(기본 상태 = 파라미터 없음).
   // replace: 달을 5번 넘겼다고 뒤로가기를 5번 눌러야 하면 안 된다.
@@ -409,21 +411,21 @@ function LedgerAnalysisView() {
   // --- 렌더 -----------------------------------------------------------------
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
-      <LedgerNav active="analysis" month={month} />
+    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-5">
       <header className="space-y-1">
-        <h1 className="text-xl font-bold tracking-tight">소비 분석</h1>
+        <h1 className="text-2xl font-bold tracking-tight">소비 분석</h1>
         <p className="text-muted-foreground text-sm">카드 승인·취소 기록을 기존 공개 범위에 따라 살펴봐요.</p>
       </header>
+      <LedgerNav active="analysis" month={month} />
 
       {/* 거래가 한 건도 없으면 달을 옮길 이유가 없다 — 체크리스트 화면에서는 감춘다. */}
       {showChecklist ? null : (
-        <div className="flex items-center justify-end">
+        <div className="flex min-w-0 items-center justify-start">
           <MonthSwitcher
             month={month}
             months={availableMonths}
             onChange={changeMonth}
-            className="-mr-2"
+            className="-ml-2 [&>button]:size-11 [&>span]:text-2xl [&>span]:font-bold [&>span]:tracking-tight"
           />
         </div>
       )}
@@ -526,6 +528,31 @@ function LedgerAnalysisView() {
 
       {showChecklist ? null : (
       <>
+      {/* 카테고리별 지출 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>어디에 많이 썼나요?</CardTitle>
+          <CardDescription>
+            {isCurrentMonth ? "이번 달" : formatMonth(month)} 카테고리별
+            지출이에요
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {categoriesQuery.isLoading || categoriesQuery.isError ? (
+            <StateNote
+              loading={categoriesQuery.isLoading}
+              error={categoriesQuery.error}
+            />
+          ) : (
+            <BarList
+              items={categoryItems}
+              formatValue={formatWon}
+              emptyLabel="아직 지출 내역이 없어요"
+            />
+          )}
+        </CardContent>
+      </Card>
+
       {/* 예산 요약 */}
       <Card>
         <CardHeader>
@@ -538,7 +565,7 @@ function LedgerAnalysisView() {
               : "그 달의 예산 달성률이에요"}
           </CardDescription>
           <CardAction>
-            <SeeAllLink href="/budgets" />
+            <SeeAllLink href={`/budgets?month=${encodeURIComponent(month)}`} />
           </CardAction>
         </CardHeader>
         <CardContent>
@@ -551,10 +578,10 @@ function LedgerAnalysisView() {
             <EmptyState
               emoji="🎯"
               title="아직 예산이 없어요"
-              description="예산을 만들면 이번 달 사용률을 한눈에 알려드려요"
+              description={canCreateBudget ? "예산을 만들면 선택한 달의 사용률을 확인할 수 있어요" : "선택한 달에 등록된 예산이 없어요"}
               action={
                 <Button asChild variant="tint" className="w-full">
-                  <Link href="/budgets">예산 만들기</Link>
+                  <Link href={`/budgets?month=${encodeURIComponent(month)}`}>{canCreateBudget ? "예산 만들기" : "예산 확인하기"}</Link>
                 </Button>
               }
             />
@@ -598,31 +625,9 @@ function LedgerAnalysisView() {
         </CardContent>
       </Card>
 
-      {/* 카테고리별 지출 */}
-      <Card>
-        <CardHeader>
-          <CardTitle>어디에 많이 썼나요?</CardTitle>
-          <CardDescription>
-            {isCurrentMonth ? "이번 달" : formatMonth(month)} 카테고리별
-            지출이에요
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {categoriesQuery.isLoading || categoriesQuery.isError ? (
-            <StateNote
-              loading={categoriesQuery.isLoading}
-              error={categoriesQuery.error}
-            />
-          ) : (
-            <BarList
-              items={categoryItems}
-              formatValue={formatWon}
-              emptyLabel="아직 지출 내역이 없어요"
-            />
-          )}
-        </CardContent>
-      </Card>
-
+      <details className="min-w-0 border-t pt-2">
+        <summary className="min-h-11 cursor-pointer py-3 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-ring">세부 분석 · 가맹점, 구성원, 카드, 최근 거래</summary>
+        <div className="mt-3 flex min-w-0 flex-col gap-5">
       {/* 가맹점별 지출 — 서버 `analytics/merchants`(타 구성원 summary_only는 '(비공개)'로
           마스킹된 상태)를 그대로 표시한다. 이 집계는 이미 있었지만 화면 소비자가
           없었다(ADR-0026). '이번 달 어디서 많이 썼나'는 카테고리보다 구체적이라
@@ -839,6 +844,8 @@ function LedgerAnalysisView() {
           )}
         </CardContent>
       </Card>
+        </div>
+      </details>
       </>
       )}
 

@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Building2, CreditCard, House, Plus } from "lucide-react";
+import { Building2, ChevronRight, CreditCard, House, Plus } from "lucide-react";
 import type {
   ManualAsset,
   ManualAssetKind,
@@ -35,6 +35,7 @@ import {
 } from "@/components/manual-finance/shared";
 import { ManualAssetsSummary } from "@/components/manual-finance/asset-summary";
 import { AssetEditor } from "@/components/manual-finance/asset-editor";
+import { AssetAddChoices } from "@/components/manual-finance/asset-add-choices";
 
 function ScopedAssets({
   householdId,
@@ -52,6 +53,8 @@ function ScopedAssets({
   const [editor, setEditor] = useState<ManualAsset | "new" | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
+  const [addChoicesOpen, setAddChoicesOpen] = useState(false);
+  const addTrigger = useRef<HTMLButtonElement | null>(null);
   const readSession = useRef(createManualSaveSession());
   const abort = useRef<AbortController | null>(null);
   useEffect(
@@ -63,6 +66,7 @@ function ScopedAssets({
   );
   const open = async (id: string) => {
     if (readSession.current.pending) return;
+    setAddChoicesOpen(false);
     const controller = new AbortController();
     abort.current = controller;
     setOpening(id);
@@ -131,22 +135,43 @@ function ScopedAssets({
     }
   }, [editorIsUnavailable]);
   return (
-    <div className="space-y-5">
+    <div className="mx-auto w-full max-w-2xl min-w-0 space-y-6 pb-8">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">자산</h1>
+        <div className="min-w-0">
+          <h1 className="text-[26px] font-bold tracking-tight">자산</h1>
+          <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
+            {scope === "household" ? "우리 가족이 함께 기록한 자산" : "이전에 비공개로 기록한 자산"}
+          </p>
         </div>
         {canCreate && (hasRecords || overview.isError) ? (
           <Button
-            className="min-h-11 shrink-0"
+            variant="tint"
+            className="min-h-11 shrink-0 rounded-xl"
             disabled={opening !== null}
-            onClick={() => setEditor("new")}
+            aria-expanded={addChoicesOpen}
+            aria-controls="asset-add-choices"
+            onClick={(event) => {
+              addTrigger.current = event.currentTarget;
+              setAddChoicesOpen((value) => !value);
+            }}
           >
             <Plus className="size-4" />
             자산 추가
           </Button>
         ) : null}
       </div>
+      {canCreate && addChoicesOpen ? (
+        <AssetAddChoices
+          onManual={() => {
+            setAddChoicesOpen(false);
+            setEditor("new");
+          }}
+          onClose={() => {
+            setAddChoicesOpen(false);
+            addTrigger.current?.focus();
+          }}
+        />
+      ) : null}
       {scope === "private" ? <LegacyPrivateNotice href="/assets" /> : null}
       {!canCreate && scope === "household" ? (
         <p role="status" className="text-muted-foreground text-sm">
@@ -158,8 +183,6 @@ function ScopedAssets({
           {notice}
         </p>
       ) : null}
-      {scope === "household" && user ? <ConnectionScreen key={`${user.id}/${householdId}/${canCreate}`}
-        householdId={householdId} userId={user.id} canManage={canCreate} presentation="asset-summary" /> : null}
       {overview.isPending ? (
         <FinanceLoading />
       ) : overview.isError ? (
@@ -181,11 +204,9 @@ function ScopedAssets({
           {overview.data.unresolvedLoans > 0 ? (
             <p role="status" className="text-muted-foreground text-sm">확인이 필요한 대출 {overview.data.unresolvedLoans}건은 합계에서 제외했어요. 아래 대출의 반영 상태를 확인해 주세요.</p>
           ) : null}
-          {hasRecords ? <div
-            role="group"
-            aria-label="자산 종류 필터"
-            className="flex flex-wrap gap-2"
-          >
+          {hasRecords ? <div className="space-y-3">
+            <h2 className="text-lg font-semibold">{scope === "household" ? "가족 자산 내역" : "등록한 자산 내역"}</h2>
+            <div role="group" aria-label="자산 종류 필터" className="flex flex-wrap gap-x-2 border-b">
             {(
               [["all", "전체"], ...Object.entries(ASSET_LABELS)] as Array<
                 [ManualAssetKind | "all", string]
@@ -193,38 +214,45 @@ function ScopedAssets({
             ).map(([value, label]) => (
               <Button
                 key={value}
-                variant={kind === value ? "default" : "outline"}
-                className="min-h-11"
+                variant="ghost"
+                className={`min-h-11 rounded-none border-b-2 px-3 ${kind === value ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
                 aria-pressed={kind === value}
                 onClick={() => setKind(value)}
               >
                 {label}
               </Button>
             ))}
+            </div>
           </div> : null}
           <section
-            className="bg-card min-w-0 rounded-2xl border"
+            className="min-w-0 border-b"
             aria-label="자산 목록"
           >
             {items.length || importedLoans.length ? (
               <>
-              {items.map((item) => (
+              {(Object.entries(ASSET_LABELS) as Array<[ManualAssetKind, string]>).map(([groupKind, groupLabel]) => {
+                const groupItems = items.filter((item) => item.kind === groupKind);
+                const groupLoans = groupKind === "loan" ? importedLoans : [];
+                if (!groupItems.length && !groupLoans.length) return null;
+                return <section key={groupKind} className="border-b last:border-0" aria-label={`${groupLabel} 내역`}>
+                  <div className="flex items-center gap-2 pt-5 pb-2">
+                    <h3 className="text-sm font-semibold">{groupLabel}</h3>
+                    <span className="text-muted-foreground text-xs">{groupItems.length + groupLoans.length}건</span>
+                  </div>
+              {groupItems.map((item) => (
                 <button
                   type="button"
                   key={item.id}
                   disabled={opening !== null}
-                  className="hover:bg-muted/50 flex min-h-20 w-full min-w-0 items-start justify-between gap-3 border-b p-4 text-left last:border-0 disabled:opacity-60"
+                  className="hover:bg-muted/50 focus-visible:ring-ring flex min-h-20 w-full min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-2 py-4 text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none disabled:opacity-60"
                   onClick={() => void open(item.id)}
                   aria-label={`${item.label} 상세`}
                 >
-                  <span className="min-w-0 flex-1">
+                  <span className="min-w-0 flex-1 basis-24">
                     <strong className="block break-words text-sm">
                       {item.label}
                     </strong>
-                    <span className="text-muted-foreground mt-1 block text-xs">
-                      {ASSET_LABELS[item.kind]} ·{" "}
-                      {visibilityLabel(item.visibility)}
-                    </span>
+                    <span className="text-muted-foreground mt-1 block text-xs">{visibilityLabel(item.visibility)}</span>
                     <span className="text-muted-foreground mt-1 block text-xs">
                       기준일 {item.asOfDate ?? "미입력"} ·{" "}
                       {item.source === "manual" ? "직접 입력" : "출처 미입력"}
@@ -233,7 +261,7 @@ function ScopedAssets({
                       <span className="text-muted-foreground mt-2 block text-xs">새로 가져온 대출로 대체 · 합계 제외</span>
                     ) : null}
                   </span>
-                  <span className="min-w-0 max-w-[52%] text-right">
+                  <span className="ml-auto min-w-0 max-w-full basis-32 text-right sm:basis-auto sm:max-w-[52%]">
                     <strong className={`block break-all text-base tabular-nums ${replacedManualIds.has(item.id) ? "text-muted-foreground font-medium" : ""}`}>
                       {displayManualKrw(item.amount)}
                     </strong>
@@ -244,7 +272,9 @@ function ScopedAssets({
                   </span>
                 </button>
               ))}
-              {importedLoans.map((item) => <LoanOverviewRow key={item.id} item={item} />)}
+              {groupLoans.map((item) => <LoanOverviewRow key={item.id} item={item} />)}
+                </section>;
+              })}
               </>
             ) : (
               <EmptyState
@@ -264,7 +294,12 @@ function ScopedAssets({
                     <Button
                       className="min-h-11 w-full"
                       disabled={opening !== null}
-                      onClick={() => setEditor("new")}
+                      aria-expanded={addChoicesOpen}
+                      aria-controls="asset-add-choices"
+                      onClick={(event) => {
+                        addTrigger.current = event.currentTarget;
+                        setAddChoicesOpen((value) => !value);
+                      }}
                     >
                       자산 추가
                     </Button>
@@ -285,37 +320,42 @@ function ScopedAssets({
           자산 정보를 여는 중이에요.
         </p>
       ) : null}
-      <section className="bg-card divide-y rounded-2xl border" aria-label="자산 관리">
+      {scope === "household" && user ? <ConnectionScreen key={`${user.id}/${householdId}/${canCreate}`}
+        householdId={householdId} userId={user.id} canManage={canCreate} presentation="asset-summary" /> : null}
+      <section className="space-y-3" aria-label="자산 관리">
+      <h2 className="text-lg font-semibold">자산 관리</h2>
+      <div className="divide-y border-y">
       <Link
         href="/assets/loan-import"
-        className="hover:bg-muted/50 flex min-h-14 items-center gap-3 p-4 text-sm font-medium"
+        className="hover:bg-muted/50 flex min-h-16 items-center gap-3 py-4 text-sm font-medium"
       >
         <Building2 className="text-muted-foreground size-5 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">
           <span className="block">신한 대출 파일 가져오기</span>
           <span className="text-muted-foreground mt-1 block text-xs font-normal">전세·중도금 대출 기록 관리</span>
         </span>
-        <span className="text-muted-foreground" aria-hidden="true">→</span>
+        <ChevronRight className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
       </Link>
       <Link
         href="/plan"
-        className="hover:bg-muted/50 flex min-h-14 items-center gap-3 p-4 text-sm font-medium"
+        className="hover:bg-muted/50 flex min-h-16 items-center gap-3 py-4 text-sm font-medium"
       >
-        <House className="size-5" aria-hidden="true" />
+        <House className="text-muted-foreground size-5 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">
           <span className="block">주택 납부 일정</span>
           <span className="text-muted-foreground mt-1 block text-xs font-normal">계약금·중도금·잔금 일정</span>
         </span>
-        <span className="text-muted-foreground" aria-hidden="true">→</span>
+        <ChevronRight className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
       </Link>
       <Link
         href="/cards"
-        className="hover:bg-muted/50 flex min-h-14 items-center gap-3 p-4 text-sm font-medium"
+        className="hover:bg-muted/50 flex min-h-16 items-center gap-3 py-4 text-sm font-medium"
       >
-        <CreditCard className="size-5" />
-        결제 카드 관리
-        <span className="text-muted-foreground ml-auto" aria-hidden="true">→</span>
+        <CreditCard className="text-muted-foreground size-5 shrink-0" aria-hidden="true" />
+        <span className="min-w-0 flex-1">결제 카드 관리</span>
+        <ChevronRight className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
       </Link>
+      </div>
       </section>
       <details className="text-muted-foreground text-xs leading-relaxed">
         <summary className="min-h-11 cursor-pointer py-3">자산 합계 기준</summary>
@@ -333,7 +373,10 @@ function ScopedAssets({
               : undefined
           }
           onClose={() => setEditor(null)}
-          onChanged={() => setEditor(null)}
+          onChanged={(saved) => {
+            if (kind !== "all" && kind !== saved.kind) setKind(saved.kind);
+            setEditor(null);
+          }}
         />
       ) : null}
     </div>

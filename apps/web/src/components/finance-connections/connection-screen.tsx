@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { ArrowLeft, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import type { FinanceConnection, FinanceConnectionList, FinanceConnectionResult } from "@family/contracts";
 import { Button } from "@/components/ui/button";
 import { FinanceLoading } from "@/components/manual-finance/shared";
+import { PageBackHeader } from "@/components/widgets/page-back-header";
 import { useAuth } from "@/lib/auth-context";
 import { financeConnectionsApi, useOwnedFinanceConnections } from "@/lib/finance-connections-client";
 import { ConnectionCard } from "./connection-card";
@@ -170,10 +170,8 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
     loading={!data && (busy || owned.isPending)} notice={notice} uncertainId={uncertain?.id ?? null} />;
   return (
     <div className="mx-auto flex w-full max-w-2xl min-w-0 flex-col gap-5 pb-8">
-      <header>
-        <Link href="/more" className="mb-2 inline-flex min-h-11 items-center gap-1 text-sm text-muted-foreground"><ArrowLeft className="size-4" aria-hidden="true" />설정</Link>
-        <h1 className="text-2xl font-bold">연결 관리</h1>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">내 토스증권 계좌의 보유 주식을 확인해요.</p>
+      <header className="pl-2.5">
+        <PageBackHeader title="연결 관리" subtitle="내 토스증권 계좌의 보유 주식을 확인해요." backHref="/more" />
       </header>
       <section className="rounded-xl bg-muted/60 p-4 text-sm leading-relaxed text-muted-foreground" aria-label="연결 정보 공개 범위">
         연결한 계정에서만 볼 수 있어요. 가족에게 공유하거나 기존 자산 합계에 더하지 않아요.
@@ -181,6 +179,7 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
       {notice ? <section role="alert" className="space-y-2 rounded-xl border p-4 text-sm leading-relaxed">
         <p>{notice}</p>
         {uncertain ? <p className="text-muted-foreground">결과가 확인될 때까지 새 요청은 보내지 않아요. 상태가 계속 바뀌지 않으면 운영자에게 확인해 주세요.</p> : null}
+        <Button variant="outline" className="min-h-11 w-full" disabled={busy || owned.isFetching} onClick={() => { void owned.reread(); }}>{busy ? "확인 중…" : "연결 상태 확인"}</Button>
       </section> : null}
       {!data && (busy || owned.isPending) ? <FinanceLoading /> : null}
       {data && !data.enabled ? <section role="status" className="rounded-2xl border bg-card p-4">
@@ -196,8 +195,11 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
         onSelect={(accountId) => selectAccount(item, accountId)} onRefresh={() => refresh(item)} onDisconnect={() => disconnect(item)} />)}
       {showForm && data?.enabled && canManage ? <ConnectionRegistrationForm busy={busy} onSubmit={register} onClose={() => { setShowForm(false); }} /> : null}
       {data?.enabled && canManage && !showForm ? <Button className="min-h-11 w-full" disabled={busy || !!uncertain || pendingRegistration} onClick={() => setShowForm(true)}><Plus className="size-4" aria-hidden="true" />토스증권 연결</Button> : null}
-      <Button variant="outline" className="min-h-11 w-full" disabled={busy || owned.isFetching} onClick={() => { void owned.reread(); }}>{busy ? "확인 중…" : "연결 상태 확인"}</Button>
-      <p className="text-xs leading-relaxed text-muted-foreground">보유 주식은 자산 또는 연결 화면을 열거나 ‘새로 조회’를 누를 때 갱신돼요. 조회가 실패하면 이전 내역과 마지막 조회 시각을 보여줘요.</p>
+      {!notice ? <Button variant="outline" className="min-h-11 w-full" disabled={busy || owned.isFetching} onClick={() => { void owned.reread(); }}>{busy ? "확인 중…" : "연결 상태 확인"}</Button> : null}
+      <details className="border-t text-xs leading-relaxed text-muted-foreground">
+        <summary className="min-h-11 cursor-pointer py-3 text-sm">조회 내역은 언제 바뀌나요?</summary>
+        <p>보유 주식은 자산 또는 연결 화면을 열거나 ‘새로 조회’를 누를 때 갱신돼요. 조회가 실패하면 이전 내역과 마지막 조회 시각을 보여줘요.</p>
+      </details>
     </div>
   );
 }
