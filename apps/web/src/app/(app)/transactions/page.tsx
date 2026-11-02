@@ -776,10 +776,10 @@ function TransactionsView() {
   const showError = listQuery.isError;
 
   return (
-    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-5">
+    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
       <header className="flex min-h-11 items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold tracking-tight">가계부</h1>
-        <Button size="sm" variant="ghost" className="bg-finance-highlight text-finance-highlight-foreground hover:bg-finance-highlight/80 min-h-11 rounded-md px-4" onClick={() => setAddOpen(true)}>
+        <h1 className="text-[28px] font-bold tracking-tight">가계부</h1>
+        <Button size="sm" variant="ghost" className="bg-finance-highlight text-finance-highlight-foreground hover:bg-finance-highlight/80 min-h-11 rounded-xl px-4" onClick={() => setAddOpen(true)}>
           거래 추가
         </Button>
       </header>
@@ -802,7 +802,7 @@ function TransactionsView() {
       >
         {/* 검색은 기존 가맹점·메모 조건을 그대로 사용한다. */}
         <div className="relative">
-          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-1 size-4 -translate-y-1/2" aria-hidden="true" />
+          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2" aria-hidden="true" />
           <Input
             type="search"
             inputMode="search"
@@ -811,14 +811,14 @@ function TransactionsView() {
             maxLength={SEARCH_MAX_LENGTH}
             placeholder="가맹점이나 메모로 찾기"
             aria-label="거래 검색"
-            className="min-h-11 rounded-none border-0 border-b border-border bg-transparent pl-8 pr-12 shadow-none"
+            className="min-h-12 rounded-2xl border-border/70 bg-card pl-11 pr-12 shadow-none"
           />
           {qInput ? (
             <button
               type="button"
               onClick={() => setQInput("")}
               aria-label="검색어 지우기"
-              className="text-muted-foreground hover:text-foreground focus-visible:outline-ring absolute top-1/2 right-0 flex size-11 -translate-y-1/2 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2"
+              className="text-muted-foreground hover:text-foreground focus-visible:outline-ring absolute top-1/2 right-1 flex size-11 -translate-y-1/2 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2"
             >
               <X className="size-4" aria-hidden="true" />
             </button>
@@ -890,13 +890,13 @@ function TransactionsView() {
           ) : (
             <>
               {groups.map((group) => (
-                <section key={group.key} className="flex min-w-0 flex-col">
-                  <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-foreground/20 px-1 pb-3 sm:px-2">
-                    <h2 className="text-foreground text-xs font-bold">
+                <section key={group.key} className="finance-panel flex min-w-0 flex-col px-3 py-2 sm:px-5">
+                  <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-border/70 px-1 py-3 sm:px-2">
+                    <h2 className="text-foreground text-[13px] font-semibold">
                       {group.label}
                     </h2>
                     <p className="text-muted-foreground ml-auto min-w-0 text-right text-xs [overflow-wrap:anywhere]">
-                      원화 승인 소계 <Money amount={group.total} className="ml-1 font-medium" />
+                      원화 승인 소계 <Money amount={group.total} className="ml-1 text-foreground font-semibold" />
                     </p>
                   </div>
                   <div className="flex flex-col">
@@ -910,7 +910,7 @@ function TransactionsView() {
                           key={txn.id}
                           icon={<Icon aria-hidden="true" />}
                           iconClassName={cn(
-                            "rounded-md",
+                            "rounded-xl",
                             txn.masked || excluded
                               ? "bg-muted text-muted-foreground"
                               : sharedIconClass(txn)
@@ -964,7 +964,7 @@ function TransactionsView() {
                             txn.masked ? undefined : () => setDetailId(txn.id)
                           }
                           className={cn(
-                            "rounded-none border-b border-border/60 py-4 hover:bg-card/60",
+                            "rounded-xl border-b border-border/50 py-4 last:border-b-0 hover:bg-muted/60",
                             busyId === txn.id
                               ? "pointer-events-none opacity-60"
                               : undefined

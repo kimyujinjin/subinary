@@ -39,7 +39,7 @@ function HomeView() {
         <h1 className="text-[28px] font-bold tracking-tight sm:text-3xl">홈</h1>
       </header>
 
-      <section className="bg-finance-hero text-finance-hero-foreground min-w-0 overflow-hidden rounded-2xl" aria-label="가족 자산">
+      <section className="bg-finance-hero text-finance-hero-foreground min-w-0 overflow-hidden rounded-[1.75rem] shadow-[0_12px_32px_-20px_rgba(15,31,61,0.55)]" aria-label="가족 자산">
         {assets.isPending || assets.isError || !assets.data ? (
           <div className="min-h-36 p-5 sm:p-6">
             <h2 className="text-sm font-semibold">가족과 공유한 자산</h2>
@@ -49,10 +49,10 @@ function HomeView() {
         {assets.data && !assets.isError && assets.data.unresolvedLoans > 0 ? (
           <p role="status" className="text-finance-hero-muted px-5 pb-4 text-xs leading-relaxed sm:px-6">확인이 필요한 대출 {assets.data.unresolvedLoans}건은 합계에서 제외했어요.</p>
         ) : null}
-        <Link href={`/assets?scope=${scope}`} className="text-finance-highlight hover:bg-white/5 focus-visible:outline-finance-highlight flex min-h-11 items-center justify-between gap-2 border-t border-white/15 px-5 py-2.5 text-[13px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-[-2px] sm:px-6">자산 보기 <ArrowRight className="size-4 shrink-0" aria-hidden="true" /></Link>
+        <Link href={`/assets?scope=${scope}`} className="text-finance-hero-foreground bg-white/5 hover:bg-white/10 focus-visible:outline-finance-highlight flex min-h-12 items-center justify-between gap-2 border-t border-white/10 px-5 py-3 text-[13px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-[-2px] sm:px-6">자산 보기 <ArrowRight className="text-finance-highlight size-4 shrink-0" aria-hidden="true" /></Link>
       </section>
 
-      <div className="grid min-w-0 grid-cols-1 divide-y lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:divide-x lg:divide-y-0">
+      <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
       <HomeConsumptionCard
         month={month}
         isCurrentMonth={month === thisMonth}

@@ -43,7 +43,7 @@ const NAV_ITEMS: ReadonlyArray<NavItem> = PRIMARY_TABS.map((tab) => ({
 function BrandMark() {
   return (
     <Link href="/dashboard" aria-label="모아 홈" className="text-primary flex min-h-11 min-w-11 shrink-0 items-center rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
-      <span className="text-xl font-extrabold tracking-tight">
+      <span className="text-[22px] font-extrabold tracking-[-0.07em]">
         모아
       </span>
     </Link>
@@ -93,7 +93,7 @@ function NavigationItem({
       )}
     >
       <span className="relative flex h-8 w-11 shrink-0 items-center justify-center lg:h-auto lg:w-auto">
-        <Icon className="size-5" strokeWidth={active ? 2.4 : 1.8} aria-hidden="true" />
+        <Icon className="size-[22px]" strokeWidth={active ? 2.4 : 1.8} aria-hidden="true" />
         {dot ? (
           <span
             aria-label="새 거래가 있어요"
@@ -138,8 +138,8 @@ function AppShell({
     <div className="flex min-h-dvh flex-col">
       <a href="#app-main" className="sr-only z-50 focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:rounded-lg focus:bg-background focus:p-3 focus:shadow-lg">본문으로 건너뛰기</a>
       {/* 웹과 Android가 제공하는 안전 영역을 셸 치수와 동일하게 반영한다. */}
-      <header className="bg-background/95 sticky top-0 z-30 border-b pt-[var(--safe-top)] backdrop-blur">
-        <div className="flex h-14 items-center justify-between gap-2 px-4">
+      <header className="bg-card/95 sticky top-0 z-30 border-b border-border/60 pt-[var(--safe-top)] backdrop-blur">
+        <div className="flex h-14 items-center justify-between gap-2 px-4 lg:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <BrandMark />
             <HouseholdSwitcher />
@@ -158,7 +158,7 @@ function AppShell({
           고정값(pb-28=112px)은 iPhone(inset 34px)에서 탭바 총높이(114px)보다 작아
           마지막 콘텐츠가 탭바 밑에 깔렸다 — 변수 참조로 기기별 편차를 흡수한다. */}
       {/* 당겨서 새로고침 — 화면의 활성 쿼리만 다시 가져온다(전역 1회 배선). */}
-      <main id="app-main" tabIndex={-1} className="min-w-0 flex-1 px-4 pt-4 pb-[calc(var(--app-tabbar-h)+1.5rem)] focus:outline-none lg:ml-52 lg:px-8 lg:pt-6 lg:pb-8">
+      <main id="app-main" tabIndex={-1} className="min-w-0 flex-1 px-4 pt-5 pb-[calc(var(--app-tabbar-h)+1.5rem)] focus:outline-none lg:ml-52 lg:px-8 lg:pt-6 lg:pb-8">
         <PullToRefresh><div className="mx-auto w-full max-w-6xl">{children}</div></PullToRefresh>
       </main>
 

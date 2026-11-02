@@ -1,5 +1,5 @@
 import type { MonthlyAnalytics } from "@family/contracts";
-import { ArrowRight, ChevronRight, Info, RefreshCw } from "lucide-react";
+import { ArrowRight, ChevronRight, CreditCard, Info, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import React from "react";
 
@@ -30,24 +30,27 @@ export function HomeConsumptionCard({
   const processingCount = visibleReviewCount(processing);
   const amountKnown = !loading && !error && monthly != null && Number.isFinite(monthly.totalNet);
   return (
-    <section className="flex min-w-0 flex-col pb-5 lg:pb-0 lg:pr-7" aria-labelledby="home-consumption-heading">
-      <div className="min-w-0 pb-4">
+    <section className="finance-panel flex min-w-0 flex-col p-5 sm:p-6" aria-labelledby="home-consumption-heading">
+      <div className="min-w-0 pb-5">
         <div className="flex min-w-0 items-center justify-between gap-2">
-          <h2 id="home-consumption-heading" className="min-w-0 text-[15px] font-semibold leading-relaxed">{isCurrentMonth ? "이번 달 카드 사용액" : `${formatMonth(month)} 카드 사용액`}</h2>
-          <Link href={`/ledger/analysis?month=${encodeURIComponent(month)}`} className="text-muted-foreground hover:text-primary focus-visible:outline-ring inline-flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2" aria-label="카드 사용액 분석">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="bg-primary/8 text-primary flex size-8 shrink-0 items-center justify-center rounded-xl"><CreditCard className="size-4" aria-hidden="true" /></span>
+            <h2 id="home-consumption-heading" className="min-w-0 text-sm font-semibold leading-relaxed">{isCurrentMonth ? "이번 달 카드 사용액" : `${formatMonth(month)} 카드 사용액`}</h2>
+          </div>
+          <Link href={`/ledger/analysis?month=${encodeURIComponent(month)}`} className="text-muted-foreground hover:text-primary focus-visible:outline-ring -mr-1 inline-flex min-h-11 shrink-0 items-center gap-0.5 rounded-lg px-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2" aria-label="카드 사용액 분석">
             분석 <ChevronRight className="size-3.5" aria-hidden="true" />
           </Link>
         </div>
         {amountKnown ? (
-          <p className="mt-1 min-w-0 break-all text-[clamp(1.875rem,5vw,2.25rem)] font-bold leading-tight tracking-tight tabular-nums" aria-label="기록된 카드 소비">{formatWon(monthly.totalNet)}</p>
+          <p className="mt-3 min-w-0 break-all text-[clamp(1.875rem,5vw,2.25rem)] font-bold leading-tight tracking-[-0.035em] tabular-nums" aria-label="기록된 카드 소비">{formatWon(monthly.totalNet)}</p>
         ) : (
           <p className={`mt-3 py-2 text-sm ${loading ? "text-muted-foreground" : "text-destructive"}`} role={loading ? "status" : "alert"}>
             {loading ? "카드 사용액을 불러오는 중이에요." : "카드 사용액을 불러오지 못했어요."}
           </p>
         )}
-        <p className="text-muted-foreground mt-2 text-xs">결제 취소 반영</p>
+        <p className="text-muted-foreground mt-2 text-[11px]">결제 취소 반영</p>
         {reviewCount !== null ? (
-          <Link href={HOME_REVIEW_HREF} className="text-primary focus-visible:outline-ring mt-4 flex min-h-11 items-center gap-2 border-t py-2.5 text-xs leading-relaxed focus-visible:outline-2 focus-visible:outline-offset-2">
+          <Link href={HOME_REVIEW_HREF} className="bg-primary/5 text-primary focus-visible:outline-ring mt-4 flex min-h-11 items-center gap-2 rounded-xl px-3 py-2.5 text-xs leading-relaxed focus-visible:outline-2 focus-visible:outline-offset-2">
             <Info className="size-4 shrink-0" aria-hidden="true" />
             <span className="min-w-0 flex-1">확인할 거래 {reviewCount.toLocaleString("ko-KR")}{reviews.truncated ? "+" : ""}건 · 전체 기간</span>
             <ChevronRight className="size-4 shrink-0" aria-hidden="true" />
@@ -67,7 +70,7 @@ export function HomeConsumptionCard({
           </div>
         ) : null}
       </div>
-      <div className="mt-auto flex min-w-0 flex-wrap items-center justify-between gap-x-3 border-t">
+      <div className="border-border/70 mt-auto flex min-w-0 flex-wrap items-center justify-between gap-x-3 border-t pt-1">
         <Link href={`/transactions?month=${encodeURIComponent(month)}`} className="text-primary hover:text-foreground focus-visible:outline-ring inline-flex min-h-11 items-center gap-1.5 rounded-lg py-2.5 pr-2 text-[13px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-2">
           카드 내역 보기 <ArrowRight className="size-3.5 shrink-0" aria-hidden="true" />
         </Link>

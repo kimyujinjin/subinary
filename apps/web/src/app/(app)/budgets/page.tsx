@@ -573,10 +573,10 @@ function BudgetsView() {
       : `${SCOPE_TYPE_LABEL[scopeType]} · ${scopeRefOptions.find((option) => option.value === scopeRefId)?.label ?? "대상 선택 전"}`;
 
   return (
-    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-5">
+    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
       <header className="flex min-w-0 items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-col gap-1">
-          <h1 className="text-2xl font-bold tracking-tight">예산</h1>
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <h1 className="text-[28px] font-bold tracking-tight">예산</h1>
           <p className="text-muted-foreground text-sm">
             {isCurrentMonth
               ? "이번 달 얼마나 썼는지 한눈에 확인해요"
@@ -586,7 +586,7 @@ function BudgetsView() {
           </p>
         </div>
           {canEdit && items.length > 0 ? (
-            <Button type="button" className="min-h-11 shrink-0" onClick={() => setCreateOpen(true)}>
+            <Button type="button" className="min-h-11 shrink-0 rounded-xl" onClick={() => setCreateOpen(true)}>
               <Plus />
               예산 만들기
             </Button>
@@ -598,15 +598,15 @@ function BudgetsView() {
       </div>
 
       {/* 목록 ------------------------------------------------------------- */}
-      <section className="flex flex-col gap-3">
+      <section className="flex flex-col gap-4">
         <h2 className="text-muted-foreground text-[13px] font-semibold">
           {isCurrentMonth ? "이번 달 예산" : `${formatMonth(month)} 예산`}
         </h2>
 
         {budgetsQuery.isLoading ? (
           [0, 1].map((i) => (
-            <Card key={i}>
-              <CardContent className="flex flex-col gap-3">
+            <Card key={i} className="finance-panel">
+              <CardContent className="flex flex-col gap-4">
                 <Skeleton className="h-4 w-28" />
                 <Skeleton className="h-2 w-full rounded-full" />
                 <Skeleton className="h-4 w-44" />
@@ -614,7 +614,7 @@ function BudgetsView() {
             </Card>
           ))
         ) : budgetsQuery.isError ? (
-          <Card>
+          <Card className="finance-panel">
             <CardContent>
               <p className="text-destructive text-sm" role="alert">
                 {errorMessage(
@@ -625,7 +625,7 @@ function BudgetsView() {
             </CardContent>
           </Card>
         ) : items.length === 0 ? (
-          <Card>
+          <Card className="finance-panel">
             {/* 과거월에서는 CTA도 권한 안내도 띄우지 않는다 — 그 달에 예산이
                 없었다는 사실만 남기면 되고, 지금 만들 수 있는 것은 이번 달 예산이다. */}
             <CardContent>
@@ -667,8 +667,8 @@ function BudgetsView() {
               month
             );
             return (
-              <Card key={budget.id}>
-                <CardContent className="flex flex-col gap-3">
+              <Card key={budget.id} className="finance-panel">
+                <CardContent className="flex flex-col gap-4">
                   <UsageBar
                     label={budget.name ?? (budget.scopeType === "card_group" ? "카드 묶음 예산" : budget.scopeLabel)}
                     spent={budget.spent}
@@ -696,7 +696,7 @@ function BudgetsView() {
                     최악의 조언을 하는 셈이다 — 수정·삭제는 ⋯로 내린다.
                     딥링크에는 지금 보고 있는 달을 함께 싣는다. 카드 묶음은
                     단일 카드 필터 링크를 각각 제공해 다른 지출이 섞이지 않게 한다. */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 border-t border-border/60 pt-4">
                     {spentHref ? (
                       <Button
                         asChild
@@ -771,7 +771,7 @@ function BudgetsView() {
         ) : null}
 
         {canManage && !isPastMonth && items.length > 0 ? (
-          <Card>
+          <Card className="finance-panel">
             <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-col gap-1">
                 <p className="text-sm font-semibold">

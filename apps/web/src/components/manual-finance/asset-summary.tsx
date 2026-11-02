@@ -16,11 +16,11 @@ export function ManualAssetsSummary({
 }) {
   if (summary.completeness === "empty") {
     return (
-      <section className="bg-finance-hero text-finance-hero-foreground min-w-0 rounded-2xl p-5 sm:p-6" aria-label="등록한 자산 요약">
-        <h2 className="text-sm font-semibold">{scope === "household" ? "가족과 공유한 자산" : "나만 보는 자산"}</h2>
-        <div className="mt-5 flex items-center gap-3">
-          <Wallet className="text-finance-highlight size-6 shrink-0" aria-hidden="true" />
-          <p className="text-finance-highlight text-xl font-semibold tracking-tight">등록된 자산이 없어요</p>
+      <section className="bg-finance-hero text-finance-hero-foreground min-w-0 rounded-[1.75rem] p-5 sm:p-6" aria-label="등록한 자산 요약">
+        <h2 className="text-finance-hero-muted text-[13px] font-medium">{scope === "household" ? "가족과 공유한 자산" : "나만 보는 자산"}</h2>
+        <div className="mt-5 flex min-w-0 items-center gap-3">
+          <span className="text-finance-highlight flex size-10 shrink-0 items-center justify-center rounded-2xl bg-white/10"><Wallet className="size-5" aria-hidden="true" /></span>
+          <p className="min-w-0 text-xl font-semibold leading-snug tracking-tight">등록된 자산이 없어요</p>
         </div>
         <p className="text-finance-hero-muted mt-3 text-sm leading-relaxed">통장·적금·주식·대출을 추가해 보세요.</p>
       </section>
@@ -36,45 +36,45 @@ export function ManualAssetsSummary({
   const netKnown = summary.completeness === "complete" && summary.netAssets !== null;
   return (
     <section
-      className="bg-finance-hero text-finance-hero-foreground min-w-0 rounded-2xl px-5 pb-3 pt-5 sm:px-6 sm:pt-6"
+      className="bg-finance-hero text-finance-hero-foreground min-w-0 rounded-[1.75rem] px-5 pb-1 pt-5 sm:px-6 sm:pt-6"
       aria-label="등록한 자산 요약"
     >
       <div className="flex min-w-0 items-baseline justify-between gap-3">
-        <h2 className="text-sm font-semibold">
+        <h2 className="text-finance-hero-muted text-[13px] font-medium">
           {scope === "household" ? "가족과 공유한 자산" : "나만 보는 자산"}
         </h2>
-        {netKnown ? <p className="text-finance-hero-muted shrink-0 text-xs">순자산</p> : null}
+        {netKnown ? <p className="text-finance-highlight shrink-0 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-medium">순자산</p> : null}
       </div>
       {netKnown ? (
-          <p className="text-finance-highlight mt-3 min-w-0 break-all text-[clamp(2rem,6vw,3rem)] font-bold leading-tight tracking-tight tabular-nums">
+          <p className="mt-3 min-w-0 break-all text-[clamp(2rem,7vw,3rem)] font-bold leading-tight tracking-[-0.04em] tabular-nums">
             {displayManualKrw(summary.netAssets)}
           </p>
       ) : null}
-      <dl className={`mt-5 grid min-w-0 grid-cols-2 gap-4 text-sm ${netKnown ? "border-t border-white/15 pt-4" : ""}`}>
+      <dl className="mt-5 grid min-w-0 grid-cols-2 gap-3 rounded-2xl bg-white/5 px-3.5 py-3.5 text-sm sm:gap-4 sm:px-4">
         <div className="min-w-0">
           <dt className="text-finance-hero-muted text-xs">
             {summary.assetsCompleteness === "partial"
               ? "자산 (일부 입력)"
               : "등록한 자산"}
           </dt>
-          <dd className={`mt-1.5 min-w-0 break-all font-semibold leading-snug tabular-nums ${summary.grossAssets === null ? "text-finance-hero-muted text-sm" : netKnown ? "text-base sm:text-lg" : "text-finance-highlight text-xl sm:text-2xl"}`}>
+          <dd className={`mt-1.5 min-w-0 break-all font-semibold leading-snug tracking-tight tabular-nums ${summary.grossAssets === null ? "text-finance-hero-muted text-sm" : netKnown ? "text-[15px] sm:text-lg" : "text-finance-highlight text-lg sm:text-2xl"}`}>
             {summary.grossAssets === null ? "미입력" : displayManualKrw(summary.grossAssets)}
           </dd>
         </div>
-        <div className="min-w-0 border-l border-white/15 pl-4">
+        <div className="min-w-0 border-l border-white/10 pl-3 sm:pl-4">
           <dt className="text-finance-hero-muted text-xs">
             {summary.debtCompleteness === "partial"
               ? "대출 (일부 입력)"
               : "남은 대출"}
           </dt>
-          <dd className={`mt-1.5 min-w-0 break-all font-semibold leading-snug tabular-nums ${summary.debt === null ? "text-finance-hero-muted text-sm" : netKnown ? "text-base sm:text-lg" : "text-finance-highlight text-xl sm:text-2xl"}`}>
+          <dd className={`mt-1.5 min-w-0 break-all font-semibold leading-snug tracking-tight tabular-nums ${summary.debt === null ? "text-finance-hero-muted text-sm" : netKnown ? "text-[15px] sm:text-lg" : "text-finance-highlight text-lg sm:text-2xl"}`}>
             {summary.debt === null ? "미입력" : displayManualKrw(summary.debt)}
           </dd>
         </div>
       </dl>
       {!netKnown ? <p className="text-finance-hero-muted mt-4 text-xs leading-relaxed">미입력 금액이 있어 순자산은 아직 계산하지 않았어요.</p> : null}
       {netKnown ? (
-        <details className="group mt-3 text-xs">
+        <details className="group mt-1 text-[11px]">
           <summary className="text-finance-hero-muted flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-lg py-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-finance-highlight [&::-webkit-details-marker]:hidden">
             <span className="min-w-0 break-words leading-relaxed">{range} · {sourceLabel}<span className="sr-only"> · 순자산 계산 기준</span></span>
             <ChevronDown className="size-3.5 shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />

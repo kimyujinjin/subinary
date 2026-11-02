@@ -411,9 +411,9 @@ function LedgerAnalysisView() {
   // --- 렌더 -----------------------------------------------------------------
 
   return (
-    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-5">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-bold tracking-tight">소비 분석</h1>
+    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
+      <header className="space-y-1.5">
+        <h1 className="text-[28px] font-bold tracking-tight">소비 분석</h1>
         <p className="text-muted-foreground text-sm">카드 승인·취소 기록을 기존 공개 범위에 따라 살펴봐요.</p>
       </header>
       <LedgerNav active="analysis" month={month} />
@@ -443,7 +443,7 @@ function LedgerAnalysisView() {
       {showChecklist ? null : (
       <>
       {/* 히어로 — 이번 달 소비 */}
-      <Card>
+      <Card className="finance-panel">
         <CardContent className="flex flex-col gap-4">
           {monthlyQuery.isLoading || monthlyQuery.isError ? (
             <StateNote
@@ -456,7 +456,7 @@ function LedgerAnalysisView() {
                 <span className="text-muted-foreground text-sm">
                   {isCurrentMonth ? "이번 달 소비" : `${formatMonth(month)} 소비`}
                 </span>
-                <span className="text-3xl font-bold tracking-tight tabular-nums">
+                <span className="text-[clamp(1.75rem,7vw,2.5rem)] font-bold tracking-tight tabular-nums [overflow-wrap:anywhere]">
                   {formatWon(monthly.totalNet)}
                 </span>
                 <p className={cn("text-sm font-medium", delta.className)}>
@@ -469,22 +469,22 @@ function LedgerAnalysisView() {
                 ) : null}
               </div>
 
-              <dl className="bg-muted grid grid-cols-3 divide-x rounded-lg py-3 text-center">
-                <div className="flex flex-col gap-0.5 px-2">
+              <dl className="bg-muted/70 grid min-w-0 grid-cols-3 divide-x divide-border/60 rounded-2xl py-4 text-center">
+                <div className="flex min-w-0 flex-col gap-1.5 px-2">
                   <dt className="text-muted-foreground text-xs">승인</dt>
-                  <dd className="text-sm font-semibold tabular-nums">
+                  <dd className="text-[13px] font-semibold tabular-nums [overflow-wrap:anywhere]">
                     {formatWon(monthly.totalApproved)}
                   </dd>
                 </div>
-                <div className="flex flex-col gap-0.5 px-2">
+                <div className="flex min-w-0 flex-col gap-1.5 px-2">
                   <dt className="text-muted-foreground text-xs">취소</dt>
-                  <dd className="text-sm font-semibold tabular-nums">
+                  <dd className="text-[13px] font-semibold tabular-nums [overflow-wrap:anywhere]">
                     {formatWon(monthly.totalCancelled)}
                   </dd>
                 </div>
-                <div className="flex flex-col gap-0.5 px-2">
+                <div className="flex min-w-0 flex-col gap-1.5 px-2">
                   <dt className="text-muted-foreground text-xs">거래</dt>
-                  <dd className="text-sm font-semibold tabular-nums">
+                  <dd className="text-[13px] font-semibold tabular-nums [overflow-wrap:anywhere]">
                     {monthly.transactionCount.toLocaleString("ko-KR")}건
                   </dd>
                 </div>
@@ -529,7 +529,7 @@ function LedgerAnalysisView() {
       {showChecklist ? null : (
       <>
       {/* 카테고리별 지출 */}
-      <Card>
+      <Card className="finance-panel">
         <CardHeader>
           <CardTitle>어디에 많이 썼나요?</CardTitle>
           <CardDescription>
@@ -554,7 +554,7 @@ function LedgerAnalysisView() {
       </Card>
 
       {/* 예산 요약 */}
-      <Card>
+      <Card className="finance-panel">
         <CardHeader>
           <CardTitle>
             {isCurrentMonth ? "이번 달 예산" : `${formatMonth(month)} 예산`}
@@ -625,14 +625,14 @@ function LedgerAnalysisView() {
         </CardContent>
       </Card>
 
-      <details className="min-w-0 border-t pt-2">
+      <details className="min-w-0 rounded-2xl border border-border/70 bg-card/70 px-4 py-1">
         <summary className="min-h-11 cursor-pointer py-3 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-ring">세부 분석 · 가맹점, 구성원, 카드, 최근 거래</summary>
         <div className="mt-3 flex min-w-0 flex-col gap-5">
       {/* 가맹점별 지출 — 서버 `analytics/merchants`(타 구성원 summary_only는 '(비공개)'로
           마스킹된 상태)를 그대로 표시한다. 이 집계는 이미 있었지만 화면 소비자가
           없었다(ADR-0026). '이번 달 어디서 많이 썼나'는 카테고리보다 구체적이라
           회고에서 먼저 눈에 들어온다. */}
-      <Card>
+      <Card className="finance-panel">
         <CardHeader>
           <CardTitle>자주 간 곳은 어디인가요?</CardTitle>
           <CardDescription>
@@ -657,7 +657,7 @@ function LedgerAnalysisView() {
       </Card>
 
       {/* 구성원 · 카드별 지출 */}
-      <Card>
+      <Card className="finance-panel">
         <CardHeader>
           <CardTitle>누가, 어떤 카드로 썼나요?</CardTitle>
           <CardDescription>구성원과 카드별로 모아봤어요</CardDescription>
@@ -753,7 +753,7 @@ function LedgerAnalysisView() {
       </Card>
 
       {/* 최근 거래 */}
-      <Card>
+      <Card className="finance-panel">
         <CardHeader>
           <CardTitle>최근 거래</CardTitle>
           <CardDescription>가장 최근에 기록된 거래예요</CardDescription>
@@ -873,7 +873,7 @@ function OnboardingChecklist({
 }>) {
   const progress = Math.round((doneCount / steps.length) * 100);
   return (
-    <Card>
+    <Card className="finance-panel">
       <CardHeader>
         <CardTitle>시작하기</CardTitle>
         <CardDescription>

@@ -108,7 +108,7 @@ function MoreRow({ item, divided }: Readonly<{ item: MoreItem; divided: boolean 
         divided ? "border-t border-border/50" : ""
       }`}
     >
-      <span className={`flex size-9 shrink-0 items-center justify-center rounded-md ${item.href === "/more/connections" ? "bg-finance-highlight text-finance-highlight-foreground" : "text-muted-foreground"}`}>
+      <span className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${item.href === "/more/connections" ? "bg-finance-highlight text-finance-highlight-foreground" : "bg-muted/80 text-muted-foreground"}`}>
         <Icon className="size-5" strokeWidth={1.8} aria-hidden="true" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -129,7 +129,7 @@ function MoreSection({
       <h2 className="text-foreground px-1 text-sm font-bold">
         {group.title}
       </h2>
-      <div className="border-y border-border">
+      <div className="finance-panel overflow-hidden">
         {group.items.map((item, i) => (
           <MoreRow key={item.href} item={item} divided={i > 0} />
         ))}
@@ -271,9 +271,9 @@ export default function MorePage() {
       {/* 누구로 로그인해 있는지 — 예전에는 아바타 드롭다운에만 있던 정보다.
           아바타가 링크가 되면서 이 화면이 그 자리를 대신한다. */}
       <header className="space-y-5">
-        <h1 className="text-2xl font-bold tracking-tight">설정</h1>
-        <div className="min-w-0 space-y-1 border-b border-foreground/20 pb-5">
-          <p className="text-lg font-semibold [overflow-wrap:anywhere]">{user?.name ?? "사용자"}</p>
+        <h1 className="text-[28px] font-bold tracking-tight">설정</h1>
+        <div className="finance-panel min-w-0 space-y-1.5 p-5">
+          <p className="text-xl font-semibold tracking-tight [overflow-wrap:anywhere]">{user?.name ?? "사용자"}</p>
           <p className="text-muted-foreground text-sm [overflow-wrap:anywhere]">
             {user?.email ?? ""}
             {activeMembership ? ` · ${activeMembership.name}` : ""}
@@ -284,8 +284,8 @@ export default function MorePage() {
       <div className="space-y-2">
         <label htmlFor="settings-search" className="sr-only">설정 검색</label>
         <div className="relative">
-          <Search aria-hidden="true" className="text-muted-foreground pointer-events-none absolute left-3 top-3.5 size-4" />
-          <Input id="settings-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="카드, 알림, 자동 분류 검색" className="min-h-11 pl-10" />
+          <Search aria-hidden="true" className="text-muted-foreground pointer-events-none absolute left-3 top-4 size-4" />
+          <Input id="settings-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="카드, 알림, 자동 분류 검색" className="min-h-12 rounded-2xl border-border/70 bg-card pl-10 shadow-none" />
         </div>
         {query ? <p role="status" className="text-muted-foreground text-xs">검색 결과 {matchingItems.length}개</p> : null}
       </div>
@@ -308,7 +308,7 @@ export default function MorePage() {
         ),
       )}
 
-      <details className="min-w-0 border-t border-border/70 pt-1">
+      <details className="min-w-0 border-t border-border/70 pt-2">
         <summary className="text-muted-foreground focus-visible:outline-ring min-h-11 cursor-pointer rounded-lg py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2">상세 설정</summary>
         <div className="mt-4 space-y-7">
           <MoreSection group={ADVANCED_GROUP} />

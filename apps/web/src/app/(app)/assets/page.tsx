@@ -135,11 +135,11 @@ function ScopedAssets({
     }
   }, [editorIsUnavailable]);
   return (
-    <div className="mx-auto w-full max-w-2xl min-w-0 space-y-6 pb-8">
+    <div className="mx-auto w-full max-w-2xl min-w-0 space-y-7 pb-8">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-[26px] font-bold tracking-tight">자산</h1>
-          <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
+          <h1 className="text-[28px] font-bold tracking-tight">자산</h1>
+          <p className="text-muted-foreground mt-1.5 text-sm leading-relaxed">
             {scope === "household" ? "우리 가족이 함께 기록한 자산" : "이전에 비공개로 기록한 자산"}
           </p>
         </div>
@@ -206,7 +206,7 @@ function ScopedAssets({
           ) : null}
           {hasRecords ? <div className="space-y-3">
             <h2 className="text-lg font-semibold">{scope === "household" ? "가족 자산 내역" : "등록한 자산 내역"}</h2>
-            <div role="group" aria-label="자산 종류 필터" className="flex flex-wrap gap-x-2 border-b">
+            <div role="group" aria-label="자산 종류 필터" className="flex flex-wrap gap-2">
             {(
               [["all", "전체"], ...Object.entries(ASSET_LABELS)] as Array<
                 [ManualAssetKind | "all", string]
@@ -215,7 +215,7 @@ function ScopedAssets({
               <Button
                 key={value}
                 variant="ghost"
-                className={`min-h-11 rounded-none border-b-2 px-3 ${kind === value ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
+                className={`min-h-11 rounded-full border px-4 ${kind === value ? "border-primary/15 bg-primary/10 text-primary font-semibold" : "border-border/70 bg-card text-muted-foreground"}`}
                 aria-pressed={kind === value}
                 onClick={() => setKind(value)}
               >
@@ -225,7 +225,7 @@ function ScopedAssets({
             </div>
           </div> : null}
           <section
-            className="min-w-0 border-b"
+            className="finance-panel min-w-0 px-4 py-2 sm:px-5"
             aria-label="자산 목록"
           >
             {items.length || importedLoans.length ? (
@@ -234,17 +234,17 @@ function ScopedAssets({
                 const groupItems = items.filter((item) => item.kind === groupKind);
                 const groupLoans = groupKind === "loan" ? importedLoans : [];
                 if (!groupItems.length && !groupLoans.length) return null;
-                return <section key={groupKind} className="border-b last:border-0" aria-label={`${groupLabel} 내역`}>
-                  <div className="flex items-center gap-2 pt-5 pb-2">
+                return <section key={groupKind} className="border-b border-border/70 last:border-0" aria-label={`${groupLabel} 내역`}>
+                  <div className="flex items-center gap-2 pt-4 pb-2">
                     <h3 className="text-sm font-semibold">{groupLabel}</h3>
-                    <span className="text-muted-foreground text-xs">{groupItems.length + groupLoans.length}건</span>
+                    <span className="text-muted-foreground rounded-full bg-muted px-2 py-0.5 text-[11px]">{groupItems.length + groupLoans.length}건</span>
                   </div>
               {groupItems.map((item) => (
                 <button
                   type="button"
                   key={item.id}
                   disabled={opening !== null}
-                  className="hover:bg-muted/50 focus-visible:ring-ring flex min-h-20 w-full min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-2 py-4 text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none disabled:opacity-60"
+                  className="hover:bg-muted/50 focus-visible:ring-ring flex min-h-20 w-full min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded-xl py-4 text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none disabled:opacity-60"
                   onClick={() => void open(item.id)}
                   aria-label={`${item.label} 상세`}
                 >
@@ -262,7 +262,7 @@ function ScopedAssets({
                     ) : null}
                   </span>
                   <span className="ml-auto min-w-0 max-w-full basis-32 text-right sm:basis-auto sm:max-w-[52%]">
-                    <strong className={`block break-all text-base tabular-nums ${replacedManualIds.has(item.id) ? "text-muted-foreground font-medium" : ""}`}>
+                    <strong className={`block break-all text-lg tracking-tight tabular-nums ${replacedManualIds.has(item.id) ? "text-muted-foreground font-medium" : ""}`}>
                       {displayManualKrw(item.amount)}
                     </strong>
                     <small className="text-muted-foreground text-xs">
@@ -324,12 +324,12 @@ function ScopedAssets({
         householdId={householdId} userId={user.id} canManage={canCreate} presentation="asset-summary" /> : null}
       <section className="space-y-3" aria-label="자산 관리">
       <h2 className="text-lg font-semibold">자산 관리</h2>
-      <div className="divide-y border-y">
+      <div className="finance-panel divide-y divide-border/60 overflow-hidden px-4 sm:px-5">
       <Link
         href="/assets/loan-import"
-        className="hover:bg-muted/50 flex min-h-16 items-center gap-3 py-4 text-sm font-medium"
+        className="hover:bg-muted/50 flex min-h-20 items-center gap-3 py-4 text-sm font-medium"
       >
-        <Building2 className="text-muted-foreground size-5 shrink-0" aria-hidden="true" />
+        <Building2 className="text-primary size-5 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">
           <span className="block">신한 대출 파일 가져오기</span>
           <span className="text-muted-foreground mt-1 block text-xs font-normal">전세·중도금 대출 기록 관리</span>
@@ -338,9 +338,9 @@ function ScopedAssets({
       </Link>
       <Link
         href="/plan"
-        className="hover:bg-muted/50 flex min-h-16 items-center gap-3 py-4 text-sm font-medium"
+        className="hover:bg-muted/50 flex min-h-20 items-center gap-3 py-4 text-sm font-medium"
       >
-        <House className="text-muted-foreground size-5 shrink-0" aria-hidden="true" />
+        <House className="text-primary size-5 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">
           <span className="block">주택 납부 일정</span>
           <span className="text-muted-foreground mt-1 block text-xs font-normal">계약금·중도금·잔금 일정</span>
@@ -349,15 +349,15 @@ function ScopedAssets({
       </Link>
       <Link
         href="/cards"
-        className="hover:bg-muted/50 flex min-h-16 items-center gap-3 py-4 text-sm font-medium"
+        className="hover:bg-muted/50 flex min-h-20 items-center gap-3 py-4 text-sm font-medium"
       >
-        <CreditCard className="text-muted-foreground size-5 shrink-0" aria-hidden="true" />
+        <CreditCard className="text-primary size-5 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">결제 카드 관리</span>
         <ChevronRight className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
       </Link>
       </div>
       </section>
-      <details className="text-muted-foreground text-xs leading-relaxed">
+      <details className="text-muted-foreground px-1 text-xs leading-relaxed">
         <summary className="min-h-11 cursor-pointer py-3">자산 합계 기준</summary>
         <p className="pb-3">직접 입력한 금액과 합계 반영을 선택한 신한 대출을 합산해요. 기존 대출과 연결한 경우 가져온 원금만 반영해요. 참고용·중복·연결 확인이 필요한 대출과 카드 한도·주택 계약금액·적금 만기 예상액은 제외해요.</p>
         <p className="pb-3">가져온 대출은 브라우저에서 확인한 시점의 남은 원금이에요. 은행의 별도 금액 기준일은 제공되지 않아요. 신한 대출 갱신에는 새 파일이 필요해요. 토스증권 연결 값은 별도로 표시하며 이 합계에 넣거나 원화로 환산하지 않아요.</p>
