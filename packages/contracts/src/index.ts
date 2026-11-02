@@ -632,3 +632,6 @@ export type {
 } from './recategorize.js';
 
 export * from './manual-finance.js';
+
+export * from './loan-import.js';
+export * from './finance-connections.js';

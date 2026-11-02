@@ -24,6 +24,8 @@ import { HouseholdModule } from './household/household.module';
 import { LearningModule } from './learning/learning.module';
 import { MemoryModule } from './memory/memory.module';
 import { ManualFinanceModule } from './manual-finance/manual-finance.module';
+import { LoanImportModule } from './loan-import/loan-import.module';
+import { FinanceConnectionsModule } from './finance-connections/finance-connections.module';
 import { ModelServingModule } from './model-serving/model-serving.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ObservabilityModule } from './observability/observability.module';
@@ -55,6 +57,8 @@ const devOnlyModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
     AuthModule,
     HouseholdModule,
     ManualFinanceModule,
+    LoanImportModule,
+    FinanceConnectionsModule,
     DevicesModule,
     CardSmsModule,
     CardsModule,

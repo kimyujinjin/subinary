@@ -11,10 +11,12 @@ import { defineConfig } from "vitest/config";
  * 올린다. `@/` 별칭은 tsconfig의 paths와 같은 값을 여기서도 풀어 준다.
  */
 export default defineConfig({
+  // Match Next's automatic JSX runtime for components and TSX tests.
+  esbuild: { jsx: "automatic" },
   resolve: {
     alias: { "@": resolve(import.meta.dirname, "./src") },
   },
   test: {
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.{ts,tsx}"],
   },
 });

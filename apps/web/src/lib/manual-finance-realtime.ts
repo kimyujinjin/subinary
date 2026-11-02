@@ -9,15 +9,24 @@ export function isManualFinanceHint(data: string): boolean {
   } catch { return false; }
 }
 
-/** Clear shared values before refetch, so a revoked value cannot survive an offline GET. */
+/** Clear shared values and membership-bound connection views before authorization refetch. */
 export function resetSharedManualFinanceQueries(qc: QueryClient, householdId: string) {
   return qc.resetQueries({
     queryKey: ["manual-finance", householdId],
-    predicate: query => query.queryKey[3] === "household",
+    predicate: query => query.queryKey[3] === "household" ||
+      (query.queryKey[3] === "owner" && query.queryKey[4] === "finance-connections"),
   });
 }
 
 /** Missed hints converge on the existing foreground safety interval. */
 export function refreshManualFinanceQueries(qc: QueryClient, householdId: string) {
-  return qc.invalidateQueries({ queryKey: ["manual-finance", householdId] });
+  const queryKey = ["manual-finance", householdId];
+  // Provider connection views must also drop previously allowed data before a
+  // missed-revocation authorization check. All other records keep their existing behavior.
+  const isConnection = (query: { queryKey: readonly unknown[] }) =>
+    query.queryKey[3] === "owner" && query.queryKey[4] === "finance-connections";
+  return Promise.all([
+    qc.resetQueries({ queryKey, predicate: isConnection }),
+    qc.invalidateQueries({ queryKey, predicate: query => !isConnection(query) }),
+  ]).then(() => undefined);
 }
