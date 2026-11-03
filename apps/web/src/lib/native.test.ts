@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const storageMocks = vi.hoisted(() => {
   const secureValues = new Map<string, unknown>();
@@ -14,7 +14,7 @@ const storageMocks = vi.hoisted(() => {
     preferenceSet: vi.fn(
       async ({ key, value }: { key: string; value: string }) => {
         preferenceValues.set(key, value);
-      },
+      }
     ),
     preferenceRemove: vi.fn(async ({ key }: { key: string }) => {
       preferenceValues.delete(key);
@@ -62,6 +62,11 @@ const LEGACY_KEY = "family.refreshToken";
 const MARKER_KEY = "family.secureRefreshStorageVersion";
 const SECURE_KEY = "refreshToken";
 
+// CI에서 첫 콜드 import가 10초 넘게 걸려 5초 테스트 타임아웃을 넘긴다. 변환 캐시를 미리 데워 둔다.
+beforeAll(async () => {
+  await import("./native");
+}, 60_000);
+
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
@@ -102,7 +107,7 @@ describe("네이티브 refresh 토큰 보안 저장", () => {
       "legacy-token",
       false,
       false,
-      1,
+      1
     );
     expect(storageMocks.secureValues.get(SECURE_KEY)).toBe("legacy-token");
     expect(storageMocks.preferenceValues.get(MARKER_KEY)).toBe("1");
@@ -128,7 +133,7 @@ describe("네이티브 refresh 토큰 보안 저장", () => {
     );
 
     await expect(getStoredRefreshToken()).rejects.toBeInstanceOf(
-      SecureTokenStorageError,
+      SecureTokenStorageError
     );
     expect(storageMocks.preferenceValues.get(LEGACY_KEY)).toBe("legacy-token");
     expect(storageMocks.preferenceRemove).not.toHaveBeenCalled();
@@ -153,17 +158,20 @@ describe("네이티브 refresh 토큰 보안 저장", () => {
           releaseFirstWrite = resolve;
         });
         storageMocks.secureValues.set(key, value);
-      },
+      }
     );
     const { persistRefreshToken } = await import("./native");
 
     const first = persistRefreshToken("first-token");
-    await vi.waitFor(() => expect(storageMocks.secureSet).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(storageMocks.secureSet).toHaveBeenCalledOnce()
+    );
     const second = persistRefreshToken("second-token");
 
     await Promise.resolve();
     expect(storageMocks.secureSet).toHaveBeenCalledOnce();
-    if (!releaseFirstWrite) throw new Error("첫 번째 저장 호출이 시작되지 않았습니다.");
+    if (!releaseFirstWrite)
+      throw new Error("첫 번째 저장 호출이 시작되지 않았습니다.");
     releaseFirstWrite();
     await Promise.all([first, second]);
 
@@ -173,15 +181,19 @@ describe("네이티브 refresh 토큰 보안 저장", () => {
   it("보안 저장 삭제 실패 시에도 기존 Preferences 삭제를 시도한다", async () => {
     storageMocks.preferenceValues.set(LEGACY_KEY, "legacy-token");
     storageMocks.secureValues.set(SECURE_KEY, "secure-token");
-    storageMocks.secureRemove.mockRejectedValueOnce(new Error("remove failure"));
+    storageMocks.secureRemove.mockRejectedValueOnce(
+      new Error("remove failure")
+    );
     const { clearStoredRefreshToken, SecureTokenStorageError } = await import(
       "./native"
     );
 
     await expect(clearStoredRefreshToken()).rejects.toBeInstanceOf(
-      SecureTokenStorageError,
+      SecureTokenStorageError
     );
-    expect(storageMocks.preferenceRemove).toHaveBeenCalledWith({ key: LEGACY_KEY });
+    expect(storageMocks.preferenceRemove).toHaveBeenCalledWith({
+      key: LEGACY_KEY,
+    });
     expect(storageMocks.preferenceValues.has(LEGACY_KEY)).toBe(false);
   });
 
@@ -193,7 +205,7 @@ describe("네이티브 refresh 토큰 보안 저장", () => {
     );
 
     await expect(getStoredRefreshToken()).rejects.toBeInstanceOf(
-      SecureTokenStorageError,
+      SecureTokenStorageError
     );
   });
 });
