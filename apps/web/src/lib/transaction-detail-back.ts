@@ -1,4 +1,4 @@
-export const TRANSACTION_DETAIL_BACK_EVENT = "family:transaction-detail-back";
+const TRANSACTION_DETAIL_BACK_EVENT = "family:transaction-detail-back";
 export type TransactionDetailBackSource = "native" | "browser";
 
 type Handler = (source: TransactionDetailBackSource) => void;

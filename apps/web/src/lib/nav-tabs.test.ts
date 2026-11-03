@@ -36,7 +36,7 @@ describe("simplified primary destinations", () => {
     ["/budgets", "ledger"], ["/ledger/analysis/", "ledger"], ["/transactions/abc", "ledger"],
     ["/plan/housing", "assets"], ["/plan/funding/", "assets"],
     ["/todo", "ledger"], ["/declines", "ledger"], ["/ai/", null],
-    ["/ai-operations", null], ["/play/app/", null], ["/household", null],
+    ["/ai-operations", null], ["/household", null],
     ["/devices", null], ["/categories", null], ["/notifications", null],
     ["/more/merchants", null], ["/more/recurring", "ledger"],
     ["/more/category-rules", null], ["/more/privacy/", null],

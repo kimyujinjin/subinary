@@ -1,4 +1,0 @@
-[gd_scene load_steps=2 format=3]
-[ext_resource type="Script" path="res://tools/_zzr_pause_reach.gd" id="1_z"]
-[node name="ZzrPauseReach" type="Node"]
-script = ExtResource("1_z")

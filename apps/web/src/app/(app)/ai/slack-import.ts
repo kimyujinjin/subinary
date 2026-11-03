@@ -127,7 +127,7 @@ export const SLACK_IMPORT_KEY_PREFIX = "fma.slack-import.";
 export const SLACK_IMPORT_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** 저장되는 값 — **식별자와 시각뿐**이다(원문·이름 금지). */
-export interface PendingSlackImport {
+interface PendingSlackImport {
   importId: string;
   slackWorkspaceId: string;
   /** 업로드를 수락받은 시각(ms). 폴링 경과와 TTL 판정에 쓴다. */

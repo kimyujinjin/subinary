@@ -10,7 +10,7 @@
  * ------------------------------------------------------------------------- */
 
 /** 서버가 보내는 SSE 이벤트 1건(파싱 결과). */
-export interface SseMessage {
+interface SseMessage {
   event: string;
   data: string;
 }

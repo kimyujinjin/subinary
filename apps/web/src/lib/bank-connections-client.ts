@@ -57,7 +57,7 @@ export const bankConnectionsApi = {
     return result(await safeFetch(`${base}/${encodeURIComponent(id)}`, { accessToken: token, method: "DELETE", body: request, signal }), body.householdId, userId, id, signal);
   },
 };
-export const bankConnectionKey = (householdId: string, userId: string) => ["manual-finance", householdId, userId, "owner", "bank-connections"] as const;
+const bankConnectionKey = (householdId: string, userId: string) => ["manual-finance", householdId, userId, "owner", "bank-connections"] as const;
 export function useOwnedBankConnections(householdId: string, userId: string, beforeRead: () => void) {
   const { authedFetch } = useAuth(); const qc = useQueryClient(); const key = bankConnectionKey(householdId, userId);
   useEffect(() => () => { const queryKey = bankConnectionKey(householdId, userId); void qc.cancelQueries({ queryKey, exact: true }); qc.removeQueries({ queryKey, exact: true }); }, [householdId, userId, qc]);

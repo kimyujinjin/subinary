@@ -81,8 +81,6 @@ export const MONEY_CHECKSUM_COLUMNS = [
   'approvedAt',
 ] as const;
 
-export type MoneyChecksumColumn = (typeof MONEY_CHECKSUM_COLUMNS)[number];
-
 /**
  * 체크섬 입력 포맷 버전. 정규화 방식을 바꾸면 **반드시 올린다** — 값 앞에 붙어 저장되므로
  * 옛 배치의 체크섬을 새 방식으로 잘못 비교하는 일이 생기지 않는다.

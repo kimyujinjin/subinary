@@ -7,7 +7,7 @@ export interface PostingStatus {
   posting?: CardSmsPosting;
 }
 
-export type SmsPostingDisposition = "posted" | "needs_review" | "processing" | "not_applicable" | "unknown";
+type SmsPostingDisposition = "posted" | "needs_review" | "processing" | "not_applicable" | "unknown";
 
 /** Preserve known waits/review on old APIs without guessing that parsed means unposted. */
 export function shouldKeepUnpostedSummary(item: Pick<PostingStatus, "parseStatus" | "posting">): boolean {

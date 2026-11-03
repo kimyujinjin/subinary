@@ -148,7 +148,7 @@ export function beginCardCorrectionRead(qc: QueryClient, householdId: string, si
   };
 }
 
-export interface CardLast4CorrectionInput {
+interface CardLast4CorrectionInput {
   id: string;
   householdId: string;
   body: CardLast4CorrectionRequest;

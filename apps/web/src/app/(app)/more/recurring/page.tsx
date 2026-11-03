@@ -47,12 +47,7 @@ import type {
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Money,
-  PageBackHeader,
-  StatusBadge,
-  declineReasonHint,
-} from "@/components/widgets";
+import { ListLoading, Money, PageBackHeader, StatusBadge, declineReasonHint } from "@/components/widgets";
 import { useAuth } from "@/lib/auth-context";
 import { useHousehold } from "@/lib/household-context";
 import {
@@ -422,14 +417,11 @@ export default function RecurringPage() {
   const data = seriesQuery.data;
 
   return (
-    <div className="flex flex-col gap-4 pb-8">
+    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-4 pb-8">
       <PageBackHeader title="정기 지출" backHref="/more" />
 
       {seriesQuery.isPending ? (
-        <div className="text-muted-foreground flex items-center gap-2 px-1 text-[14px]">
-          <Loader2 className="size-4 animate-spin" />
-          불러오는 중…
-        </div>
+        <ListLoading rows={3} label="정기 지출을 불러오는 중이에요." />
       ) : null}
 
       {seriesQuery.isError ? (

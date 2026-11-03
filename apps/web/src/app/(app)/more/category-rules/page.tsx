@@ -40,12 +40,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  EmptyState,
-  Money,
-  PageBackHeader,
-  StatusBadge,
-} from "@/components/widgets";
+import { EmptyState, ListLoading, Money, PageBackHeader, StatusBadge } from "@/components/widgets";
 import { useAuth } from "@/lib/auth-context";
 import { useHousehold } from "@/lib/household-context";
 import {
@@ -192,7 +187,7 @@ export default function CategoryRulesPage() {
   const preview = previewQuery.data;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
       <PageBackHeader
         title="카테고리 규칙"
         subtitle="가맹점마다 어떤 카테고리가 자동으로 붙는지 확인해요"
@@ -202,7 +197,7 @@ export default function CategoryRulesPage() {
       {/* ---- 규칙 목록 ---- */}
       <section className="flex flex-col gap-2">
         {rulesQuery.isPending ? (
-          <p className="text-muted-foreground px-1 text-[13px]">불러오는 중…</p>
+          <ListLoading rows={3} label="자동 분류 규칙을 불러오는 중이에요." />
         ) : rulesQuery.isError ? (
           <p className="text-destructive px-1 text-[13px]">
             규칙을 불러오지 못했어요.

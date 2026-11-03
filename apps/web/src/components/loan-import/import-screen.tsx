@@ -49,7 +49,7 @@ export function LoanImportScreen({ householdId, userId, canCreate, recordsOnly =
     );
   };
   return (
-    <div className="min-w-0 space-y-5">
+    <div className="mx-auto w-full min-w-0 max-w-2xl space-y-5">
       <header className="pl-2.5"><PageBackHeader title={recordsOnly ? "이전에 저장한 대출" : "신한 대출 가져오기"} subtitle={recordsOnly ? "이전 기록의 이름·공유 범위·합계 반영 방법을 관리해요." : "전세·중도금 대출의 남은 원금과 만기일을 저장해요."} backHref="/assets" /></header>
       {!recordsOnly ? <section className="bg-card grid min-w-0 grid-cols-1 gap-4 rounded-2xl border p-4 sm:p-5">
         <div>

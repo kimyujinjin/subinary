@@ -14,6 +14,13 @@
 # 필요 .env: CLOUDFLARE_TUNNEL_TOKEN, PUBLIC_BASE_URL, NODE_ENV=production,
 #            CORS_ORIGIN=$PUBLIC_BASE_URL (자세히는 .env.example)
 
+# 운영 스택의 고정 이름. **바꾸지 않는다** — 바꾸는 순간 지금 돌고 있는 컨테이너가
+# 고아가 되고, 새 이름으로 빈 스택이 하나 더 생긴다.
+#
+# 대신 이 파일은 `.env`·`.env.production`을 요구하고 그 둘은 운영 체크아웃에만 있다.
+# 저장소 복사본에서 실수로 올리는 것은 그 요구조건이 막는다 — env를 복사해 오면
+# 그 방어도 사라지므로, 검증 목적이면 dev compose에 COMPOSE_PROJECT_NAME을 주고
+# 쓴다(docker-compose.yml 주석 참고).
 name: family-memory-ai
 
 # 2026-07-19 운영 검증 이미지. 태그 drift를 막고 의도적인 갱신 때만 digest를 교체한다.

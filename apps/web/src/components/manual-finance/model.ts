@@ -50,7 +50,7 @@ export function parseManualKrwInput(value: string): string | null | undefined {
   return digits.length <= 20 ? digits : undefined;
 }
 
-export interface AssetDraft {
+interface AssetDraft {
   kind: ManualAssetKind;
   label: string;
   visibility: ManualFinanceVisibility;
@@ -118,7 +118,7 @@ export function assetRequest(
   return { ok: true, body: result.data };
 }
 
-export interface PaymentDraft {
+interface PaymentDraft {
   id: string;
   kind: ManualHousingPaymentKind;
   installment: string;
@@ -127,7 +127,7 @@ export interface PaymentDraft {
   paidAmount: string;
   paidDate: string;
 }
-export interface PlanDraft {
+interface PlanDraft {
   label: string;
   visibility: ManualFinanceVisibility;
   occupancyYear: string;

@@ -27,7 +27,7 @@ import type {
   MerchantLabelCandidate,
 } from "@family/contracts";
 
-import { PageBackHeader } from "@/components/widgets";
+import { ListLoading, PageBackHeader } from "@/components/widgets";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -407,9 +407,7 @@ export default function CategoriesPage() {
           우리 가족 카테고리
         </h2>
         {categoriesQuery.isLoading ? (
-          <div className="text-muted-foreground flex items-center gap-2 px-1 py-6 text-sm">
-            <Loader2 className="size-4 animate-spin" /> 불러오는 중…
-          </div>
+          <ListLoading rows={4} label="카테고리를 불러오는 중이에요." />
         ) : categoriesQuery.isError ? (
           // 조회 실패를 "없음"으로 보여주면 사용자가 이미 있는 카테고리를 다시 만들려
           // 하거나(유니크 충돌) 데이터가 사라졌다고 오인한다 — 에러와 빈 상태는 다르다.

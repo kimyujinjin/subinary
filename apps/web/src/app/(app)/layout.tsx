@@ -1,12 +1,6 @@
 "use client";
 /** Three main destinations; management tools remain reachable through 설정. */
-import {
-  Bell,
-  Home,
-  Landmark,
-  Receipt,
-  type LucideIcon,
-} from "lucide-react";
+import { Bell, Home, Landmark, Receipt, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type ReactNode } from "react";
@@ -42,7 +36,11 @@ const NAV_ITEMS: ReadonlyArray<NavItem> = PRIMARY_TABS.map((tab) => ({
 
 function BrandMark() {
   return (
-    <Link href="/dashboard" aria-label="모아 홈" className="text-primary flex min-h-11 min-w-11 shrink-0 items-center rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+    <Link
+      href="/dashboard"
+      aria-label="모아 홈"
+      className="text-primary flex min-h-11 min-w-11 shrink-0 items-center rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+    >
       <span className="text-[22px] font-extrabold tracking-[-0.07em]">
         모아
       </span>
@@ -89,11 +87,15 @@ function NavigationItem({
         "flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:min-h-12 lg:flex-row lg:justify-start lg:gap-3 lg:px-4 lg:py-3 lg:text-sm",
         active
           ? "text-primary font-semibold lg:bg-accent"
-          : "text-muted-foreground hover:text-foreground lg:hover:bg-muted",
+          : "text-muted-foreground hover:text-foreground lg:hover:bg-muted"
       )}
     >
       <span className="relative flex h-8 w-11 shrink-0 items-center justify-center lg:h-auto lg:w-auto">
-        <Icon className="size-[22px]" strokeWidth={active ? 2.4 : 1.8} aria-hidden="true" />
+        <Icon
+          className="size-[22px]"
+          strokeWidth={active ? 2.4 : 1.8}
+          aria-hidden="true"
+        />
         {dot ? (
           <span
             aria-label="새 거래가 있어요"
@@ -130,13 +132,16 @@ function PrimaryNav({ pathname }: { pathname: string }) {
   );
 }
 
-function AppShell({
-  children,
-}: Readonly<{ children: ReactNode }>) {
+function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const pathname = usePathname();
   return (
     <div className="flex min-h-dvh flex-col">
-      <a href="#app-main" className="sr-only z-50 focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:rounded-lg focus:bg-background focus:p-3 focus:shadow-lg">본문으로 건너뛰기</a>
+      <a
+        href="#app-main"
+        className="sr-only z-50 focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:rounded-lg focus:bg-background focus:p-3 focus:shadow-lg"
+      >
+        본문으로 건너뛰기
+      </a>
       {/* 웹과 Android가 제공하는 안전 영역을 셸 치수와 동일하게 반영한다. */}
       <header className="bg-card/95 sticky top-0 z-30 border-b border-border/60 pt-[var(--safe-top)] backdrop-blur">
         <div className="flex h-14 items-center justify-between gap-2 px-4 lg:px-6">
@@ -158,8 +163,20 @@ function AppShell({
           고정값(pb-28=112px)은 iPhone(inset 34px)에서 탭바 총높이(114px)보다 작아
           마지막 콘텐츠가 탭바 밑에 깔렸다 — 변수 참조로 기기별 편차를 흡수한다. */}
       {/* 당겨서 새로고침 — 화면의 활성 쿼리만 다시 가져온다(전역 1회 배선). */}
-      <main id="app-main" tabIndex={-1} className="min-w-0 flex-1 px-4 pt-5 pb-[calc(var(--app-tabbar-h)+1.5rem)] focus:outline-none lg:ml-52 lg:px-8 lg:pt-6 lg:pb-8">
-        <PullToRefresh><div className="mx-auto w-full max-w-6xl">{children}</div></PullToRefresh>
+      {/* 본문 폭은 **화면이 아니라 콘텐츠 종류**가 정한다. 여기 `max-w-6xl`은 바깥
+          한계일 뿐이고, 화면마다 아래 둘 중 하나를 직접 선언한다:
+            · `max-w-2xl` — 목록·폼·상세(기본). 한 줄을 눈으로 훑을 수 있는 폭이다.
+            · `max-w-4xl` — 2열 그리드를 가진 요약 대시보드(`/dashboard`)만.
+          선언을 빠뜨리면 이 6xl이 적용돼 **탭을 옮길 때 본문 폭이 점프한다** —
+          실제로 6개 화면이 그 상태였다. 새 화면은 반드시 하나를 고를 것. */}
+      <main
+        id="app-main"
+        tabIndex={-1}
+        className="min-w-0 flex-1 px-4 pt-5 pb-[calc(var(--app-tabbar-h)+1.5rem)] focus:outline-none lg:ml-52 lg:px-8 lg:pt-6 lg:pb-8"
+      >
+        <PullToRefresh>
+          <div className="mx-auto w-full max-w-6xl">{children}</div>
+        </PullToRefresh>
       </main>
 
       {/* 전역 결제 활동 레이어 — SSE/폴링으로 새 거래를 감지해 무효화+토스트+배지. */}
@@ -169,6 +186,12 @@ function AppShell({
 }
 
 /** 금융 셸은 인증·가구 준비가 끝난 뒤에만 마운트한다. */
-export default function AppLayout({children}: Readonly<{children: ReactNode}>) {
-  return <AppReadinessBoundary><AppShell>{children}</AppShell></AppReadinessBoundary>;
+export default function AppLayout({
+  children,
+}: Readonly<{ children: ReactNode }>) {
+  return (
+    <AppReadinessBoundary>
+      <AppShell>{children}</AppShell>
+    </AppReadinessBoundary>
+  );
 }

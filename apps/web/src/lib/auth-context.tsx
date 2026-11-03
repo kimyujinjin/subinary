@@ -81,7 +81,7 @@ function withRefreshLock<T>(fn: () => Promise<T>): Promise<T> {
  * unauthenticated와 섞으면 안 된다. 이 값에서 /login으로 보내면 안 된다(멀쩡한
  * 세션을 가진 사용자에게 재로그인을 요구하는 게 정확히 그 버그였다).
  */
-export type AuthStatus =
+type AuthStatus =
   | "loading"
   | "authenticated"
   | "unauthenticated"

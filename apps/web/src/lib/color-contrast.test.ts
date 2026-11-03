@@ -5,14 +5,11 @@
  * 거짓 안전을 준다. 대비 결함은 눈에 잘 띄지 않아 그렇게 조용히 되돌아온다 —
  * 실제로 `--warning`은 라이트에서 2.20:1(AA 미달)로 오래 있었고, 아무도 못 봤다.
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 
-const css = readFileSync(
-  join(process.cwd(), 'src/app/globals.css'),
-  'utf8',
-);
+const css = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
 
 /**
  * `:root { … }`(라이트)와 `.dark { … }`(다크) 블록을 각각 떼어낸다.
@@ -23,11 +20,11 @@ const css = readFileSync(
  * 검증하지 않는 상태가 된다(실제로 그렇게 만들었다가 회귀 주입 실험에서 드러났다).
  */
 function block(selector: string): string {
-  const escaped = selector.replace(/[.:]/g, '\\$&');
-  const open = new RegExp(`^${escaped}\\s*\\{`, 'm').exec(css);
+  const escaped = selector.replace(/[.:]/g, "\\$&");
+  const open = new RegExp(`^${escaped}\\s*\\{`, "m").exec(css);
   if (!open) throw new Error(`globals.css에 ${selector} 블록이 없다`);
   const from = open.index + open[0].length;
-  const end = css.indexOf('\n}', from);
+  const end = css.indexOf("\n}", from);
   if (end < 0) throw new Error(`${selector} 블록이 닫히지 않았다`);
   return css.slice(from, end);
 }
@@ -50,53 +47,71 @@ function luminance(hex: string): number {
 function contrast(a: string, b: string): number {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [
     number,
-    number,
+    number
   ];
   return (hi + 0.05) / (lo + 0.05);
 }
 
 const AA_TEXT = 4.5;
 
-describe('상태색 대비 (globals.css에서 직접 읽음)', () => {
+describe("상태색 대비 (globals.css에서 직접 읽음)", () => {
   const modes = [
-    { scope: ':root', bg: 'background', label: '라이트' },
-    { scope: '.dark', bg: 'background', label: '다크' },
+    { scope: ":root", bg: "background", label: "라이트" },
+    { scope: ".dark", bg: "background", label: "다크" },
   ] as const;
 
   for (const { scope, bg, label } of modes) {
-    for (const name of ['warning-strong', 'success-strong'] as const) {
+    for (const name of ["warning-strong", "success-strong"] as const) {
       it(`${label}: --${name}는 배경 위에서 AA(${AA_TEXT}:1) 이상`, () => {
         const ratio = contrast(token(scope, name), token(scope, bg));
         // 실패 시 실제 비율이 메시지에 남아야 얼마나 모자란지 바로 안다.
         expect(
           ratio,
-          `--${name} 대비 ${ratio.toFixed(2)}:1 (필요 ${AA_TEXT}:1)`,
+          `--${name} 대비 ${ratio.toFixed(2)}:1 (필요 ${AA_TEXT}:1)`
         ).toBeGreaterThanOrEqual(AA_TEXT);
       });
     }
   }
 
-  it('표면색과 텍스트색은 별개 토큰이다', () => {
+  it("표면색과 텍스트색은 별개 토큰이다", () => {
     // 라이트에서 둘이 같아지면 누군가 -strong을 표면색으로 되돌린 것이다.
     // 그 순간 본문 대비가 조용히 AA 아래로 내려간다.
-    expect(token(':root', 'warning-strong')).not.toBe(token(':root', 'warning'));
-    expect(token(':root', 'success-strong')).not.toBe(token(':root', 'success'));
+    expect(token(":root", "warning-strong")).not.toBe(
+      token(":root", "warning")
+    );
+    expect(token(":root", "success-strong")).not.toBe(
+      token(":root", "success")
+    );
   });
 });
 
 // Navigation, quiet labels and financial actions must remain readable in both modes.
-describe('핵심 화면 색 대비', () => {
-  for (const scope of [':root', '.dark']) {
+describe("핵심 화면 색 대비", () => {
+  for (const scope of [":root", ".dark"]) {
     for (const [foreground, background] of [
-      ['foreground', 'background'], ['muted-foreground', 'background'],
-      ['muted-foreground', 'card'], ['primary', 'card'],
-      ['primary-foreground', 'primary'], ['accent-foreground', 'accent'],
-      ['destructive', 'card'], ['destructive-foreground', 'destructive'],
-      ['finance-hero-foreground', 'finance-hero'], ['finance-hero-muted', 'finance-hero'],
-      ['finance-highlight', 'finance-hero'], ['finance-highlight-foreground', 'finance-highlight'],
+      ["foreground", "background"],
+      ["muted-foreground", "background"],
+      ["muted-foreground", "card"],
+      ["primary", "card"],
+      ["primary-foreground", "primary"],
+      ["accent-foreground", "accent"],
+      ["destructive", "card"],
+      ["destructive-foreground", "destructive"],
+      ["finance-hero-foreground", "finance-hero"],
+      ["finance-hero-muted", "finance-hero"],
+      ["finance-highlight", "finance-hero"],
+      ["finance-highlight-foreground", "finance-highlight"],
+      // 흰 카드 위에서 실제로 쓰이는 조합들 — 배경(`background`)만 검사하면 카드 위
+      // 대비가 비어 있고, 금융 화면의 본문은 거의 전부 카드 안에 있다.
+      ["card-foreground", "card"],
+      ["success-strong", "card"],
+      ["warning-strong", "card"],
+      ["secondary-foreground", "secondary"],
     ]) {
       it(`${scope} ${foreground}/${background}: AA 본문 대비`, () => {
-        expect(contrast(token(scope, foreground!), token(scope, background!))).toBeGreaterThanOrEqual(AA_TEXT);
+        expect(
+          contrast(token(scope, foreground!), token(scope, background!))
+        ).toBeGreaterThanOrEqual(AA_TEXT);
       });
     }
   }

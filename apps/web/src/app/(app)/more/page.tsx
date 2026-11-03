@@ -32,6 +32,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
+import { CONNECTABLE_PROVIDER_LABEL } from "@/components/finance-connections/providers";
 import { ThemeSettingRow } from "@/components/theme-toggle";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -58,31 +59,119 @@ interface MoreGroup {
 }
 
 const GROUPS: ReadonlyArray<MoreGroup> = [
-  { key: "household", title: "가족 · 연결", items: [
-    { href: "/more/connections", icon: Link2, title: "자동 연결", description: "신한·토스증권·토스뱅크·국민은행" },
-    { href: "/cards", icon: CreditCard, title: "결제 카드" },
-    { href: "/devices", icon: Smartphone, title: "문자 연동", description: "카드 문자를 보내는 휴대폰" },
-    { href: "/household", icon: Users, title: "가족 관리" },
-  ] },
-  { key: "account", title: "내 계정", items: [
-    { href: "/more/notifications", icon: Bell, title: "알림" },
-    { href: "/more/privacy", icon: ShieldCheck, title: "개인정보" },
-    { href: "/more/password", icon: KeyRound, title: "비밀번호 변경", description: "변경 후 모든 기기에서 다시 로그인" },
-  ] },
+  /**
+   * AI 도우미는 관리 도구가 아니라 **읽는 도구**다. 그런데 '가계부 관리' 묶음에
+   * 들어 있었고, 그 묶음은 접힌 '상세 설정' 안이라 카테고리·가맹점 정리 같은
+   * 설정 작업을 지나 세 번 눌러야 닿았다. 분류를 바로잡아 펼쳐진 영역으로 올린다.
+   * (탭을 늘리지는 않는다 — 어느 위치가 맞는지는 실제 사용량으로 확인한다.)
+   */
+  {
+    key: "assistant",
+    title: "AI 도우미",
+    items: [
+      {
+        href: "/ai",
+        icon: Sparkles,
+        title: "AI 도우미",
+        description: "지출 집계 질문하기와 자료 가져오기",
+      },
+    ],
+  },
+  {
+    key: "household",
+    title: "가족 · 연결",
+    items: [
+      {
+        href: "/more/connections",
+        icon: Link2,
+        title: "자동 연결",
+        description: CONNECTABLE_PROVIDER_LABEL,
+      },
+      { href: "/cards", icon: CreditCard, title: "결제 카드" },
+      {
+        href: "/devices",
+        icon: Smartphone,
+        title: "문자 연동",
+        description: "카드 문자를 보내는 휴대폰",
+      },
+      { href: "/household", icon: Users, title: "가족 관리" },
+    ],
+  },
+  {
+    key: "account",
+    title: "내 계정",
+    items: [
+      { href: "/more/notifications", icon: Bell, title: "알림" },
+      { href: "/more/privacy", icon: ShieldCheck, title: "개인정보" },
+      {
+        href: "/more/password",
+        icon: KeyRound,
+        title: "비밀번호 변경",
+        description: "변경 후 모든 기기에서 다시 로그인",
+      },
+    ],
+  },
 ];
-const ADVANCED_GROUP: MoreGroup = { key: "advanced", title: "가계부 관리", items: [
-  { href: "/categories", icon: Tags, title: "카테고리", description: "지출 분류 추가·수정" },
-  { href: "/more/merchants", icon: Store, title: "가맹점 정리", description: "같은 가게의 여러 이름 묶기" },
-  { href: "/more/recurring", icon: Repeat, title: "정기 지출", description: "반복되는 결제 확인" },
-  { href: "/more/category-rules", icon: Wand2, title: "자동 분류 규칙", description: "분류 기준과 지난 거래에 적용" },
-  { href: "/todo", icon: ListChecks, title: "확인할 거래", description: "문자 확인과 결제 처리 상태" },
-  { href: "/declines", icon: AlertTriangle, title: "실패한 결제", description: "이전 결제 실패 내역" },
-  { href: "/ai", icon: Sparkles, title: "AI 도우미", description: "질문하기와 자료 가져오기" },
-] };
-const LEGACY_RECORDS_GROUP: MoreGroup = { key: "legacy", title: "기존 비공개 기록", items: [
-  { href: "/assets?scope=private", icon: Wallet, title: "기존 비공개 자산", description: "이전에 나만 보도록 저장한 기록" },
-  { href: "/plan?scope=private", icon: Flag, title: "기존 비공개 주택 계획", description: "가족에게 공개하지 않고 보관 중인 기록" },
-] };
+const ADVANCED_GROUP: MoreGroup = {
+  key: "advanced",
+  title: "가계부 관리",
+  items: [
+    {
+      href: "/categories",
+      icon: Tags,
+      title: "카테고리",
+      description: "지출 분류 추가·수정",
+    },
+    {
+      href: "/more/merchants",
+      icon: Store,
+      title: "가맹점 정리",
+      description: "같은 가게의 여러 이름 묶기",
+    },
+    {
+      href: "/more/recurring",
+      icon: Repeat,
+      title: "정기 지출",
+      description: "반복되는 결제 확인",
+    },
+    {
+      href: "/more/category-rules",
+      icon: Wand2,
+      title: "자동 분류 규칙",
+      description: "분류 기준과 지난 거래에 적용",
+    },
+    {
+      href: "/todo",
+      icon: ListChecks,
+      title: "확인할 거래",
+      description: "문자 확인과 결제 처리 상태",
+    },
+    {
+      href: "/declines",
+      icon: AlertTriangle,
+      title: "실패한 결제",
+      description: "이전 결제 실패 내역",
+    },
+  ],
+};
+const LEGACY_RECORDS_GROUP: MoreGroup = {
+  key: "legacy",
+  title: "기존 비공개 기록",
+  items: [
+    {
+      href: "/assets?scope=private",
+      icon: Wallet,
+      title: "기존 비공개 자산",
+      description: "이전에 나만 보도록 저장한 기록",
+    },
+    {
+      href: "/plan?scope=private",
+      icon: Flag,
+      title: "기존 비공개 주택 계획",
+      description: "가족에게 공개하지 않고 보관 중인 기록",
+    },
+  ],
+};
 
 /** owner·admin에게만 보이는 개발자 화면. 일반 목록과 섞지 않는다. */
 const OPERATIONS_GROUP: MoreGroup = {
@@ -99,7 +188,10 @@ const OPERATIONS_GROUP: MoreGroup = {
 };
 
 /** 아이콘과 설명을 나란히 놓는 설정 행. */
-function MoreRow({ item, divided }: Readonly<{ item: MoreItem; divided: boolean }>) {
+function MoreRow({
+  item,
+  divided,
+}: Readonly<{ item: MoreItem; divided: boolean }>) {
   const Icon = item.icon;
   return (
     <Link
@@ -108,14 +200,27 @@ function MoreRow({ item, divided }: Readonly<{ item: MoreItem; divided: boolean 
         divided ? "border-t border-border/50" : ""
       }`}
     >
-      <span className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${item.href === "/more/connections" ? "bg-finance-highlight text-finance-highlight-foreground" : "bg-muted/80 text-muted-foreground"}`}>
+      <span
+        className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${
+          item.href === "/more/connections"
+            ? "bg-finance-highlight text-finance-highlight-foreground"
+            : "bg-muted/80 text-muted-foreground"
+        }`}
+      >
         <Icon className="size-5" strokeWidth={1.8} aria-hidden="true" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="text-[15px] font-medium">{item.title}</span>
-        {item.description ? <span className="text-muted-foreground text-xs leading-5 [overflow-wrap:anywhere]">{item.description}</span> : null}
+        {item.description ? (
+          <span className="text-muted-foreground text-xs leading-5 [overflow-wrap:anywhere]">
+            {item.description}
+          </span>
+        ) : null}
       </span>
-      <ChevronRight className="text-muted-foreground/40 size-4 shrink-0" aria-hidden="true" />
+      <ChevronRight
+        className="text-muted-foreground/40 size-4 shrink-0"
+        aria-hidden="true"
+      />
     </Link>
   );
 }
@@ -126,9 +231,7 @@ function MoreSection({
 }: Readonly<{ group: MoreGroup; children?: ReactNode }>) {
   return (
     <section className="flex min-w-0 flex-col gap-2.5">
-      <h2 className="text-foreground px-1 text-sm font-bold">
-        {group.title}
-      </h2>
+      <h2 className="text-foreground px-1 text-sm font-bold">{group.title}</h2>
       <div className="finance-panel overflow-hidden">
         {group.items.map((item, i) => (
           <MoreRow key={item.href} item={item} divided={i > 0} />
@@ -163,7 +266,7 @@ function BiometricToggleRow() {
     try {
       if (next) {
         const gate = await authenticateBiometric(
-          "생체인식 잠금을 켜려면 본인 확인이 필요해요",
+          "생체인식 잠금을 켜려면 본인 확인이 필요해요"
         );
         if (gate !== "ok") {
           if (gate === "unsupported") {
@@ -259,12 +362,19 @@ export default function MorePage() {
   const query = search.replace(/\s+/g, "").toLocaleLowerCase("ko-KR");
   // 권한으로 걸러진 메뉴만 검색한다. 검색이 숨겨진 운영 메뉴를 노출하지 않는다.
   const searchableGroups = [
-    ...GROUPS, ADVANCED_GROUP, LEGACY_RECORDS_GROUP,
+    ...GROUPS,
+    ADVANCED_GROUP,
+    LEGACY_RECORDS_GROUP,
     ...(canViewOperations ? [OPERATIONS_GROUP] : []),
   ];
-  const matchingItems = searchableGroups.flatMap((group) => group.items).filter(
-    (item) => `${item.title} ${item.description ?? ""}`.replace(/\s+/g, "").toLocaleLowerCase("ko-KR").includes(query),
-  );
+  const matchingItems = searchableGroups
+    .flatMap((group) => group.items)
+    .filter((item) =>
+      `${item.title} ${item.description ?? ""}`
+        .replace(/\s+/g, "")
+        .toLocaleLowerCase("ko-KR")
+        .includes(query)
+    );
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-7">
@@ -273,7 +383,9 @@ export default function MorePage() {
       <header className="space-y-5">
         <h1 className="text-[28px] font-bold tracking-tight">설정</h1>
         <div className="finance-panel min-w-0 space-y-1.5 p-5">
-          <p className="text-xl font-semibold tracking-tight [overflow-wrap:anywhere]">{user?.name ?? "사용자"}</p>
+          <p className="text-xl font-semibold tracking-tight [overflow-wrap:anywhere]">
+            {user?.name ?? "사용자"}
+          </p>
           <p className="text-muted-foreground text-sm [overflow-wrap:anywhere]">
             {user?.email ?? ""}
             {activeMembership ? ` · ${activeMembership.name}` : ""}
@@ -282,40 +394,70 @@ export default function MorePage() {
       </header>
 
       <div className="space-y-2">
-        <label htmlFor="settings-search" className="sr-only">설정 검색</label>
+        <label htmlFor="settings-search" className="sr-only">
+          설정 검색
+        </label>
         <div className="relative">
-          <Search aria-hidden="true" className="text-muted-foreground pointer-events-none absolute left-3 top-4 size-4" />
-          <Input id="settings-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="카드, 알림, 자동 분류 검색" className="min-h-12 rounded-2xl border-border/70 bg-card pl-10 shadow-none" />
+          <Search
+            aria-hidden="true"
+            className="text-muted-foreground pointer-events-none absolute left-3 top-4 size-4"
+          />
+          <Input
+            id="settings-search"
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="카드, 알림, 자동 분류 검색"
+            className="min-h-12 rounded-2xl border-border/70 bg-card pl-10 shadow-none"
+          />
         </div>
-        {query ? <p role="status" className="text-muted-foreground text-xs">검색 결과 {matchingItems.length}개</p> : null}
+        {query ? (
+          <p role="status" className="text-muted-foreground text-xs">
+            검색 결과 {matchingItems.length}개
+          </p>
+        ) : null}
       </div>
 
       {query ? (
-        matchingItems.length ? <MoreSection group={{ key: "search", title: "검색 결과", items: matchingItems }} /> :
-          <div className="space-y-2 py-6 text-center"><p className="font-medium">일치하는 메뉴가 없어요</p><p className="text-muted-foreground text-sm">카드, 가족, 알림처럼 짧게 검색해 보세요.</p></div>
+        matchingItems.length ? (
+          <MoreSection
+            group={{ key: "search", title: "검색 결과", items: matchingItems }}
+          />
+        ) : (
+          <div className="space-y-2 py-6 text-center">
+            <p className="font-medium">일치하는 메뉴가 없어요</p>
+            <p className="text-muted-foreground text-sm">
+              카드, 가족, 알림처럼 짧게 검색해 보세요.
+            </p>
+          </div>
+        )
       ) : null}
 
       <div className={query ? "hidden" : "space-y-7"}>
-      {GROUPS.map((group) =>
-        group.key === "account" ? (
-          <MoreSection key={group.key} group={group}>
-            <ThemeSettingRow />
-            <BiometricToggleRow />
-            <LogoutRow />
-          </MoreSection>
-        ) : (
-          <MoreSection key={group.key} group={group} />
-        ),
-      )}
+        {GROUPS.map((group) =>
+          group.key === "account" ? (
+            <MoreSection key={group.key} group={group}>
+              <ThemeSettingRow />
+              <BiometricToggleRow />
+              <LogoutRow />
+            </MoreSection>
+          ) : (
+            <MoreSection key={group.key} group={group} />
+          )
+        )}
 
-      <details className="min-w-0 border-t border-border/70 pt-2">
-        <summary className="text-muted-foreground focus-visible:outline-ring min-h-11 cursor-pointer rounded-lg py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2">상세 설정</summary>
-        <div className="mt-4 space-y-7">
-          <MoreSection group={ADVANCED_GROUP} />
-          <MoreSection group={LEGACY_RECORDS_GROUP} />
-          {canViewOperations ? <MoreSection group={OPERATIONS_GROUP} /> : null}
-        </div>
-      </details>
+        <details className="min-w-0 border-t border-border/70 pt-2">
+          <summary className="text-muted-foreground focus-visible:outline-ring min-h-11 cursor-pointer rounded-lg py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2">
+            상세 설정
+          </summary>
+          <div className="mt-4 space-y-7">
+            <MoreSection group={ADVANCED_GROUP} />
+            <MoreSection group={LEGACY_RECORDS_GROUP} />
+            {canViewOperations ? (
+              <MoreSection group={OPERATIONS_GROUP} />
+            ) : null}
+          </div>
+        </details>
       </div>
     </div>
   );

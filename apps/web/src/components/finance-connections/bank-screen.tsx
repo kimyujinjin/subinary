@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import Link from "next/link";
 import type { BankConnection, BankConnectionList, BankConnectionResult } from "@family/contracts";
 import { Button } from "@/components/ui/button";
@@ -9,15 +9,19 @@ import { bankConnectionsApi, useOwnedBankConnections } from "@/lib/bank-connecti
 import { createConnectionSession, connectionFailureStatus, connectionTime, connectionDecimal } from "./model";
 import { BANK_ERROR, BANK_STATUS, bankAccountLabel, reconcileBankOperation, type PendingBankOperation } from "./bank-model";
 import { BankRegistrationForm, type BankRegistrationInput } from "./bank-registration-form";
+import { BankStartPanel } from "./bank-start-panel";
 
 export function BankConnectionScreen({ householdId, userId, canManage, summary = false }: {
   householdId: string; userId: string; canManage: boolean; summary?: boolean;
 }) {
   const { authedFetch } = useAuth();
   const session = useRef(createConnectionSession()).current;
-  const [data, setData] = useState<BankConnectionList | null>(null), [busy, setBusy] = useState(false);
-  const [form, setForm] = useState(false), [notice, setNotice] = useState<string | null>(null);
-  const pending = useRef<PendingBankOperation | null>(null), active = useRef<PendingBankOperation | null>(null);
+  const [data, setData] = useState<BankConnectionList | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const pending = useRef<PendingBankOperation | null>(null);
+  const active = useRef<PendingBankOperation | null>(null);
   const [uncertain, setUncertain] = useState<PendingBankOperation | null>(null);
   const firstRead = useRef(true);
   const beforeRead = useCallback(() => {
@@ -90,6 +94,11 @@ export function BankConnectionScreen({ householdId, userId, canManage, summary =
       });
     } finally { Object.assign(body, { loginId: "", password: "" }); input.loginId = ""; input.password = ""; }
   }
+  function openRegistration(event: MouseEvent<HTMLButtonElement>): void {
+    // 등록 완료로 폼이 닫힌 직후 같은 더블 클릭의 두 번째 입력을 받지 않는다.
+    if (event.detail > 1 || session.pending || pending.current || !canManage) return;
+    setForm(true);
+  }
   const items = data?.items.filter(item => item.status !== "disconnected") ?? [];
   const disabled = busy || !!uncertain;
   // Capability setup belongs in connection management; don't fill assets with
@@ -98,7 +107,7 @@ export function BankConnectionScreen({ householdId, userId, canManage, summary =
   return <section className="min-w-0 space-y-4" aria-label="신한은행 자동조회">
     {!data && (busy || owned.isPending) ? <FinanceLoading /> : null}
     {notice ? <p role="alert" className="rounded-xl border p-3 text-sm leading-relaxed">{notice}</p> : null}
-    {data && !data.enabled ? <p role="status" className="rounded-xl bg-muted/60 p-4 text-sm leading-relaxed">신한 자동조회를 위한 실행 환경을 준비하고 있어요. 지금은 아이디·비밀번호를 입력하지 않아도 돼요.</p> : null}
+    {!summary && canManage ? <BankStartPanel householdId={householdId} userId={userId} disabled={disabled || owned.isFetching} /> : null}
     {data?.enabled && !items.length ? <p className="text-muted-foreground text-sm">연결한 신한 계좌가 없어요.</p> : null}
     {items.map(item => <BankConnectionCard key={`${item.id}/${item.version}`} item={item} canManage={!summary && canManage} disabled={disabled} onRefresh={() => {
       if (item.canRefresh) void write({ kind: "refresh", id: item.id, version: item.version }, signal => authedFetch(token => bankConnectionsApi.refresh(token, item.id,
@@ -106,9 +115,11 @@ export function BankConnectionScreen({ householdId, userId, canManage, summary =
     }} onDisconnect={() => { void write({ kind: "disconnect", id: item.id, version: item.version }, signal => authedFetch(token => bankConnectionsApi.disconnect(token, item.id,
       { householdId, expectedVersion: item.version }, userId, signal))); }} />)}
     {!summary && form && data?.enabled && canManage ? <BankRegistrationForm busy={busy} onSubmit={register} onClose={() => setForm(false)} /> : null}
-    {!summary && data?.enabled && canManage && !form ? <Button className="min-h-12 w-full" disabled={disabled} onClick={() => setForm(true)}>신한 계좌 연결</Button> : null}
+    {!summary && data?.enabled && canManage && !form ? <Button className="min-h-12 w-full" disabled={disabled} onClick={openRegistration}>신한 계좌 연결</Button> : null}
     {!summary ? <Button variant="outline" className="min-h-11 w-full" disabled={busy || owned.isFetching} onClick={() => { void owned.reread(); }}>연결 상태 확인</Button> : null}
-    {summary ? <Link href="/more/connections?provider=shinhan_bank" className="inline-flex min-h-11 items-center text-sm font-medium text-primary">신한 연결 관리</Link> : <p className="text-muted-foreground text-xs leading-relaxed">자산·연결 화면을 열면 저장한 로그인 정보로 조회해요. 같은 은행 아이디의 로그인 간격은 최소 15분이에요. 앱을 닫아 둔 동안의 정기 조회는 설정하지 않아요.</p>}
+    {summary ? <Link href="/more/connections?provider=shinhan_bank" className="inline-flex min-h-11 items-center text-sm font-medium text-primary">신한 연결 관리</Link> : <p className="text-muted-foreground text-xs leading-relaxed">{data?.enabled
+      ? "자산·연결 화면을 열면 저장한 로그인 정보로 조회해요. 같은 은행 아이디의 로그인 간격은 최소 15분이에요. 앱을 닫아 둔 동안의 정기 조회는 설정하지 않아요."
+      : "조회 시작 버튼을 누르면 연결한 Mac이 요청을 받아요. 은행 추가 인증이 필요하면 진행 상태에 표시해요."}</p>}
   </section>;
 }
 

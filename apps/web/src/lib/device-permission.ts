@@ -18,7 +18,7 @@
  * ------------------------------------------------------------------------- */
 import type { HouseholdRole, MemberSummary } from "@family/contracts";
 
-export interface DeviceManagePermission {
+interface DeviceManagePermission {
   /** 현재 가족에서 내 역할(모르면 null). */
   role: HouseholdRole | null | undefined;
   /** 현재 가족에서 내 memberId(모르면 null). */

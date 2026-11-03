@@ -116,7 +116,7 @@ function ScopedPlans({
   };
   const next = records.data?.summary.nextPayment;
   return (
-    <div className="space-y-5">
+    <div className="mx-auto w-full min-w-0 max-w-2xl space-y-5">
       <Link
         href={`/assets?scope=${scope}`}
         className="text-muted-foreground hover:text-primary focus-visible:outline-ring inline-flex min-h-11 items-center gap-2 rounded-lg text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2"
