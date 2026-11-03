@@ -9,6 +9,7 @@ import { bankConnectionsApi, useOwnedBankConnections } from "@/lib/bank-connecti
 import { createConnectionSession, connectionFailureStatus, connectionTime, connectionDecimal } from "./model";
 import { BANK_ERROR, BANK_STATUS, bankAccountLabel, reconcileBankOperation, type PendingBankOperation } from "./bank-model";
 import { BankRegistrationForm, type BankRegistrationInput } from "./bank-registration-form";
+import { BankStartPanel } from "./bank-start-panel";
 
 export function BankConnectionScreen({ householdId, userId, canManage, summary = false }: {
   householdId: string; userId: string; canManage: boolean; summary?: boolean;
@@ -103,7 +104,8 @@ export function BankConnectionScreen({ householdId, userId, canManage, summary =
   return <section className="min-w-0 space-y-4" aria-label="신한은행 자동조회">
     {!data && (busy || owned.isPending) ? <FinanceLoading /> : null}
     {notice ? <p role="alert" className="rounded-xl border p-3 text-sm leading-relaxed">{notice}</p> : null}
-    {data && !data.enabled ? <p role="status" className="rounded-xl bg-muted/60 p-4 text-sm leading-relaxed">신한 자동조회를 위한 실행 환경을 준비하고 있어요. 지금은 아이디·비밀번호를 입력하지 않아도 돼요.</p> : null}
+    {data && !data.enabled ? <p role="status" className="rounded-xl bg-muted/60 p-4 text-sm leading-relaxed">신한은행 조회·자동저장은 아직 준비 중이에요. 이 화면에 은행 아이디·비밀번호를 입력하거나 저장하지 않아요.</p> : null}
+    {!summary && data && !data.enabled && canManage ? <BankStartPanel disabled={disabled || owned.isFetching} /> : null}
     {data?.enabled && !items.length ? <p className="text-muted-foreground text-sm">연결한 신한 계좌가 없어요.</p> : null}
     {items.map(item => <BankConnectionCard key={`${item.id}/${item.version}`} item={item} canManage={!summary && canManage} disabled={disabled} onRefresh={() => {
       if (item.canRefresh) void write({ kind: "refresh", id: item.id, version: item.version }, signal => authedFetch(token => bankConnectionsApi.refresh(token, item.id,
@@ -113,7 +115,9 @@ export function BankConnectionScreen({ householdId, userId, canManage, summary =
     {!summary && form && data?.enabled && canManage ? <BankRegistrationForm busy={busy} onSubmit={register} onClose={() => setForm(false)} /> : null}
     {!summary && data?.enabled && canManage && !form ? <Button className="min-h-12 w-full" disabled={disabled} onClick={openRegistration}>신한 계좌 연결</Button> : null}
     {!summary ? <Button variant="outline" className="min-h-11 w-full" disabled={busy || owned.isFetching} onClick={() => { void owned.reread(); }}>연결 상태 확인</Button> : null}
-    {summary ? <Link href="/more/connections?provider=shinhan_bank" className="inline-flex min-h-11 items-center text-sm font-medium text-primary">신한 연결 관리</Link> : <p className="text-muted-foreground text-xs leading-relaxed">자산·연결 화면을 열면 저장한 로그인 정보로 조회해요. 같은 은행 아이디의 로그인 간격은 최소 15분이에요. 앱을 닫아 둔 동안의 정기 조회는 설정하지 않아요.</p>}
+    {summary ? <Link href="/more/connections?provider=shinhan_bank" className="inline-flex min-h-11 items-center text-sm font-medium text-primary">신한 연결 관리</Link> : <p className="text-muted-foreground text-xs leading-relaxed">{data?.enabled
+      ? "자산·연결 화면을 열면 저장한 로그인 정보로 조회해요. 같은 은행 아이디의 로그인 간격은 최소 15분이에요. 앱을 닫아 둔 동안의 정기 조회는 설정하지 않아요."
+      : "연동 준비와 실제 조회·저장은 별도예요. 이 화면을 열어도 은행에 로그인하거나 잔액을 가져오지 않아요."}</p>}
   </section>;
 }
 
