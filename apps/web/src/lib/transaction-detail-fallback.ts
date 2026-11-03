@@ -17,10 +17,10 @@
  * ------------------------------------------------------------------------- */
 
 /** 거래를 열지 못한 이유. */
-export type DetailFallbackReason = "forbidden" | "missing" | "error";
+type DetailFallbackReason = "forbidden" | "missing" | "error";
 
 /** 화면에 그대로 띄우는 문구(한국어). */
-export interface DetailFallbackCopy {
+interface DetailFallbackCopy {
   title: string;
   description: string;
   /** 다시 시도할 가치가 있는 실패인가(일시적 오류만 true). */

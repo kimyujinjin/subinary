@@ -8,7 +8,7 @@
 import type { BudgetScopeType } from "@family/contracts";
 
 /** 거래 화면이 초기 필터로 읽는 파라미터(빈 값은 링크에서 뺀다). */
-export interface TransactionFilterLink {
+interface TransactionFilterLink {
   /** `YYYY-MM`. 홈에서 보고 있던 달을 그대로 넘긴다. */
   month?: string;
   memberId?: string;

@@ -47,7 +47,6 @@ export const shinhanDepositCaptureSchema = z.object({
   balanceKrw: z.string().refine(value => /^(?:0|[1-9][0-9]{0,19}|-[1-9][0-9]{0,19})$/u.exec(value)?.[0] === value),
   bankAsOfDate: z.null(),
 }).strict();
-export type ShinhanDepositCapture = z.infer<typeof shinhanDepositCaptureSchema>;
 export const bankObservationSchema = z.union([shinhanLoanCaptureSchema, shinhanDepositCaptureSchema]);
 export type BankObservation = z.infer<typeof bankObservationSchema>;
 export function bankCaptureMatchesSelector(selector: BankSelector, capture: BankObservation): boolean {

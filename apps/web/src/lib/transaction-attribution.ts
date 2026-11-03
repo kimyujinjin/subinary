@@ -36,13 +36,13 @@
  * ------------------------------------------------------------------------- */
 
 /** 이 판단에 필요한 거래의 최소 형태. */
-export interface AttributableTransaction {
+interface AttributableTransaction {
   cardId: string | null;
   memberId: string;
 }
 
 /** 이 판단에 필요한 카드의 최소 형태. */
-export interface AttributableCard {
+interface AttributableCard {
   id: string;
   isShared: boolean;
 }

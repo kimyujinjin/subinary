@@ -28,7 +28,7 @@ export const COLLECTION_GAP_HOURS = 36;
  */
 export const FIRST_EVENT_WAIT_MS = 60_000;
 
-export type DeviceSignalState =
+type DeviceSignalState =
   /** 인증 자체가 한 번도 성공하지 않았다. */
   | "never_authenticated"
   /** 인증은 되는데 문자 트리거가 안 걸린다. */
@@ -38,7 +38,7 @@ export type DeviceSignalState =
   /** 최근까지 잘 받고 있다. */
   | "healthy";
 
-export interface DeviceSignalDiagnosis {
+interface DeviceSignalDiagnosis {
   state: DeviceSignalState;
   /** 관측을 사용자 말로 옮긴 한 줄. */
   title: string;

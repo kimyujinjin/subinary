@@ -15,9 +15,9 @@ const password = z.string().min(1).max(200).refine(value => !/[\u0000-\u001f\u00
 /** 저장 요청의 평문은 입력 경계에서만 사용하고 응답·로그에 복사하지 않는다. */
 export const macBankCredentialSaveSchema = z.object({ householdId: uuid, runnerId: uuid, loginId, password,
   consentVersion: z.literal(1), expectedVersion: credentialVersion.nullable() }).strict();
-export type MacBankCredentialSave = z.infer<typeof macBankCredentialSaveSchema>;
+type MacBankCredentialSave = z.infer<typeof macBankCredentialSaveSchema>;
 export const macBankCredentialDeleteSchema = z.object({ householdId: uuid, runnerId: uuid, expectedVersion: credentialVersion }).strict();
-export type MacBankCredentialDelete = z.infer<typeof macBankCredentialDeleteSchema>;
+type MacBankCredentialDelete = z.infer<typeof macBankCredentialDeleteSchema>;
 /** 저장 상태에는 인증정보나 암호화 envelope를 포함하지 않는다. */
 export const macBankCredentialStateSchema = z.object({ stored: z.boolean(), runnerId: uuid, version: credentialVersion, updatedAt: instant }).strict();
 export type MacBankCredentialState = z.infer<typeof macBankCredentialStateSchema>;
@@ -27,18 +27,18 @@ export const macBankCredentialResultSchema = z.object({ loginId, password, crede
 export type MacBankCredentialResult = z.infer<typeof macBankCredentialResultSchema>;
 export const macBankPairSchema = z.object({ pairId: uuid, secret: z.string().regex(/^[0-9a-f]{64}$/),
   userCode: z.string().regex(/^[0-9a-f]{32}$/), label: z.string().trim().min(1).max(40) }).strict();
-export type MacBankPair = z.infer<typeof macBankPairSchema>;
+type MacBankPair = z.infer<typeof macBankPairSchema>;
 export const macBankApproveSchema = z.object({ householdId: uuid, pairId: uuid, userCode: z.string().regex(/^[0-9a-f]{32}$/),
   grantMode: z.enum(['seven_days', 'until_revoked']).optional() }).strict();
-export type MacBankApprove = z.infer<typeof macBankApproveSchema>;
+type MacBankApprove = z.infer<typeof macBankApproveSchema>;
 export const macBankScopeSchema = z.object({ householdId: uuid }).strict();
 export const macBankJobRequestSchema = z.object({ householdId: uuid, requestId: uuid, consentVersion: z.union([z.literal(1), z.literal(2)]).optional() }).strict();
-export type MacBankJobRequest = z.infer<typeof macBankJobRequestSchema>;
+type MacBankJobRequest = z.infer<typeof macBankJobRequestSchema>;
 export const macBankClaimSchema = z.object({ claimId: uuid }).strict();
-export type MacBankClaim = z.infer<typeof macBankClaimSchema>;
+type MacBankClaim = z.infer<typeof macBankClaimSchema>;
 export const macBankProgressStateSchema = z.enum(['running', 'authentication_required', 'reading', 'logging_out']);
 export const macBankProgressSchema = z.object({ claimId: uuid, state: macBankProgressStateSchema }).strict();
-export type MacBankProgress = z.infer<typeof macBankProgressSchema>;
+type MacBankProgress = z.infer<typeof macBankProgressSchema>;
 export const macBankCompleteSchema = z.object({ claimId: uuid,
   outcome: z.enum(['succeeded', 'authentication_required', 'failed']), errorCode: bankConnectionErrorSchema.optional(),
   logoutConfirmed: z.boolean(), observations: z.array(bankObservationSchema).max(20) }).strict().superRefine((value, context) => {
@@ -49,7 +49,7 @@ export const macBankCompleteSchema = z.object({ claimId: uuid,
   if (value.outcome === 'authentication_required' && value.errorCode !== undefined && value.errorCode !== 'authentication_required')
     context.addIssue({ code: 'custom', message: '인증 대기 상태를 확인해 주세요.' });
 });
-export type MacBankComplete = z.infer<typeof macBankCompleteSchema>;
+type MacBankComplete = z.infer<typeof macBankCompleteSchema>;
 export const macBankJobStateSchema = z.enum(['queued', 'claimed', 'running', 'authentication_required', 'reading', 'logging_out',
   'succeeded', 'failed', 'cancelled', 'expired', 'operation_unknown']);
 export type MacBankJobState = z.infer<typeof macBankJobStateSchema>;
@@ -61,12 +61,12 @@ export const macBankJobSchema = z.object({ id: uuid, householdId: uuid, ownerUse
   claimedAt: instant.nullable(), completedAt: instant.nullable() }).strict();
 export type MacBankJob = z.infer<typeof macBankJobSchema>;
 export const macBankRunnerSchema = z.object({ id: uuid, label: z.string().max(40), online: z.boolean(), lastSeenAt: instant.nullable(), expiresAt: instant.nullable() }).strict();
-export type MacBankRunner = z.infer<typeof macBankRunnerSchema>;
+type MacBankRunner = z.infer<typeof macBankRunnerSchema>;
 export const macBankRunnerStateSchema = z.object({ runner: macBankRunnerSchema.nullable(), job: macBankJobSchema.nullable(), previousResult: previousResult.nullable(),
   credentials: macBankCredentialStateSchema.nullable().default(null), credentialStorageAvailable: z.boolean().default(false) }).strict();
 export type MacBankRunnerState = z.infer<typeof macBankRunnerStateSchema>;
 export const macBankHeartbeatSchema = z.object({ paired: z.boolean(), runnerId: uuid, pairExpiresAt: instant,
   grantExpiresAt: instant.nullable(), job: macBankJobSchema.nullable() }).strict();
 export type MacBankHeartbeat = z.infer<typeof macBankHeartbeatSchema>;
-export const macBankClaimResultSchema = z.object({ job: macBankJobSchema.nullable() }).strict();
-export const macBankPairResultSchema = z.object({ runnerId: uuid, pairExpiresAt: instant }).strict();
+const macBankClaimResultSchema = z.object({ job: macBankJobSchema.nullable() }).strict();
+const macBankPairResultSchema = z.object({ runnerId: uuid, pairExpiresAt: instant }).strict();

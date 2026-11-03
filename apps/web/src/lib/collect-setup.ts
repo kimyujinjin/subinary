@@ -28,7 +28,7 @@
 import type { DevicePlatform } from "@family/contracts";
 
 /** 수집 경로 — 본문을 JSON으로 보내는지, 문자 원문 그대로 보내는지. */
-export type CollectRoute = "json" | "text";
+type CollectRoute = "json" | "text";
 
 /** 사용자가 자동화 앱의 한 칸에 그대로 옮겨 적는 값. */
 export interface SetupEntry {
@@ -38,7 +38,7 @@ export interface SetupEntry {
   note?: string;
 }
 
-export interface CollectSetupPlan {
+interface CollectSetupPlan {
   platform: DevicePlatform;
   /** 안내에 쓰는 자동화 앱 이름. */
   appName: string;
@@ -94,9 +94,6 @@ export const COLLECT_PATH: Readonly<Record<CollectRoute, string>> = {
   text: "/v1/mobile-events/card-sms-text",
 };
 
-/** 연결 테스트(인증만 확인) 경로. */
-export const PING_PATH = "/v1/mobile-events/ping-token";
-
 /**
  * JSON 본문을 만드는 **단일 소스**. 자리표시자를 넣으면 사용자용 템플릿이,
  * 실제 값을 넣으면 예시 요청이 된다 — 테스트가 후자를 계약(zod)으로 검증하므로
@@ -140,7 +137,7 @@ const EVENT_ID_HINT: Readonly<Record<DevicePlatform, string>> = {
     "같은 값이어야 재전송이 거래를 두 배로 만들지 않아요.",
 };
 
-export interface CollectSetupInput {
+interface CollectSetupInput {
   platform: DevicePlatform;
   /** 등록/회전 응답에서 1회만 노출되는 raw collect token. */
   collectToken: string;

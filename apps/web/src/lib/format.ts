@@ -4,7 +4,7 @@
  * 금액은 해당 통화의 minor units 정수, 시각은 Asia/Seoul 기준으로 표시한다
  * (PRD §3.3). 계산은 서버(SQL)에서 끝났다고 가정하며, 여기서는 표시 변환만 담당한다.
  * 개별 카드거래 금액은 통화별 포맷이 필요하므로 {@link formatMoney}(shared 단일
- * 원천)를 사용한다. formatWon/formatKRW는 KRW 전용 집계(월간/예산 등)에만 쓴다.
+ * 원천)를 사용한다. formatWon은 KRW 전용 집계(월간/예산 등)에만 쓴다.
  * ------------------------------------------------------------------------- */
 import { DEFAULT_TIMEZONE, formatMoney } from "@family/shared";
 
@@ -13,13 +13,6 @@ import { DEFAULT_TIMEZONE, formatMoney } from "@family/shared";
  * 개별 카드거래 금액 표시의 단일 진입점(worker·web·mobile 공통 규약).
  */
 export { formatMoney };
-
-/** KRW 통화 포맷터. 소수점 없음(원화는 정수). */
-const krwFormatter = new Intl.NumberFormat("ko-KR", {
-  style: "currency",
-  currency: "KRW",
-  maximumFractionDigits: 0,
-});
 
 /** Asia/Seoul 날짜+시각 포맷터. */
 const dateTimeFormatter = new Intl.DateTimeFormat("ko-KR", {
@@ -46,15 +39,6 @@ const isoMonthFormatter = new Intl.DateTimeFormat("en-CA", {
   year: "numeric",
   month: "2-digit",
 });
-
-/**
- * KRW 정수 금액을 `₩12,500` 형태로 포맷한다.
- * NaN/Infinity 방어를 위해 유한값이 아니면 0으로 취급한다.
- */
-export function formatKRW(amount: number): string {
-  const safe = Number.isFinite(amount) ? Math.round(amount) : 0;
-  return krwFormatter.format(safe);
-}
 
 /** 천단위 구분 숫자 포맷터(원 접미사용). */
 const numberFormatter = new Intl.NumberFormat("ko-KR");

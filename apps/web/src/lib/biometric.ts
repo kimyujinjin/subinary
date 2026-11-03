@@ -55,7 +55,7 @@ export function shouldRetryBiometric(
   return result === "interrupted" && attempt < maxAttempts;
 }
 
-export type BiometricPref = "on" | "off" | null;
+type BiometricPref = "on" | "off" | null;
 
 /** 저장된 생체인식 설정. 웹: 항상 null. */
 export async function getBiometricPref(): Promise<BiometricPref> {

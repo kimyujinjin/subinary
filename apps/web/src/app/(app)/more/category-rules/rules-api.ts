@@ -42,13 +42,6 @@ export function deleteCategoryRule(
   });
 }
 
-/** 미리보기 키에 가맹점·카테고리를 넣는 이유: 다른 대상으로 바꾸면 다른 질문이다. */
-export const recategorizePreviewKey = (
-  householdId: string | null,
-  merchant: string,
-  categoryId: string,
-) => ["recategorize-preview", householdId, merchant, categoryId] as const;
-
 export function fetchRecategorizePreview(
   accessToken: string | null,
   householdId: string,

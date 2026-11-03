@@ -96,15 +96,6 @@ export interface GenerateResponse {
   traceId?: string;
 }
 
-/**
- * 임베딩 요청.
- * `EmbeddingProvider.embed(texts: string[])` 호출 형태의 명시적 요청 표현이다.
- */
-export interface EmbedRequest {
-  /** 임베딩할 텍스트 목록. */
-  texts: string[];
-}
-
 /** 재순위화(rerank) 대상 문서. */
 export interface RerankDocument {
   /** 문서 식별자. */
