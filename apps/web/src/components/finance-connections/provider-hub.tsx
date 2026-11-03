@@ -36,7 +36,7 @@ export function AssetConnectionHub({ householdId, userId, canManage }: { househo
       {CONNECTION_PROVIDERS.map(provider => <Link key={provider.id} href={`/more/connections?provider=${provider.id}`} aria-current={selected === provider.id ? "page" : undefined}
         className={`flex min-h-20 min-w-0 flex-col justify-center rounded-xl border px-4 py-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${selected === provider.id ? "border-primary bg-accent" : "bg-card"}`}>
         <span className="break-words text-sm font-semibold">{provider.label}</span>
-        <span className="mt-1 text-xs text-muted-foreground">{catalogError ? "상태 확인 필요" : !catalog ? "확인 중…" : capability(provider.id)?.state === "available" ? "연결 가능" : provider.id === "shinhan_bank" ? "Codex에서 연동 준비" : provider.id === "kb_bank" ? "실제 조회 검증 필요" : "연결 방식 확인 중"}</span>
+        <span className="mt-1 text-xs text-muted-foreground">{provider.id === "shinhan_bank" ? "Mac의 Codex로 조회" : catalogError ? "상태 확인 필요" : !catalog ? "확인 중…" : capability(provider.id)?.state === "available" ? "연결 가능" : provider.id === "kb_bank" ? "실제 조회 검증 필요" : "연결 방식 확인 중"}</span>
       </Link>)}
     </nav>
     {catalogError ? <div role="alert" className="space-y-3 rounded-xl border p-4"><p className="text-sm">금융사 연결 상태를 확인하지 못했어요. 기존 토스증권 연결은 아래에서 확인할 수 있어요.</p><Button variant="outline" className="min-h-11" onClick={() => setRevision(value => value + 1)}>다시 확인</Button></div> : null}
@@ -45,7 +45,7 @@ export function AssetConnectionHub({ householdId, userId, canManage }: { househo
       : selected === "shinhan_bank" ? <>
         <div><h2 className="text-lg font-semibold">신한은행</h2><p className="mt-1 text-sm text-muted-foreground">{capability("shinhan_bank")?.state === "available"
           ? "선택한 통장의 원화 잔액이나 대출의 원금·만기일을 가져와요."
-          : "본인 신한 통장·대출 연동을 준비해요. 실제 조회·저장은 아직 시작되지 않아요."}</p></div>
+          : "버튼으로 Mac의 Codex에 본인 통장·대출 조회를 요청해요."}</p></div>
         <BankConnectionScreen key={`bank/${userId}/${householdId}/${canManage}`} householdId={householdId} userId={userId} canManage={canManage} />
       </> : <section className="space-y-3 rounded-xl border bg-card p-4" aria-label={`${selected === "kb_bank" ? "국민은행" : "토스뱅크"} 연결 안내`}>
         <h2 className="font-semibold">{selected === "kb_bank" ? "국민은행" : "토스뱅크"}</h2>

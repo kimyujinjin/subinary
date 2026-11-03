@@ -104,8 +104,7 @@ export function BankConnectionScreen({ householdId, userId, canManage, summary =
   return <section className="min-w-0 space-y-4" aria-label="신한은행 자동조회">
     {!data && (busy || owned.isPending) ? <FinanceLoading /> : null}
     {notice ? <p role="alert" className="rounded-xl border p-3 text-sm leading-relaxed">{notice}</p> : null}
-    {data && !data.enabled ? <p role="status" className="rounded-xl bg-muted/60 p-4 text-sm leading-relaxed">신한은행 조회·자동저장은 아직 준비 중이에요. 이 화면에 은행 아이디·비밀번호를 입력하거나 저장하지 않아요.</p> : null}
-    {!summary && data && !data.enabled && canManage ? <BankStartPanel disabled={disabled || owned.isFetching} /> : null}
+    {!summary && canManage ? <BankStartPanel householdId={householdId} userId={userId} disabled={disabled || owned.isFetching} /> : null}
     {data?.enabled && !items.length ? <p className="text-muted-foreground text-sm">연결한 신한 계좌가 없어요.</p> : null}
     {items.map(item => <BankConnectionCard key={`${item.id}/${item.version}`} item={item} canManage={!summary && canManage} disabled={disabled} onRefresh={() => {
       if (item.canRefresh) void write({ kind: "refresh", id: item.id, version: item.version }, signal => authedFetch(token => bankConnectionsApi.refresh(token, item.id,
@@ -117,7 +116,7 @@ export function BankConnectionScreen({ householdId, userId, canManage, summary =
     {!summary ? <Button variant="outline" className="min-h-11 w-full" disabled={busy || owned.isFetching} onClick={() => { void owned.reread(); }}>연결 상태 확인</Button> : null}
     {summary ? <Link href="/more/connections?provider=shinhan_bank" className="inline-flex min-h-11 items-center text-sm font-medium text-primary">신한 연결 관리</Link> : <p className="text-muted-foreground text-xs leading-relaxed">{data?.enabled
       ? "자산·연결 화면을 열면 저장한 로그인 정보로 조회해요. 같은 은행 아이디의 로그인 간격은 최소 15분이에요. 앱을 닫아 둔 동안의 정기 조회는 설정하지 않아요."
-      : "연동 준비와 실제 조회·저장은 별도예요. 이 화면을 열어도 은행에 로그인하거나 잔액을 가져오지 않아요."}</p>}
+      : "조회 시작 버튼을 누르면 연결한 Mac이 요청을 받아요. 은행 추가 인증이 필요하면 진행 상태에 표시해요."}</p>}
   </section>;
 }
 
