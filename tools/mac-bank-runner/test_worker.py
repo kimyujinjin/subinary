@@ -241,9 +241,36 @@ class LoginBrokerTests(unittest.TestCase):
                              for call in self.client.native_call.call_args_list))
 
     def test_reload_must_confirm_fresh_password_form_before_delivery(self):
-        self.client.native_call = Mock(side_effect=['app', self.ax, 'reload'] + ['로딩 중'] * 5)
-        with self.assertRaisesRegex(worker.Stopped, 'unsupported_layout'):
+        self.client.native_call = Mock(side_effect=['app', self.ax, 'reload'] + ['로딩 중'] * 3)
+        with patch.object(worker.time, 'monotonic', side_effect=[0, 1, 4, 8, 13]):
+            with self.assertRaisesRegex(worker.Stopped, 'unsupported_layout'):
+                self.client.login()
+        self.credentials.assert_not_called()
+
+    def test_slow_reload_waits_for_both_fields_within_original_deadline(self):
+        reads = 0
+        original_deadline = self.client.deadline
+        def delayed_reply(code):
+            nonlocal reads
+            if code.startswith('nodeRepl.write(await '):
+                reads += 1
+                if 2 <= reads <= 7:
+                    self.credentials.assert_not_called()
+                    return self.ax.replace('91 텍스트 필드 (settable) 이용자ID', '아직 ID 입력창 로딩 중') if reads == 7 else '로딩 중'
+            return self.native_reply(code)
+        self.client.native_call = Mock(side_effect=delayed_reply)
+        with patch.object(worker.time, 'monotonic', side_effect=range(20)):
             self.client.login()
+        self.assertEqual(reads, 8)
+        self.credentials.assert_called_once()
+        self.assertEqual(self.client.deadline, original_deadline)
+
+    def test_reload_readiness_cannot_extend_overall_phase_deadline(self):
+        self.client.deadline = 3
+        self.client.native_call = Mock(side_effect=['app', self.ax, 'reload', '로딩 중'])
+        with patch.object(worker.time, 'monotonic', side_effect=[0, 1, 3]):
+            with self.assertRaisesRegex(worker.Stopped, 'unsupported_layout'):
+                self.client.login()
         self.credentials.assert_not_called()
 
     def test_claim_journal_contains_attempt_only_and_continue_cannot_redeliver(self):

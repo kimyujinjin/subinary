@@ -275,9 +275,13 @@ class CodexClient:
             raise Stopped('unsupported_layout')
         # 기존 마스킹 값을 읽거나 추정하지 않고 정상 새로고침으로 빈 입력 상태에서 시작한다.
         self.native_call(BANK_AX_JS + 'await __moaBrokerAside.pressKey("super+r"); await __moaBrokerAside.getAXState({emit:false});')
-        for _ in range(5):
+        # 은행 페이지 로딩은 AX 호출 횟수와 무관하다. 기존 전체 기한 안에서 준비 상태를 기다린다.
+        ready_deadline = min(self.deadline, time.monotonic() + 12)
+        while time.monotonic() < ready_deadline:
             current = self.native_call('nodeRepl.write(await __moaBrokerAside.getAXState({emit:false,disableDiffing:true}));')
-            if bank_origin_observed(current) and re.search(r'^\s*\d+ 보안 텍스트 필드 비밀번호\s*$', current, re.M):
+            if (bank_origin_observed(current)
+                and re.search(r'^\s*\d+ 텍스트 필드 \(settable\) 이용자ID(?:, Value:.*)?\s*$', current, re.M)
+                and re.search(r'^\s*\d+ 보안 텍스트 필드 비밀번호\s*$', current, re.M)):
                 break
         else:
             raise Stopped('unsupported_layout')
