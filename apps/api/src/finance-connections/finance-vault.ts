@@ -13,7 +13,7 @@ export interface VaultEnvelope {
 }
 export interface VaultContext {
   ownerUserId: string;
-  provider: 'toss_securities';
+  provider: 'toss_securities' | 'shinhan_bank';
   connectionId: string;
   purpose: 'credentials' | 'token' | 'accounts';
 }
@@ -22,12 +22,14 @@ const MAX_PLAINTEXT_BYTES = 256 * 1024;
 const MAX_CIPHERTEXT_BASE64 = Math.ceil(MAX_PLAINTEXT_BYTES / 3) * 4;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PURPOSES = new Set(['credentials', 'token', 'accounts']);
+const PROVIDERS = new Set(['toss_securities', 'shinhan_bank']);
 const fail = () => new Error('Finance vault operation failed');
 
 function additionalData(context: VaultContext, version: number): Buffer {
   if (!context || typeof context.ownerUserId !== 'string' || context.ownerUserId.length !== 36 || !UUID.test(context.ownerUserId)
     || typeof context.connectionId !== 'string' || context.connectionId.length !== 36 || !UUID.test(context.connectionId)
-    || context.provider !== 'toss_securities' || !PURPOSES.has(context.purpose)) throw fail();
+    || !PROVIDERS.has(context.provider) || !PURPOSES.has(context.purpose)
+    || (context.provider === 'shinhan_bank' && context.purpose !== 'credentials')) throw fail();
   return Buffer.from(JSON.stringify(['family.finance-vault', 1, context.ownerUserId.toLowerCase(),
     context.provider, context.connectionId.toLowerCase(), context.purpose, version]), 'utf8');
 }

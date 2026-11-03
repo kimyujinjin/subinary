@@ -45,7 +45,7 @@ function HomeView() {
             <h2 className="text-sm font-semibold">가족과 공유한 자산</h2>
             <p className={`mt-6 text-sm ${assets.isError ? "text-finance-hero-foreground" : "text-finance-hero-muted"}`} role={assets.isError ? "alert" : "status"}>{assets.isError ? "자산을 불러오지 못했어요." : "자산을 불러오는 중이에요."}</p>
           </div>
-        ) : <ManualAssetsSummary summary={assets.data.summary} scope={scope} hasImportedBalance={assets.data.loanItems.some((item) => item.includedInTotals)} sourceLabel={assets.data.loanItems.some((item) => item.includedInTotals) ? "직접 입력·신한 대출 파일" : "직접 입력"} />}
+        ) : <ManualAssetsSummary summary={assets.data.summary} scope={scope} hasImportedBalance={assets.data.loanItems.some((item) => item.includedInTotals)} sourceLabel={assets.data.loanItems.some((item) => item.includedInTotals) ? "직접 입력·이전 대출 기록" : "직접 입력"} />}
         {assets.data && !assets.isError && assets.data.unresolvedLoans > 0 ? (
           <p role="status" className="text-finance-hero-muted px-5 pb-4 text-xs leading-relaxed sm:px-6">확인이 필요한 대출 {assets.data.unresolvedLoans}건은 합계에서 제외했어요.</p>
         ) : null}

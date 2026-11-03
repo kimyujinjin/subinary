@@ -59,7 +59,7 @@ interface MoreGroup {
 
 const GROUPS: ReadonlyArray<MoreGroup> = [
   { key: "household", title: "가족 · 연결", items: [
-    { href: "/more/connections", icon: Link2, title: "연결 관리", description: "토스증권 계좌 조회" },
+    { href: "/more/connections", icon: Link2, title: "자동 연결", description: "신한·토스증권·토스뱅크·국민은행" },
     { href: "/cards", icon: CreditCard, title: "결제 카드" },
     { href: "/devices", icon: Smartphone, title: "문자 연동", description: "카드 문자를 보내는 휴대폰" },
     { href: "/household", icon: Users, title: "가족 관리" },

@@ -477,6 +477,20 @@
       "when": 1793577600000,
       "tag": "0067_finance_connections",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1793577600001,
+      "tag": "0068_bank_connections",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1793664000000,
+      "tag": "0069_bank_deposit_balances",
+      "breakpoints": true
     }
   ]
 }

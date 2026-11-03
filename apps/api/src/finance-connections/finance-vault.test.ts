@@ -14,6 +14,17 @@ function failed(operation: () => unknown): void {
 }
 
 describe('dedicated finance vault', () => {
+  it('bank passwords are encrypted with a separate provider binding from securities', () => {
+    const instance = vault();
+    const bankContext: VaultContext = { ...context, provider: 'shinhan_bank' };
+    const value = { loginId: 'synthetic-bank-id', password: 'SYNTHETIC_BANK_SECRET' };
+    const envelope = instance.encrypt(value, bankContext);
+    expect(instance.decrypt(envelope, bankContext)).toEqual(value);
+    expect(JSON.stringify(envelope)).not.toContain(value.password);
+    failed(() => instance.decrypt(envelope, context));
+    failed(() => instance.decrypt(instance.encrypt(value, context), bankContext));
+    failed(() => instance.encrypt(value, { ...bankContext, purpose: 'token' }));
+  });
   it('is disabled without finance configuration, even if an unrelated device key exists', () => {
     const seen: string[] = [];
     const instance = new FinanceVault({ get: (name: string) => {

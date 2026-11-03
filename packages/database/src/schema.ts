@@ -4898,3 +4898,52 @@ export const financeConnectionSnapshots = pgTable('finance_connection_snapshots'
   check('finance_connection_snapshots_state_check', sql`(${table.state} = 'pending' AND ${table.payload} IS NULL AND ${table.completedAt} IS NULL) OR (${table.state} = 'succeeded' AND ${table.payload} IS NOT NULL AND ${table.completedAt} IS NOT NULL AND ${table.errorCode} IS NULL) OR (${table.state} = 'failed' AND ${table.payload} IS NULL AND ${table.completedAt} IS NOT NULL)`),
   check('finance_connection_snapshots_version_check', sql`${table.connectionVersion} > 0`),
 ]);
+
+/** Bank grants are separate from securities, so old API rollback cannot misinterpret bank payloads. */
+export const bankConnections = pgTable('bank_connections', {
+  id: uuid('id').primaryKey(),
+  householdId: uuid('household_id').notNull().references(() => households.id),
+  ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
+  memberId: uuid('member_id').notNull().references(() => householdMembers.id),
+  memberJoinedAt: timestamp('member_joined_at', { withTimezone: true }).notNull(),
+  provider: text('provider').$type<'shinhan_bank'>().notNull(),
+  loginFingerprint: text('login_fingerprint').notNull(),
+  accountLast4: text('account_last4').notNull(),
+  accountType: text('account_type').$type<'loan' | 'deposit'>().notNull().default('loan'),
+  loanType: text('loan_type').$type<'interim' | 'jeonse'>(),
+  credentials: jsonb('credentials').$type<FinanceSecretEnvelope>(),
+  consentedAt: timestamp('consented_at', { withTimezone: true }).notNull().defaultNow(),
+  consentVersion: integer('consent_version').notNull().default(1),
+  refreshOnOpen: boolean('refresh_on_open').notNull().default(true),
+  status: text('status').$type<'stored' | 'refreshing' | 'ready' | 'error' | 'reauth_required' | 'disconnected'>().notNull().default('stored'),
+  version: integer('version').notNull().default(1),
+  operationId: uuid('operation_id'), operationStartedAt: timestamp('operation_started_at', { withTimezone: true }),
+  lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }), lastSuccessAt: timestamp('last_success_at', { withTimezone: true }),
+  lastSnapshotId: uuid('last_snapshot_id'), selectedFingerprint: text('selected_fingerprint'), errorCode: text('error_code'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  disconnectedAt: timestamp('disconnected_at', { withTimezone: true }),
+}, (table) => [
+  unique('bank_connections_scope_unique').on(table.id, table.householdId, table.ownerUserId),
+  uniqueIndex('bank_connections_active_selector').on(table.ownerUserId, table.householdId, table.provider, table.accountType, table.accountLast4, sql`coalesce(${table.loanType}, '')`).where(sql`${table.disconnectedAt} IS NULL`),
+  index('bank_connections_login_operation').on(table.loginFingerprint, table.operationId),
+  check('bank_connections_provider_check', sql`${table.provider} = 'shinhan_bank'`),
+  check('bank_connections_selector_check', sql`${table.accountLast4} ~ '^[0-9]{4}$' AND ((${table.accountType} = 'loan' AND ${table.loanType} IS NOT NULL AND ${table.loanType} IN ('interim','jeonse')) OR (${table.accountType} = 'deposit' AND ${table.loanType} IS NULL))`),
+  check('bank_connections_account_version_check', sql`${table.version} > 0 AND ((${table.accountType} = 'loan' AND ${table.consentVersion} IN (1,2)) OR (${table.accountType} = 'deposit' AND ${table.consentVersion} = 2))`),
+  check('bank_connections_status_check', sql`${table.status} IN ('stored','refreshing','ready','error','reauth_required','disconnected')`),
+  check('bank_connections_fingerprint_check', sql`${table.loginFingerprint} ~ '^[0-9a-f]{64}$' AND (${table.selectedFingerprint} IS NULL OR ${table.selectedFingerprint} ~ '^[0-9a-f]{64}$')`),
+  check('bank_connections_disconnected_check', sql`${table.disconnectedAt} IS NULL OR (${table.status} = 'disconnected' AND ${table.credentials} IS NULL AND ${table.operationId} IS NULL AND ${table.refreshOnOpen} = false)`),
+]);
+
+export const bankConnectionSnapshots = pgTable('bank_connection_snapshots', {
+  id: uuid('id').primaryKey(), connectionId: uuid('connection_id').notNull(),
+  householdId: uuid('household_id').notNull(), ownerUserId: uuid('owner_user_id').notNull(),
+  connectionVersion: integer('connection_version').notNull(),
+  state: text('state').$type<'pending' | 'succeeded' | 'failed'>().notNull().default('pending'),
+  payload: jsonb('payload').$type<Record<string, unknown>>(), errorCode: text('error_code'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(), completedAt: timestamp('completed_at', { withTimezone: true }),
+}, (table) => [
+  foreignKey({ name: 'bank_snapshots_scope_fk', columns: [table.connectionId, table.householdId, table.ownerUserId], foreignColumns: [bankConnections.id, bankConnections.householdId, bankConnections.ownerUserId] }),
+  check('bank_snapshots_state_check', sql`(${table.state} = 'pending' AND ${table.payload} IS NULL AND ${table.completedAt} IS NULL) OR (${table.state} = 'succeeded' AND ${table.payload} IS NOT NULL AND ${table.completedAt} IS NOT NULL AND ${table.errorCode} IS NULL) OR (${table.state} = 'failed' AND ${table.payload} IS NULL AND ${table.completedAt} IS NOT NULL)`),
+  check('bank_snapshots_version_check', sql`${table.connectionVersion} > 0`),
+]);

@@ -13,7 +13,7 @@ import { loanInclusionLabel } from "./loan-rows";
 import { LoanRecordEditor } from "./record-editor";
 import { LoanCaptureReview } from "./review-dialog";
 
-export function LoanImportScreen({ householdId, userId, canCreate }: { householdId: string; userId: string; canCreate: boolean }) {
+export function LoanImportScreen({ householdId, userId, canCreate, recordsOnly = false }: { householdId: string; userId: string; canCreate: boolean; recordsOnly?: boolean }) {
   const { authedFetch } = useAuth();
   const records = useOwnedLoanImports();
   const [preview, setPreview] = useState<LoanImportPreviewResponse | null>(null);
@@ -21,7 +21,7 @@ export function LoanImportScreen({ householdId, userId, canCreate }: { household
   const [reading, setReading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [showRecords, setShowRecords] = useState(false);
+  const [showRecords, setShowRecords] = useState(recordsOnly);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const session = useRef(createLoanTaskSession());
   useEffect(() => () => { session.current.invalidate(); if (fileInput.current) fileInput.current.value = ""; }, []);
@@ -50,8 +50,8 @@ export function LoanImportScreen({ householdId, userId, canCreate }: { household
   };
   return (
     <div className="min-w-0 space-y-5">
-      <header className="pl-2.5"><PageBackHeader title="신한 대출 가져오기" subtitle="전세·중도금 대출의 남은 원금과 만기일을 저장해요." backHref="/assets" /></header>
-      <section className="bg-card grid min-w-0 grid-cols-1 gap-4 rounded-2xl border p-4 sm:p-5">
+      <header className="pl-2.5"><PageBackHeader title={recordsOnly ? "이전에 저장한 대출" : "신한 대출 가져오기"} subtitle={recordsOnly ? "이전 기록의 이름·공유 범위·합계 반영 방법을 관리해요." : "전세·중도금 대출의 남은 원금과 만기일을 저장해요."} backHref="/assets" /></header>
+      {!recordsOnly ? <section className="bg-card grid min-w-0 grid-cols-1 gap-4 rounded-2xl border p-4 sm:p-5">
         <div>
           <h2 className="font-semibold">대출 내역 파일</h2>
           <ol className="text-muted-foreground mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs" aria-label="가져오기 순서">
@@ -77,8 +77,8 @@ export function LoanImportScreen({ householdId, userId, canCreate }: { household
         </details>
         {!canCreate ? <p role="status" className="text-sm">현재 가족 권한으로는 가져온 대출을 추가하거나 수정할 수 없어요.</p> : null}
         {reading ? <div className="flex flex-wrap items-center gap-3"><p role="status" className="text-sm">확인 파일을 읽고 있어요.</p><Button variant="outline" onClick={() => { session.current.invalidate(); setReading(false); setError(null); }}>불러오기 취소</Button></div> : null}
-      </section>
-      {error ? <section role="alert" className="space-y-3 rounded-xl border p-4">
+      </section> : null}
+      {!recordsOnly && error ? <section role="alert" className="space-y-3 rounded-xl border p-4">
         <p className="text-destructive text-sm leading-relaxed">{error}</p>
         {canCreate ? <Button variant="outline" className="min-h-11 w-full" disabled={reading || Boolean(preview || editing)} onClick={() => fileInput.current?.click()}>파일 다시 선택</Button> : null}
       </section> : null}

@@ -1,6 +1,6 @@
 "use client";
 
-import { Building2, ChevronRight, Link2, PenLine, X } from "lucide-react";
+import { ChevronRight, Link2, PenLine, X } from "lucide-react";
 import Link from "next/link";
 
 /** 추가 경로만 선택하며 금융 연결이나 기록 저장은 각 기존 화면에서 진행한다. */
@@ -37,19 +37,11 @@ export function AssetAddChoices({ onManual, onClose }: {
           </span>
           <ChevronRight className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
         </button>
-        <Link href="/assets/loan-import" className={rowClass} aria-label="신한 대출 파일 가져오기">
-          <Building2 className="text-primary size-5 shrink-0" aria-hidden="true" />
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold">신한 대출 파일 가져오기</span>
-            <span className="text-muted-foreground mt-1 block text-xs leading-relaxed">파일로 남은 원금 확인</span>
-          </span>
-          <ChevronRight className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
-        </Link>
-        <Link href="/more/connections" className={rowClass} aria-label="토스증권 연결">
+        <Link href="/more/connections" className={rowClass} aria-label="은행·증권 자동 연결">
           <Link2 className="text-primary size-5 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold">토스증권 연결</span>
-            <span className="text-muted-foreground mt-1 block text-xs leading-relaxed">계좌 조회 · 가족 자산 합계와 별도</span>
+            <span className="block text-sm font-semibold">은행·증권 자동 연결</span>
+            <span className="text-muted-foreground mt-1 block text-xs leading-relaxed">신한 · 토스증권 · 토스뱅크 · 국민은행</span>
           </span>
           <ChevronRight className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
         </Link>

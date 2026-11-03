@@ -17,6 +17,7 @@ import { manualFinanceApi, useManualAssets } from "@/lib/manual-finance-client";
 import { useFinancialOverview } from "@/lib/loan-import-client";
 import { LoanOverviewRow } from "@/components/loan-import/loan-rows";
 import { ConnectionScreen } from "@/components/finance-connections/connection-screen";
+import { BankConnectionScreen } from "@/components/finance-connections/bank-screen";
 import {
   ASSET_LABELS,
   ASSET_VALUE_LABELS,
@@ -198,7 +199,7 @@ function ScopedAssets({
               summary={overview.data.summary}
               scope={scope}
               hasImportedBalance={overview.data.loanItems.some((item) => item.includedInTotals)}
-              sourceLabel={overview.data.loanItems.some((item) => item.includedInTotals) ? "직접 입력·신한 대출 파일" : "직접 입력"}
+              sourceLabel={overview.data.loanItems.some((item) => item.includedInTotals) ? "직접 입력·이전 대출 기록" : "직접 입력"}
             />
           ) : null}
           {overview.data.unresolvedLoans > 0 ? (
@@ -322,17 +323,19 @@ function ScopedAssets({
       ) : null}
       {scope === "household" && user ? <ConnectionScreen key={`${user.id}/${householdId}/${canCreate}`}
         householdId={householdId} userId={user.id} canManage={canCreate} presentation="asset-summary" /> : null}
+      {scope === "household" && user ? <BankConnectionScreen key={`bank/${user.id}/${householdId}/${canCreate}`}
+        householdId={householdId} userId={user.id} canManage={canCreate} summary /> : null}
       <section className="space-y-3" aria-label="자산 관리">
       <h2 className="text-lg font-semibold">자산 관리</h2>
       <div className="finance-panel divide-y divide-border/60 overflow-hidden px-4 sm:px-5">
       <Link
-        href="/assets/loan-import"
+        href="/more/connections"
         className="hover:bg-muted/50 flex min-h-20 items-center gap-3 py-4 text-sm font-medium"
       >
         <Building2 className="text-primary size-5 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">
-          <span className="block">신한 대출 파일 가져오기</span>
-          <span className="text-muted-foreground mt-1 block text-xs font-normal">전세·중도금 대출 기록 관리</span>
+          <span className="block">은행·증권 자동 연결</span>
+          <span className="text-muted-foreground mt-1 block text-xs font-normal">신한 · 토스증권 · 토스뱅크 · 국민은행</span>
         </span>
         <ChevronRight className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
       </Link>
@@ -360,7 +363,7 @@ function ScopedAssets({
       <details className="text-muted-foreground px-1 text-xs leading-relaxed">
         <summary className="min-h-11 cursor-pointer py-3">자산 합계 기준</summary>
         <p className="pb-3">직접 입력한 금액과 합계 반영을 선택한 신한 대출을 합산해요. 기존 대출과 연결한 경우 가져온 원금만 반영해요. 참고용·중복·연결 확인이 필요한 대출과 카드 한도·주택 계약금액·적금 만기 예상액은 제외해요.</p>
-        <p className="pb-3">가져온 대출은 브라우저에서 확인한 시점의 남은 원금이에요. 은행의 별도 금액 기준일은 제공되지 않아요. 신한 대출 갱신에는 새 파일이 필요해요. 토스증권 연결 값은 별도로 표시하며 이 합계에 넣거나 원화로 환산하지 않아요.</p>
+        <p className="pb-3">이전에 가져온 대출은 브라우저에서 확인했던 시점의 남은 원금이에요. 은행의 별도 금액 기준일은 제공되지 않아요. 은행·증권 자동 연결 내역은 따로 표시하며 기존 합계에 더하거나 원화로 환산하지 않아요.</p>
       </details>
       {editor && !editorIsUnavailable && (editor !== "new" || canCreate) ? (
         <AssetEditor

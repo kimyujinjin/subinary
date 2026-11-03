@@ -1,0 +1,10 @@
+{
+  "name": "@fma/bank-web-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Explicitly selected Shinhan loan, ordinary bank login UI, no financial transactions",
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "dependencies": { "playwright-core": "1.62.0" },
+  "engines": { "node": ">=22" }
+}
