@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import Link from "next/link";
 import type { BankConnection, BankConnectionList, BankConnectionResult } from "@family/contracts";
 import { Button } from "@/components/ui/button";
@@ -90,6 +90,11 @@ export function BankConnectionScreen({ householdId, userId, canManage, summary =
       });
     } finally { Object.assign(body, { loginId: "", password: "" }); input.loginId = ""; input.password = ""; }
   }
+  function openRegistration(event: MouseEvent<HTMLButtonElement>): void {
+    // 등록 완료로 폼이 닫힌 직후 같은 더블 클릭의 두 번째 입력을 받지 않는다.
+    if (event.detail > 1 || session.pending || pending.current || !canManage) return;
+    setForm(true);
+  }
   const items = data?.items.filter(item => item.status !== "disconnected") ?? [];
   const disabled = busy || !!uncertain;
   // Capability setup belongs in connection management; don't fill assets with
@@ -106,7 +111,7 @@ export function BankConnectionScreen({ householdId, userId, canManage, summary =
     }} onDisconnect={() => { void write({ kind: "disconnect", id: item.id, version: item.version }, signal => authedFetch(token => bankConnectionsApi.disconnect(token, item.id,
       { householdId, expectedVersion: item.version }, userId, signal))); }} />)}
     {!summary && form && data?.enabled && canManage ? <BankRegistrationForm busy={busy} onSubmit={register} onClose={() => setForm(false)} /> : null}
-    {!summary && data?.enabled && canManage && !form ? <Button className="min-h-12 w-full" disabled={disabled} onClick={() => setForm(true)}>신한 계좌 연결</Button> : null}
+    {!summary && data?.enabled && canManage && !form ? <Button className="min-h-12 w-full" disabled={disabled} onClick={openRegistration}>신한 계좌 연결</Button> : null}
     {!summary ? <Button variant="outline" className="min-h-11 w-full" disabled={busy || owned.isFetching} onClick={() => { void owned.reread(); }}>연결 상태 확인</Button> : null}
     {summary ? <Link href="/more/connections?provider=shinhan_bank" className="inline-flex min-h-11 items-center text-sm font-medium text-primary">신한 연결 관리</Link> : <p className="text-muted-foreground text-xs leading-relaxed">자산·연결 화면을 열면 저장한 로그인 정보로 조회해요. 같은 은행 아이디의 로그인 간격은 최소 15분이에요. 앱을 닫아 둔 동안의 정기 조회는 설정하지 않아요.</p>}
   </section>;
