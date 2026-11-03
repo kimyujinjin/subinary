@@ -8,9 +8,9 @@ export const PRIMARY_TABS = [
 ] as const satisfies ReadonlyArray<{ key: TabKey; href: string; label: string }>;
 
 /** Existing task and management URLs remain available under 전체. */
-export const TODO_PATHS: ReadonlyArray<string> = ["/todo", "/declines"];
-export const ACCOUNT_PATHS: ReadonlyArray<string> = [
-  "/more", "/play", "/household", "/devices", "/categories", "/ai-operations",
+const TODO_PATHS: ReadonlyArray<string> = ["/todo", "/declines"];
+const ACCOUNT_PATHS: ReadonlyArray<string> = [
+  "/more", "/household", "/devices", "/categories", "/ai-operations",
 ];
 
 /** Only these three destinations use Android's double-back exit behavior. */

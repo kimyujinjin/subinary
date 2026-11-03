@@ -371,21 +371,6 @@ export type {
 } from './transaction.js';
 
 export {
-  playAppKeySchema,
-  playStateKeySchema,
-  playStateSaveRequestSchema,
-  playStateSchema,
-  playStateListResponseSchema,
-  playStateDeleteResponseSchema,
-} from './play.js';
-export type {
-  PlayState,
-  PlayStateSaveRequest,
-  PlayStateListResponse,
-  PlayStateDeleteResponse,
-} from './play.js';
-
-export {
   merchantSummarySchema,
   merchantListResponseSchema,
   merchantAliasCreateRequestSchema,

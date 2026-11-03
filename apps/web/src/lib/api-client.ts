@@ -58,10 +58,6 @@ import type {
   MerchantAliasCreateResponse,
   MerchantAliasDeleteResponse,
   MerchantIdentityRejectRequest,
-  PlayState,
-  PlayStateDeleteResponse,
-  PlayStateListResponse,
-  PlayStateSaveRequest,
   MerchantIdentityRejectResponse,
   MerchantListResponse,
   MonthlyAnalytics,
@@ -342,7 +338,7 @@ function buildQuery(
 // --- 요청 파라미터 타입 -----------------------------------------------------
 
 /** analytics.* 공통 쿼리(월 또는 from/to 범위). */
-export interface AnalyticsParams {
+interface AnalyticsParams {
   householdId: string;
   month?: string;
   from?: string;
@@ -377,14 +373,14 @@ export interface TransactionListParams {
 }
 
 /** transactions.summary(검증용 월 요약) 쿼리. */
-export interface TransactionSummaryParams {
+interface TransactionSummaryParams {
   householdId: string;
   from?: string;
   to?: string;
 }
 
 /** budgets.list 쿼리(현재월 사용률 기준). */
-export interface BudgetListParams {
+interface BudgetListParams {
   householdId: string;
   month?: string;
 }
@@ -774,39 +770,6 @@ export const api = {
       apiFetch<TransactionSummaryResponse>(
         `/v1/transactions/summary${buildQuery({ ...params })}`,
         { accessToken },
-      ),
-  },
-
-  /**
-   * 플레이그라운드 미니앱 상태. 경로에 미니앱 키가 들어가므로 새 게임을 붙일 때
-   * 클라이언트도 서버도 고치지 않는다.
-   */
-  play: {
-    list: (accessToken: AccessToken, householdId: string, appKey: string) =>
-      apiFetch<PlayStateListResponse>(
-        `/v1/play/${encodeURIComponent(appKey)}${buildQuery({ householdId })}`,
-        { accessToken },
-      ),
-    save: (
-      accessToken: AccessToken,
-      appKey: string,
-      stateKey: string,
-      body: PlayStateSaveRequest,
-    ) =>
-      apiFetch<PlayState>(
-        `/v1/play/${encodeURIComponent(appKey)}/${encodeURIComponent(stateKey)}`,
-        { method: "PUT", body, accessToken },
-      ),
-    remove: (
-      accessToken: AccessToken,
-      householdId: string,
-      appKey: string,
-      stateKey: string,
-    ) =>
-      apiFetch<PlayStateDeleteResponse>(
-        `/v1/play/${encodeURIComponent(appKey)}/${encodeURIComponent(stateKey)}` +
-          buildQuery({ householdId }),
-        { method: "DELETE", accessToken },
       ),
   },
 

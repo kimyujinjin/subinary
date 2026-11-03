@@ -1,6 +1,0 @@
-[gd_scene load_steps=2 format=3]
-
-[ext_resource type="Script" path="res://tools/input_path_runner.gd" id="1_ip"]
-
-[node name="InputPathRunner" type="Node"]
-script = ExtResource("1_ip")
