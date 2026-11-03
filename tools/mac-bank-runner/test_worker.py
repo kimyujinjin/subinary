@@ -249,5 +249,54 @@ class LoginBrokerTests(unittest.TestCase):
             self.assertTrue(worker.read_private(state_path)['active']['loginAttempted'])
 
 
+
+class InvocationConfigTests(unittest.TestCase):
+    """전역 설정을 쓰지 않고 해당 App Server의 불필요한 MCP 두 개만 비활성화한다."""
+    def test_two_mcp_overrides_apply_only_to_the_owned_child_command(self):
+        process = Mock()
+        client = Mock(complete=True, normal=True, native_count=1, observations=[],
+                      final={'status': 'authentication_required'}, thread_id=None, turn_id=None)
+        replies = {
+            'initialize': {},
+            'account/read': {'account': {'type': 'chatgpt'}},
+            'model/list': {'data': [{'model': 'gpt-6-astra'}]},
+            'thread/start': {'modelProvider': 'openai', 'thread': {'id': 'synthetic-thread', 'ephemeral': True}},
+            'turn/start': {'turn': {'id': 'synthetic-turn'}},
+        }
+        client.request.side_effect = lambda method, params: replies[method]
+        with patch.object(worker.subprocess, 'Popen', return_value=process) as start, \
+                patch.object(worker, 'CodexClient', return_value=client), \
+                patch('builtins.open', side_effect=AssertionError('global_config_access_forbidden')), \
+                patch.object(worker.os, 'open', side_effect=AssertionError('global_config_access_forbidden')), \
+                patch.object(Path, 'open', side_effect=AssertionError('global_config_access_forbidden')), \
+                patch.object(Path, 'write_text', side_effect=AssertionError('global_config_write_forbidden')), \
+                patch.object(Path, 'write_bytes', side_effect=AssertionError('global_config_write_forbidden')):
+            result = worker.codex_phase('/synthetic/codex', Path('/synthetic/owned'), Mock())
+        self.assertEqual(result['outcome'], 'authentication_required')
+        self.assertEqual(start.call_args.args[0], [
+            '/synthetic/codex', '-c', 'features.shell_tool=false', '-c', 'web_search="disabled"',
+            '-c', 'mcp_servers.node_repl.enabled=false', '-c', 'mcp_servers.family-finance.enabled=false',
+            'app-server', '--listen', 'stdio://'])
+        self.assertNotIn('env', start.call_args.kwargs)
+        self.assertEqual(start.call_args.kwargs['stderr'], subprocess.DEVNULL)
+        thread = next(call.args[1] for call in client.request.call_args_list if call.args[0] == 'thread/start')
+        self.assertTrue(thread['ephemeral'])
+        self.assertEqual(thread['model'], 'gpt-6-astra')
+        self.assertEqual(thread['sandbox'], 'read-only')
+        self.assertEqual([tool['name'] for tool in thread['dynamicTools']], ['moa_capture', 'moa_login'])
+
+    def test_native_cua_server_aliases_remain_allowed(self):
+        for server in ['cua_repl', 'mcp__cua_repl']:
+            with self.subTest(server=server):
+                client = worker.CodexClient(Mock(), Mock())
+                client.thread_id = 'synthetic-thread'; client.turn_id = 'synthetic-turn'
+                item = {'id': 'native-1', 'type': 'mcpToolCall', 'server': server, 'tool': 'js'}
+                def event(method, value):
+                    return {'method': method, 'params': {'threadId': 'synthetic-thread', 'turnId': 'synthetic-turn', 'item': value}}
+                client.observe(event('item/started', item))
+                client.observe(event('item/completed', dict(item, status='completed', result={'content': []})))
+                self.assertEqual(client.native_count, 1)
+                self.assertEqual(client.native_server, server)
+
 if __name__ == '__main__':
     unittest.main()

@@ -36,6 +36,28 @@ Mac 로그인 시 `cloud.subinary.moa-bank-runner` LaunchAgent가 시작된다. 
 
 Mac 실행은 기존 `validation_resources.py`의 해시가 일치하는 API 프로필을 사용한다. 1,536MiB RSS 검사·180초 단계 제한·전역 직렬 잠금·소유 프로세스 정리를 유지한다. 각 Codex 단계 자체는 145초 이내로 제한한다. 원본 정책이나 배포의 메모리·디스크 임계값을 변경하지 않는다.
 
+### 실행별 MCP 최소 구성
+
+Mac 실행기는 해당 App Server 자식의 CLI 인수에만 다음 두 설정을 추가한다. 전역 `config.toml`을 쓰거나 로그인 설정을 바꾸지 않는다. `node_repl`과 `family-finance` MCP는 이 은행 조회 경로에서 사용하지 않으며, native `cua_repl/js`와 `moa_login`·`moa_capture`는 유지한다.
+
+```text
+-c mcp_servers.node_repl.enabled=false
+-c mcp_servers.family-finance.enabled=false
+```
+
+설정 방식은 공식 문서의 [실행별 CLI 설정](https://learn.chatgpt.com/docs/developer-commands?surface=cli)과 [MCP enabled 설정](https://learn.chatgpt.com/docs/extend/mcp)에 따른다. 도구 노출 필터만 바꾸는 대신 사용하지 않는 두 서버를 이 실행에서 비활성화한다. 전체 Apps나 플러그인을 일괄 비활성화하지 않는다.
+
+비금융 합성 검증은 같은 native CUA 세션의 직접 RPC와 dynamic tool 처리 중 중첩 RPC, 모델 응답에 합성 비밀값이 없는지를 확인했다. 아래 수치는 공개 자원 영수증에서 읽은 관측값이며 실제 은행 로그인·조회 성공의 증거가 아니다.
+
+| 비금융 구성 | 최대 관측 프로세스 트리 RSS | 관측 소유 PID 수 | 영수증 |
+| --- | ---: | ---: | --- |
+| 두 설정 추가 전 | 1,115.72MiB | 13 | `resources-native-broker-protocol-43b4c0bc2ef4.json` |
+| 두 설정만 추가 | 893.39MiB | 11 | `resources-native-broker-protocol-74c4536d4b98.json` |
+
+첫 실제 요청은 트리 RSS 약 999.64MiB에서 시스템 메모리 압력이 비정상으로 올라 원본 정책이 중단했고 소유 프로세스 정리를 확인했다. 1,536MiB RSS 한도를 넘어서 중단된 사례는 아니다. 이 영수증에는 개별 프로세스 이름·RSS가 없어 특정 MCP를 원인으로 확정할 수 없다. 합성 검증 두 번의 RSS 차이 역시 다른 호스트 부하나 표본 시점의 영향을 배제하지 않으며, 실제 은행 실행의 압력 정상 상태를 보장하지 않는다.
+
+압력 임계값·검사 간격·최소 조회 간격 15분·claim 종료 상태는 유지한다. 실패하거나 결과가 불명확한 claim을 이 설정 변경으로 다시 실행하거나 재로그인하지 않는다. 새 요청은 기존 작업의 종료와 간격 조건을 확인한 뒤 사용자의 새 버튼 클릭으로만 생성한다.
+
 ## 독립 스키마
 
 `tools/mac-bank-runner/schema.sql`만 별도로 검토·적용한다. `mac_bank_runner_schema_migrations`에 모듈 버전과 SQL SHA-256을 같은 트랜잭션에서 기록한다. 기존 은행 마이그레이션 0068·0069 및 main Drizzle journal은 변경하지 않는다. main journal의 마지막 시간을 앞당겨 미적용 마이그레이션을 건너뛰지 않도록 `__drizzle_migrations`에 이 모듈을 기록하지 않는다.

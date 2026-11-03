@@ -391,6 +391,7 @@ def codex_phase(codex: str, cwd: Path, check_active: Callable[[], None],
                 credentials: Callable[[], dict[str, object]] | None = None) -> dict[str, object]:
     """요청마다 짧은 임시 대화에서 실행하며 기존 ChatGPT 인증만 사용한다."""
     process = subprocess.Popen([codex, '-c', 'features.shell_tool=false', '-c', 'web_search="disabled"',
+        '-c', 'mcp_servers.node_repl.enabled=false', '-c', 'mcp_servers.family-finance.enabled=false',
         'app-server', '--listen', 'stdio://'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, cwd=cwd)
     client = CodexClient(process, check_active, credentials)
