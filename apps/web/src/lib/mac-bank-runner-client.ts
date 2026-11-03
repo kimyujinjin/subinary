@@ -1,5 +1,6 @@
 "use client";
-import { macBankJobSchema, macBankRunnerStateSchema, type MacBankJob } from "@family/contracts";
+import { macBankJobSchema, macBankRunnerStateSchema, macBankCredentialStateSchema, macBankCredentialSaveSchema,
+  macBankCredentialDeleteSchema, MAC_BANK_RUNNER_CONSENT_VERSION, type MacBankJob } from "@family/contracts";
 import { apiFetch, type AccessToken } from "./api-client";
 const base = "/v1/mac-bank-runner";
 
@@ -7,8 +8,26 @@ const base = "/v1/mac-bank-runner";
 function own(job: MacBankJob | null, householdId: string, userId: string, id?: string): void {
   if (job && (job.householdId !== householdId || job.ownerUserId !== userId || (id && job.id !== id))) throw new Error("실행 요청의 소유자를 확인하지 못했어요.");
 }
-/** 모아 세션은 요청·취소만 전송하며 Mac의 키나 ChatGPT 토큰을 받지 않는다. */
+/** 본인 설정만 전송하며 저장된 비밀번호·Mac 키·ChatGPT 토큰을 읽지 않는다. */
 export const macBankRunnerApi = {
+  async saveCredentials(token: AccessToken, input: unknown, signal?: AbortSignal) {
+    const body = macBankCredentialSaveSchema.parse(input);
+    const result = macBankCredentialStateSchema.parse(await apiFetch(`${base}/credentials`, {
+      accessToken: token, method: "POST", body, signal,
+    }));
+    signal?.throwIfAborted();
+    if (!result.stored || result.runnerId !== body.runnerId) throw new Error("로그인 정보 저장 상태를 확인하지 못했어요.");
+    return result;
+  },
+  async deleteCredentials(token: AccessToken, input: unknown, signal?: AbortSignal) {
+    const body = macBankCredentialDeleteSchema.parse(input);
+    const result = macBankCredentialStateSchema.parse(await apiFetch(`${base}/credentials`, {
+      accessToken: token, method: "DELETE", body, signal,
+    }));
+    signal?.throwIfAborted();
+    if (result.stored || result.runnerId !== body.runnerId) throw new Error("로그인 정보 삭제 상태를 확인하지 못했어요.");
+    return result;
+  },
   async state(token: AccessToken, householdId: string, userId: string, signal?: AbortSignal) {
     const result = macBankRunnerStateSchema.parse(await apiFetch(`${base}/state?${new URLSearchParams({ householdId })}`, { accessToken: token, signal }));
     signal?.throwIfAborted(); own(result.job, householdId, userId); return result;
@@ -17,7 +36,7 @@ export const macBankRunnerApi = {
     await apiFetch(`${base}/approve`, { accessToken: token, method: "POST", body: { householdId, pairId, userCode, grantMode: "until_revoked" }, signal }); signal?.throwIfAborted();
   },
   async start(token: AccessToken, householdId: string, userId: string, requestId: string, signal?: AbortSignal) {
-    const result = macBankJobSchema.parse(await apiFetch(`${base}/jobs`, { accessToken: token, method: "POST", body: { householdId, requestId }, signal }));
+    const result = macBankJobSchema.parse(await apiFetch(`${base}/jobs`, { accessToken: token, method: "POST", body: { householdId, requestId, consentVersion: MAC_BANK_RUNNER_CONSENT_VERSION }, signal }));
     signal?.throwIfAborted(); own(result, householdId, userId, requestId); return result;
   },
   async change(token: AccessToken, householdId: string, userId: string, id: string, action: "continue" | "cancel", signal?: AbortSignal) {

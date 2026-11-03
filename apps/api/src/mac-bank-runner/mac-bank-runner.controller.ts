@@ -41,6 +41,24 @@ export class MacBankRunnerController {
   /** HTTPS로 나가는 Mac 연결만 작업을 claim한다. */
   @Public() @Post('claim') @HttpCode(200) @Header('Cache-Control', 'no-store, private')
   claim(@Req() request: FastifyRequest, @Body() input: unknown) { return this.service.claim(this.bearer(request), input); }
+  /** 기존 비공개 API 프록시의 HTTPS 경계에서 본인 Mac용 로그인 정보를 암호화 저장한다. */
+  @Post('credentials') @HttpCode(200) @Header('Cache-Control', 'no-store, private') @Header('Pragma', 'no-cache')
+  async saveCredentials(@CurrentUser() user: AuthenticatedUser, @Body() input: unknown, @Req() request: FastifyRequest) {
+    try { return await this.service.saveCredentials(user.userId, input); }
+    finally {
+      this.erase(input, ['loginId', 'password']);
+      const raw = (request as FastifyRequest & { rawBody?: unknown }).rawBody;
+      if (Buffer.isBuffer(raw)) raw.fill(0);
+    }
+  }
+  /** 저장한 암호문을 본인만 삭제하며 낡은 화면의 버전은 거부한다. */
+  @Delete('credentials') @HttpCode(200) @Header('Cache-Control', 'no-store, private') @Header('Pragma', 'no-cache')
+  deleteCredentials(@CurrentUser() user: AuthenticatedUser, @Body() input: unknown) { return this.service.deleteCredentials(user.userId, input); }
+  /** 고정 HTTPS를 사용하는 실행기의 최초 claim 전달이다. 일반 상태 응답에는 평문을 넣지 않는다. */
+  @Public() @Post('jobs/:id/credentials') @HttpCode(200) @Header('Cache-Control', 'no-store, private') @Header('Pragma', 'no-cache')
+  retrieveCredentials(@Req() request: FastifyRequest, @Param('id', new ParseUUIDPipe()) id: string, @Body() input: unknown) {
+    return this.service.retrieveCredentials(this.bearer(request), id, input);
+  }
   /** 실행 중 공개 단계명만 갱신한다. */
   @Public() @Post('jobs/:id/progress') @HttpCode(200) @Header('Cache-Control', 'no-store, private')
   progress(@Req() request: FastifyRequest, @Param('id', new ParseUUIDPipe()) id: string, @Body() input: unknown) { return this.service.progress(this.bearer(request), id, input); }

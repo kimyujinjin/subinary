@@ -1,12 +1,15 @@
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, Inject, Injectable, InternalServerErrorException, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '@family/database';
 import { macBankPairSchema, macBankApproveSchema, macBankScopeSchema, macBankJobRequestSchema, macBankClaimSchema,
-  macBankProgressSchema, macBankCompleteSchema, macBankJobSchema, type MacBankJob, type MacBankRunnerState,
+  macBankProgressSchema, macBankCompleteSchema, macBankJobSchema, macBankCredentialSaveSchema, macBankCredentialDeleteSchema,
+  macBankCredentialRequestSchema, macBankCredentialResultSchema, type MacBankCredentialState, type MacBankCredentialResult,
+  type MacBankJob, type MacBankRunnerState,
   type MacBankHeartbeat, type MacBankJobState, type BankConnectionError } from '@family/contracts';
 import { DB } from '../database/database.constants';
+import { FinanceVault, type VaultEnvelope } from '../finance-connections/finance-vault';
 import { MAC_BANK_ONLINE_MS, MAC_BANK_JOB_TTL_MS, MAC_BANK_INTERVAL_MS, macBankActive, macBankTransition,
   macBankClaimLive, macBankMembershipMatches, macBankRequestMatches, macBankObservations, macBankGrantActive } from './mac-bank-runner.policy';
 
@@ -19,7 +22,13 @@ type RunnerRow = { id: string; secret_hash: string; user_code_hash: string; labe
 type JobRow = { id: string; runner_id: string; household_id: string; owner_user_id: string; member_id: string; member_joined_at: Time;
   state: MacBankJobState; claim_id: string | null; claimed_at: Time | null; expires_at: Time; continue_version: number;
   error_code: BankConnectionError | null; logout_confirmed: boolean; observations: unknown; completion_hash: string | null;
-  created_at: Time; updated_at: Time; completed_at: Time | null };
+  created_at: Time; updated_at: Time; completed_at: Time | null; credential_version?: number | null; credential_delivered_at?: Time | null; consent_version?: 1 | 2 };
+type CredentialRow = { id: string; runner_id: string; household_id: string; owner_user_id: string; member_id: string;
+  member_joined_at: Time; version: number; envelope: VaultEnvelope | null; updated_at: Time };
+const credentialPayload = macBankCredentialResultSchema.extend({ householdId: z.string().uuid(), memberId: z.string().uuid(),
+  memberJoinedAt: z.string().datetime({ offset: true }), runnerId: z.string().uuid() }).strict();
+const credentialContext = (row: Pick<CredentialRow, 'id' | 'owner_user_id'>) =>
+  ({ ownerUserId: row.owner_user_id, provider: 'shinhan_bank' as const, connectionId: row.id, purpose: 'credentials' as const });
 const date = (value: Time): Date => value instanceof Date ? value : new Date(value);
 const iso = (value: Time): string => date(value).toISOString();
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
@@ -30,7 +39,7 @@ const active = sql`('queued','claimed','running','authentication_required','read
 /** ChatGPT 인증정보 없이 별도 Mac grant와 본인 조회 작업만 관리한다. */
 @Injectable()
 export class MacBankRunnerService {
-  constructor(@Inject(DB) private readonly db: Db) {}
+  constructor(@Inject(DB) private readonly db: Db, private readonly vault: FinanceVault) {}
 
   private parse<T>(contract: z.ZodType<T>, input: unknown): T {
     const parsed = contract.safeParse(input);
@@ -45,7 +54,11 @@ export class MacBankRunnerService {
       return await this.db.transaction(async tx => {
         const [ready] = await this.rows<{ ready: boolean }>(tx, sql`select to_regclass('public.mac_bank_runners') is not null
           and to_regclass('public.mac_bank_runner_jobs') is not null
-          and exists(select 1 from public.mac_bank_runner_schema_migrations where version='mac-bank-runner-v2')
+          and exists(select 1 from public.mac_bank_runner_schema_migrations where version='mac-bank-runner-v3')
+          and to_regclass('public.mac_bank_runner_credentials') is not null
+          and exists(select 1 from pg_attribute where attrelid=to_regclass('public.mac_bank_runner_jobs') and attname='credential_version' and not attisdropped)
+          and (select count(*) from pg_trigger where not tgisinternal and tgenabled in ('O','A')
+            and tgname in ('mac_bank_job_credential_guard','mac_bank_credential_revoke'))=2
           and exists(select 1 from pg_attribute where attrelid=to_regclass('public.mac_bank_runner_jobs') and attname='completion_hash' and not attisdropped)
           and (select count(*) from pg_trigger where not tgisinternal and tgenabled in ('O','A') and tgname in
           ('mac_bank_job_guard','mac_bank_member_revoke','mac_bank_user_revoke','mac_bank_household_revoke'))=4 as ready`);
@@ -98,7 +111,7 @@ export class MacBankRunnerService {
   }
   private dto(row: JobRow): MacBankJob {
     return macBankJobSchema.parse({ id: row.id, householdId: row.household_id, ownerUserId: row.owner_user_id, runnerId: row.runner_id,
-      state: row.state, claimId: row.claim_id, continueVersion: row.continue_version, errorCode: row.error_code,
+      state: row.state, claimId: row.claim_id, credentialVersion: row.credential_version ?? null, consentVersion: row.consent_version ?? 1, continueVersion: row.continue_version, errorCode: row.error_code,
       logoutConfirmed: row.logout_confirmed, observations: row.observations, createdAt: iso(row.created_at), updatedAt: iso(row.updated_at),
       expiresAt: iso(row.expires_at), claimedAt: row.claimed_at ? iso(row.claimed_at) : null, completedAt: row.completed_at ? iso(row.completed_at) : null });
   }
@@ -116,6 +129,92 @@ export class MacBankRunnerService {
     return row;
   }
 
+  private async credential(tx: Tx, runner: RunnerRow): Promise<CredentialRow | null> {
+    const [row] = await this.rows<CredentialRow>(tx, sql`select * from mac_bank_runner_credentials where runner_id=${runner.id}
+      and owner_user_id=${runner.owner_user_id} and household_id=${runner.household_id}
+      and member_id=${runner.member_id} and member_joined_at=${runner.member_joined_at ? iso(runner.member_joined_at) : null} for update`);
+    return row ?? null;
+  }
+  private credentialDto(row: CredentialRow): MacBankCredentialState {
+    return { stored: row.envelope !== null, runnerId: row.runner_id, version: row.version, updatedAt: iso(row.updated_at) };
+  }
+  private async ownedRunner(tx: Tx, user: string, householdId: string, runnerId: string, member: Member, now: Date): Promise<RunnerRow> {
+    const [row] = await this.rows<RunnerRow>(tx, sql`select * from mac_bank_runners where id=${runnerId} and owner_user_id=${user}
+      and household_id=${householdId} and member_id=${member.id} and member_joined_at=${iso(member.joined_at)} for update`);
+    if (!row || !macBankGrantActive(true, row.grant_expires_at ? date(row.grant_expires_at) : null, !!row.revoked_at, now))
+      throw new NotFoundException('본인 Mac 연결을 찾지 못했어요.');
+    return row;
+  }
+  private async noActiveJob(tx: Tx, user: string, now: Date): Promise<void> {
+    await this.expire(tx, user, now);
+    const rows = await this.rows<{ id: string }>(tx, sql`select id from mac_bank_runner_jobs where owner_user_id=${user} and state in ${active} limit 1`);
+    if (rows.length) throw conflict();
+  }
+  /** 명시적 동의와 본인 Mac 범위를 확인한 후 서버에는 인증된 암호문만 저장한다. */
+  async saveCredentials(user: string, input: unknown): Promise<MacBankCredentialState> {
+    const value = this.parse(macBankCredentialSaveSchema, input);
+    try {
+      if (!this.vault.enabled) throw new ServiceUnavailableException('로그인 정보 암호화 저장소를 사용할 수 없습니다.');
+      return await this.tx(async (tx, now) => {
+        const member = await this.member(tx, user, value.householdId);
+        const runner = await this.ownedRunner(tx, user, value.householdId, value.runnerId, member, now);
+        await this.noActiveJob(tx, user, now);
+        const prior = await this.credential(tx, runner);
+        if ((prior?.version ?? null) !== value.expectedVersion || (prior && prior.version >= 2_147_483_646)) throw conflict();
+        const id = prior?.id ?? randomUUID(), version = (prior?.version ?? 0) + 1;
+        const envelope = this.vault.encrypt({ loginId: value.loginId, password: value.password, credentialVersion: version,
+          householdId: value.householdId, memberId: member.id, memberJoinedAt: iso(member.joined_at), runnerId: runner.id },
+          credentialContext({ id, owner_user_id: user }));
+        await tx.execute(sql`insert into mac_bank_runner_credentials(id,runner_id,household_id,owner_user_id,member_id,member_joined_at,version,envelope,updated_at)
+          values(${id},${runner.id},${value.householdId},${user},${member.id},${iso(member.joined_at)},${version},${JSON.stringify(envelope)}::jsonb,${now.toISOString()})
+          on conflict(runner_id) do update set version=excluded.version,envelope=excluded.envelope,consent_version=1,
+            consented_at=${now.toISOString()},updated_at=excluded.updated_at`);
+        return { stored: true, runnerId: runner.id, version, updatedAt: now.toISOString() };
+      });
+    } finally { value.loginId = ''; value.password = ''; }
+  }
+  /** 진행 작업이 없을 때만 암호문을 폐기하고 버전을 올려 낡은 요청을 무효화한다. */
+  async deleteCredentials(user: string, input: unknown): Promise<MacBankCredentialState> {
+    const value = this.parse(macBankCredentialDeleteSchema, input);
+    return this.tx(async (tx, now) => {
+      const member = await this.member(tx, user, value.householdId);
+      const runner = await this.ownedRunner(tx, user, value.householdId, value.runnerId, member, now);
+      await this.noActiveJob(tx, user, now);
+      const row = await this.credential(tx, runner);
+      if (!row || row.version !== value.expectedVersion || row.version >= 2_147_483_646) throw conflict();
+      await tx.execute(sql`update mac_bank_runner_credentials set envelope=null,version=version+1,updated_at=${now.toISOString()} where id=${row.id}`);
+      return { stored: false, runnerId: runner.id, version: row.version + 1, updatedAt: now.toISOString() };
+    });
+  }
+  /** 본인 실행기의 최초 로그인 claim에만 한 번 전달한다. 응답 유실은 재로그인하지 않는다. */
+  async retrieveCredentials(secret: string, id: string, input: unknown): Promise<MacBankCredentialResult> {
+    const value = this.parse(macBankCredentialRequestSchema, input); this.parse(z.string().uuid(), id);
+    if (!this.vault.enabled) throw new ServiceUnavailableException('로그인 정보 암호화 저장소를 사용할 수 없습니다.');
+    return this.tx(async (tx, now) => {
+      const runner = await this.runner(tx, secret, now);
+      await this.expire(tx, runner.owner_user_id!, now);
+      const job = await this.workerJob(tx, runner, id, value.claimId);
+      if (!['claimed', 'running'].includes(job.state) || job.continue_version !== 0 || job.credential_delivered_at
+        || job.credential_version !== value.credentialVersion || job.consent_version !== 2
+        || !macBankClaimLive(job.state, job.claim_id, value.claimId, date(job.expires_at), now)) throw conflict();
+      const row = await this.credential(tx, runner);
+      if (!row?.envelope || row.version !== value.credentialVersion) throw conflict();
+      const [delivered] = await this.rows<{ id: string }>(tx, sql`update mac_bank_runner_jobs set credential_delivered_at=${now.toISOString()}
+        where id=${id} and runner_id=${runner.id} and claim_id=${value.claimId} and credential_version=${value.credentialVersion}
+        and credential_delivered_at is null and continue_version=0 and state in ('claimed','running')
+        and expires_at>${now.toISOString()} returning id`);
+      if (!delivered) throw conflict();
+      const decoded = credentialPayload.safeParse(this.vault.decrypt(row.envelope, credentialContext(row)));
+      if (!decoded.success) throw new InternalServerErrorException('저장한 로그인 정보를 확인하지 못했어요.');
+      const credentials = decoded.data;
+      try {
+        if (credentials.householdId !== runner.household_id || credentials.memberId !== runner.member_id
+          || credentials.memberJoinedAt !== iso(runner.member_joined_at!) || credentials.runnerId !== runner.id
+          || credentials.credentialVersion !== row.version) throw conflict();
+        return { loginId: credentials.loginId, password: credentials.password, credentialVersion: credentials.credentialVersion };
+      } finally { credentials.loginId = ''; credentials.password = ''; }
+    });
+  }
   /** 10분 페어링 요청을 생성하며 같은 ID의 다른 비밀값은 덮어쓰지 않는다. */
   async pair(input: unknown): Promise<{ runnerId: string; pairExpiresAt: string }> {
     const value = this.parse(macBankPairSchema, input);
@@ -175,7 +274,9 @@ export class MacBankRunnerService {
         and member_id=${member.id} and member_joined_at=${iso(member.joined_at)} order by created_at desc,id desc limit 1`);
       const [previous] = await this.rows<JobRow>(tx, sql`select * from mac_bank_runner_jobs where owner_user_id=${user} and household_id=${household}
         and member_id=${member.id} and member_joined_at=${iso(member.joined_at)} and state='succeeded' order by completed_at desc,id desc limit 1`);
-      return { runner: runner ? { id: runner.id, label: runner.label, online: !!runner.last_seen_at && now.getTime() - date(runner.last_seen_at).getTime() <= MAC_BANK_ONLINE_MS,
+      const credential = runner ? await this.credential(tx, runner) : null;
+      return { credentials: credential ? this.credentialDto(credential) : null, credentialStorageAvailable: this.vault.enabled,
+        runner: runner ? { id: runner.id, label: runner.label, online: !!runner.last_seen_at && now.getTime() - date(runner.last_seen_at).getTime() <= MAC_BANK_ONLINE_MS,
         lastSeenAt: runner.last_seen_at ? iso(runner.last_seen_at) : null, expiresAt: runner.grant_expires_at ? iso(runner.grant_expires_at) : null } : null,
         job: job ? this.dto(job) : null, previousResult: previous ? { jobId: previous.id, completedAt: iso(previous.completed_at!), observations: this.dto(previous).observations } : null };
     });
@@ -199,8 +300,9 @@ export class MacBankRunnerService {
         and (grant_expires_at is null or grant_expires_at>${now.toISOString()})
         and last_seen_at>=${new Date(now.getTime() - MAC_BANK_ONLINE_MS).toISOString()} order by last_seen_at desc,id desc limit 1 for update`);
       if (!runner) throw new ServiceUnavailableException('연결한 Mac이 온라인인지 확인해 주세요.');
-      const [job] = await this.rows<JobRow>(tx, sql`insert into mac_bank_runner_jobs(id,runner_id,household_id,owner_user_id,member_id,member_joined_at,expires_at)
-        values(${value.requestId},${runner.id},${value.householdId},${user},${member.id},${iso(member.joined_at)},${new Date(now.getTime() + MAC_BANK_JOB_TTL_MS).toISOString()}) returning *`);
+      const credentials = await this.credential(tx, runner);
+      const [job] = await this.rows<JobRow>(tx, sql`insert into mac_bank_runner_jobs(id,runner_id,household_id,owner_user_id,member_id,member_joined_at,expires_at,credential_version,consent_version)
+        values(${value.requestId},${runner.id},${value.householdId},${user},${member.id},${iso(member.joined_at)},${new Date(now.getTime() + MAC_BANK_JOB_TTL_MS).toISOString()},${value.consentVersion === 2 && credentials?.envelope ? credentials.version : null},${value.consentVersion ?? 1}) returning *`);
       return { job: this.dto(job) };
     });
   }

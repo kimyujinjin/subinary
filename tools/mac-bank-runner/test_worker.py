@@ -3,6 +3,8 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock
@@ -134,7 +136,7 @@ class PrivateStateTests(unittest.TestCase):
             with patch.object(worker, 'resource_policy', side_effect=worker.Stopped('runtime_unavailable')):
                 with self.assertRaises(worker.Stopped):
                     worker.guarded_phase(args, {'id': 'job-1', 'claimId': 'claim-1'})
-            self.assertEqual(worker.read_private(state)['active'], {'id': 'job-1', 'claimId': 'claim-1', 'continueVersion': 0, 'uncertain': True})
+            self.assertEqual(worker.read_private(state)['active'], {'id': 'job-1', 'claimId': 'claim-1', 'continueVersion': 0, 'uncertain': True, 'loginAttempted': False})
 
     def test_lost_auth_response_cannot_undo_user_continue(self):
         api = Mock()
@@ -151,6 +153,100 @@ class PrivateStateTests(unittest.TestCase):
         worker.recover_completion(api, {'id': 'job-1', 'state': 'running', 'continueVersion': 0}, state)
         self.assertTrue(state['active']['uncertain'])
         api.call.assert_not_called()
+
+
+class LoginBrokerTests(unittest.TestCase):
+    """평문을 모델 응답에 넣지 않고 정상 은행 입력을 한 번만 허용한다."""
+    def setUp(self):
+        self.process = Mock()
+        self.raw = {'loginId': 'synthetic-id', 'password': 'synthetic-"\\-password', 'credentialVersion': 3}
+        self.credentials = Mock(return_value=self.raw)
+        self.client = worker.CodexClient(self.process, Mock(), self.credentials)
+        self.client.thread_id = 'thread'; self.client.turn_id = 'turn'
+        self.client.native_count = 1; self.client.bank_origin_seen = True; self.client.native_server = 'cua_repl'
+        self.ax = '0 윈도우, URL: bank.shinhan.com/index.jsp\n 91 텍스트 필드 (settable) 이용자ID\n 92 보안 텍스트 필드 비밀번호\n 94 link ID 로그인, Value: javascript:void(null);'
+
+    def test_login_submits_once_without_returning_credentials_to_model(self):
+        self.client.native_call = Mock(side_effect=['app', self.ax, 'MOA_FIELD_ENTERED', 'MOA_FIELD_ENTERED', 'MOA_LOGIN_SUBMITTED'])
+        request = {'id': 3, 'method': 'item/tool/call', 'params': {'threadId': 'thread', 'turnId': 'turn', 'tool': 'moa_login', 'arguments': {}}}
+        self.client.observe(request)
+        self.client.observe(dict(request, id=4))
+        self.credentials.assert_called_once()
+        self.assertEqual(self.client.native_call.call_count, 5)
+        self.assertEqual(self.raw, {})
+        responses = str(self.process.stdin.write.call_args_list)
+        self.assertNotIn('synthetic-id', responses)
+        self.assertNotIn('synthetic-', responses)
+
+    def test_changed_origin_or_missing_fields_never_retrieves_password(self):
+        for ax in [self.ax.replace('bank.shinhan.com', 'evil.invalid'), self.ax.replace('비밀번호', '보안카드')]:
+            self.client.native_call = Mock(side_effect=['app', ax])
+            with self.assertRaises(worker.Stopped):
+                self.client.login()
+        self.credentials.assert_not_called()
+
+    def test_failed_input_never_retries_within_same_claim(self):
+        self.client.native_call = Mock(side_effect=['app', self.ax, worker.Stopped('unsupported_layout')])
+        with self.assertRaises(worker.Stopped):
+            self.client.login()
+        self.assertEqual(self.raw, {})
+        self.assertIn('이미 한 번', self.client.login())
+        self.credentials.assert_called_once()
+
+    def test_each_native_input_rechecks_origin_before_typing(self):
+        self.client.native_call = Mock(side_effect=['app', self.ax, 'MOA_FIELD_ENTERED', 'MOA_FIELD_ENTERED', 'MOA_LOGIN_SUBMITTED'])
+        self.client.login()
+        codes = [call.args[0] for call in self.client.native_call.call_args_list][2:]
+        executable = shutil.which('node')
+        self.assertIsNotNone(executable)
+        # 실제 RPC에 보낼 JS를 합성 native 입력기에서 실행해 주소 변경 시 입력이 없는지 검증한다.
+        for index, code in enumerate(codes):
+            for host in ['bank.shinhan.com', 'evil.invalid', 'bank.shinhan.com.evil.invalid']:
+                ax = self.ax.replace('bank.shinhan.com', host)
+                harness = 'var actions=[]; var nodeRepl={write:()=>{}}; var __moaBrokerAside={getAXState:async()=>'+json.dumps(ax)+',click:async(v)=>actions.push(v),pressKey:async()=>{},typeText:async()=>actions.push("typed")};'
+                harness += '(async()=>{try{'+code+';console.log(JSON.stringify({ok:true,actions}));}catch{console.log(JSON.stringify({ok:false,actions}));}})();'
+                result = subprocess.run([executable, '-e', harness], capture_output=True, text=True, check=True)
+                observed = json.loads(result.stdout)
+                with self.subTest(step=index, host=host):
+                    self.assertEqual(observed['ok'], host == 'bank.shinhan.com')
+                    if host != 'bank.shinhan.com': self.assertEqual(observed['actions'], [])
+
+    def test_delivery_failure_is_not_automatically_retried(self):
+        self.client.native_call = Mock(side_effect=['app', self.ax])
+        self.credentials.side_effect = worker.Stopped('api_unavailable')
+        with self.assertRaises(worker.Stopped):
+            self.client.login()
+        self.client.login()
+        self.credentials.assert_called_once()
+
+    def test_claim_journal_contains_attempt_only_and_continue_cannot_redeliver(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state_path = Path(folder) / 'state.json'
+            state = {'secret': 'fixture-runner-key'}
+            worker.write_private(state_path, state)
+            job = {'id': 'job-1', 'claimId': 'claim-1', 'credentialVersion': 3, 'continueVersion': 0, 'state': 'running'}
+            def call(path, body):
+                if path.endswith('/heartbeat'):
+                    return {'paired': True, 'job': job}
+                if path.endswith('/credentials'):
+                    return dict(self.raw)
+                return {}
+            api = Mock(); api.call.side_effect = call
+            callbacks = []
+            def phase(codex, cwd, active, credentials):
+                callbacks.append(credentials)
+                if credentials:
+                    value = credentials(); self.assertEqual(value['password'], self.raw['password']); value.clear()
+                return {'outcome': 'authentication_required', 'errorCode': 'authentication_required', 'logoutConfirmed': False, 'observations': []}
+            args = SimpleNamespace(state=state_path, codex='fixture')
+            with patch.object(worker, 'codex_phase', side_effect=phase):
+                worker.run_phase(args, api, job, state)
+                job['continueVersion'] = 1
+                worker.run_phase(args, api, job, state)
+            self.assertIsNone(callbacks[1])
+            persisted = state_path.read_text()
+            self.assertNotIn(self.raw['password'], persisted); self.assertNotIn(self.raw['loginId'], persisted)
+            self.assertTrue(worker.read_private(state_path)['active']['loginAttempted'])
 
 
 if __name__ == '__main__':

@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { ConflictException, ForbiddenException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import type { Db } from '@family/database';
+import type { ConfigService } from '@nestjs/config';
+import { FinanceVault } from '../finance-connections/finance-vault';
+import { macBankCredentialSaveSchema, macBankCredentialResultSchema, macBankJobSchema } from '@family/contracts';
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { MacBankRunnerService } from './mac-bank-runner.service';
@@ -31,14 +34,21 @@ function assertIsoBindings(query: SQL): void {
 }
 
 /** DB 경계 응답만 대체하고 실제 서비스의 승인·재전송·종료 분기를 실행한다. */
-function harness(answers: unknown[][]) {
+const testVault = () => new FinanceVault({ get: () => ({ enabled: true, activeKeyVersion: 1,
+  keyring: { '1': 'ab'.repeat(32) } }) } as unknown as ConfigService);
+function harness(answers: unknown[][], credentialAnswers: unknown[][] = [], vault = testVault()) {
   const execute = vi.fn(async (query: SQL) => { assertIsoBindings(query); return []; });
   const db = { transaction: async (work: (tx: { execute: typeof execute }) => Promise<unknown>) => work({ execute }) };
-  const service = new MacBankRunnerService(db as unknown as Db);
+  const service = new MacBankRunnerService(db as unknown as Db, vault);
   const queue = [[{ ready: true }], [{ now }], ...answers];
   const rows = vi.spyOn(service as unknown as { rows: (tx: unknown, query: unknown) => Promise<unknown[]> }, 'rows')
-    .mockImplementation(async (_tx, query) => { assertIsoBindings(query as SQL); return queue.shift() ?? []; });
-  return { service, execute, rows };
+    .mockImplementation(async (_tx, query) => {
+      assertIsoBindings(query as SQL);
+      if (/^select \* from mac_bank_runner_credentials/i.test(dialect.sqlToQuery(query as SQL).sql))
+        return credentialAnswers.shift() ?? [];
+      return queue.shift() ?? [];
+    });
+  return { service, execute, rows, vault };
 }
 const authorized = () => [[{ id: user }], [{ id: home }], [member]];
 const worker = () => [[runner()], ...authorized(), [runner()]];
@@ -243,5 +253,119 @@ describe('Mac 전용 grant와 본인 작업 서비스', () => {
     const { service } = harness([...worker(), [completed]]);
     await expect(service.complete(secret, jobId, { claimId, outcome: 'failed', logoutConfirmed: false, observations: [] }))
       .rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+describe('Mac claim 전용 암호화 로그인 정보', () => {
+  const login = { loginId: 'synthetic-login-private-canary', password: 'SyntheticPasswordPrivateCanary!' };
+  const saveInput = { householdId: home, runnerId, ...login, consentVersion: 1, expectedVersion: null };
+  const credentialId = uuid(70);
+  function stored(vault: FinanceVault, version = 1) {
+    return { id: credentialId, runner_id: runnerId, owner_user_id: user, household_id: home, member_id: memberId,
+      member_joined_at: joined, version, updated_at: now,
+      envelope: vault.encrypt({ ...login, credentialVersion: version, householdId: home, memberId,
+        memberJoinedAt: joined.toISOString(), runnerId }, { ownerUserId: user, provider: 'shinhan_bank',
+        connectionId: credentialId, purpose: 'credentials' }) };
+  }
+  const boundJob = (change: Record<string, unknown> = {}) => ({ ...job(), credential_version: 1, credential_delivered_at: null, consent_version: 2, ...change });
+  it('별도 저장 동의·버전·길이·제어문자 계약을 엄격하게 검사한다', () => {
+    expect(macBankCredentialSaveSchema.safeParse(saveInput).success).toBe(true);
+    for (const input of [{ ...saveInput, consentVersion: undefined }, { ...saveInput, expectedVersion: undefined },
+      { ...saveInput, password: '' }, { ...saveInput, loginId: ' ' }, { ...saveInput, password: 'x\n' },
+      { ...saveInput, password: 'x'.repeat(201) }, { ...saveInput, extra: true }])
+      expect(macBankCredentialSaveSchema.safeParse(input).success).toBe(false);
+  });
+  it('저장 SQL에는 AES-GCM envelope만 있고 상태 응답에 평문은 없다', async () => {
+    const { service, execute } = harness([...authorized(), [runner()], []]);
+    const result = await service.saveCredentials(user, saveInput);
+    expect(result).toEqual({ stored: true, runnerId, version: 1, updatedAt: now.toISOString() });
+    const parameters = execute.mock.calls.flatMap(([query]) => dialect.sqlToQuery(query).params);
+    const leaked = parameters.some(value => typeof value === 'string' && (value.includes(login.loginId) || value.includes(login.password)));
+    expect(leaked).toBe(false);
+    expect(JSON.stringify(result).includes(login.password)).toBe(false);
+  });
+  it('저장·삭제는 active 작업과 오래된 expectedVersion을 거부한다', async () => {
+    const vault = testVault(), row = stored(vault);
+    for (const operation of ['save', 'delete']) {
+      const busy = harness([...authorized(), [runner()], [{ id: jobId }]], [[row]], vault);
+      const action = operation === 'save' ? busy.service.saveCredentials(user, saveInput)
+        : busy.service.deleteCredentials(user, { householdId: home, runnerId, expectedVersion: 1 });
+      await expect(action).rejects.toBeInstanceOf(ConflictException);
+      const stale = harness([...authorized(), [runner()], []], [[row]], vault);
+      const staleAction = operation === 'save' ? stale.service.saveCredentials(user, saveInput)
+        : stale.service.deleteCredentials(user, { householdId: home, runnerId, expectedVersion: 2 });
+      await expect(staleAction).rejects.toBeInstanceOf(ConflictException);
+    }
+  });
+  it('삭제는 평문 조회 없이 암호문만 폐기하고 버전을 올린다', async () => {
+    const vault = testVault(), row = stored(vault);
+    const { service } = harness([...authorized(), [runner()], []], [[row]], vault);
+    expect(await service.deleteCredentials(user, { householdId: home, runnerId, expectedVersion: 1 }))
+      .toEqual({ stored: false, runnerId, version: 2, updatedAt: now.toISOString() });
+  });
+  it('철회되거나 다른 가입 세대인 실행기에는 저장할 수 없다', async () => {
+    const denied = harness([...authorized(), []]);
+    await expect(denied.service.saveCredentials(user, saveInput)).rejects.toBeInstanceOf(NotFoundException);
+    const revoked = harness([...authorized(), [{ ...runner(), revoked_at: now }]]);
+    await expect(revoked.service.saveCredentials(user, saveInput)).rejects.toBeInstanceOf(NotFoundException);
+  });
+  it('새 작업만 현재 credentialVersion에 결박하고 DTO에는 비밀을 넣지 않는다', async () => {
+    const vault = testVault(), row = stored(vault), queued = { ...boundJob(), state: 'queued', claim_id: null, claimed_at: null };
+    const { service } = harness([...authorized(), [], [], [runner()], [queued]], [[row]], vault);
+    const result = (await service.enqueue(user, { householdId: home, requestId: jobId, consentVersion: 2 })).job;
+    expect(result.credentialVersion).toBe(1);
+    expect(JSON.stringify(result).includes(login.loginId)).toBe(false);
+    expect(macBankJobSchema.safeParse({ ...result, password: login.password }).success).toBe(false);
+  });
+  it('살아 있는 동일 claim 최초 전달은 한번만 원자 표시하고 복호화한다', async () => {
+    const vault = testVault(), row = stored(vault);
+    const { service, rows } = harness([...worker(), [boundJob()], [{ id: jobId }]], [[row]], vault);
+    const result = await service.retrieveCredentials(secret, jobId, { claimId, credentialVersion: 1 });
+    expect(result.loginId === login.loginId && result.password === login.password).toBe(true);
+    expect(macBankCredentialResultSchema.safeParse(result).success).toBe(true);
+    expect(rows.mock.calls.some(([, query]) => dialect.sqlToQuery(query as SQL).sql.includes('credential_delivered_at is null'))).toBe(true);
+  });
+  it('이미 전달됨·기존 수동작업·인증대기·재개·만료·다른 버전에는 전달하지 않는다', async () => {
+    for (const change of [{ credential_delivered_at: now }, { credential_version: null }, { consent_version: 1 }, { state: 'authentication_required' },
+      { continue_version: 1 }, { expires_at: new Date(now.getTime() - 1) }, { credential_version: 2 }, { state: 'cancelled' }]) {
+      const { service } = harness([...worker(), [boundJob(change)]]);
+      await expect(service.retrieveCredentials(secret, jobId, { claimId, credentialVersion: 1 })).rejects.toBeInstanceOf(ConflictException);
+    }
+  });
+  it('전달 경합·다른 claim·삭제됨·버전 변경·암호문 범위 변경을 거부한다', async () => {
+    const vault = testVault(), row = stored(vault);
+    const raced = harness([...worker(), [boundJob()], []], [[row]], vault);
+    await expect(raced.service.retrieveCredentials(secret, jobId, { claimId, credentialVersion: 1 })).rejects.toBeInstanceOf(ConflictException);
+    const wrongClaim = harness([...worker(), [boundJob({ claim_id: uuid(88) })]], [[row]], vault);
+    await expect(wrongClaim.service.retrieveCredentials(secret, jobId, { claimId, credentialVersion: 1 })).rejects.toBeInstanceOf(ConflictException);
+    for (const changed of [{ ...row, envelope: null }, { ...row, version: 2 }]) {
+      const invalid = harness([...worker(), [boundJob()]], [[changed]], vault);
+      await expect(invalid.service.retrieveCredentials(secret, jobId, { claimId, credentialVersion: 1 })).rejects.toBeInstanceOf(ConflictException);
+    }
+    const tampered = harness([...worker(), [boundJob()], [{ id: jobId }]], [[{ ...row, id: uuid(71) }]], vault);
+    await expect(tampered.service.retrieveCredentials(secret, jobId, { claimId, credentialVersion: 1 })).rejects.toThrow();
+  });
+  it('암호화 저장소가 비활성이면 저장과 전달을 명확히 거부한다', async () => {
+    const disabled = new FinanceVault({ get: () => ({ enabled: false }) } as unknown as ConfigService);
+    const { service } = harness([], [], disabled);
+    await expect(service.saveCredentials(user, saveInput)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(service.retrieveCredentials(secret, jobId, { claimId, credentialVersion: 1 })).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+  it('철회·만료·재가입 세대는 credential 전달 전에 거부한다', async () => {
+    const revoked = harness([[{ ...runner(), revoked_at: now }]]);
+    await expect(revoked.service.retrieveCredentials(secret, jobId, { claimId, credentialVersion: 1 })).rejects.toBeInstanceOf(UnauthorizedException);
+    for (const changed of [{ ...runner(), grant_expires_at: new Date(now.getTime() - 1) },
+      { ...runner(), member_joined_at: new Date(joined.getTime() - 1) }]) {
+      const { service } = harness([[runner()], ...authorized(), [changed]]);
+      await expect(service.retrieveCredentials(secret, jobId, { claimId, credentialVersion: 1 })).rejects.toBeInstanceOf(UnauthorizedException);
+    }
+  });
+  it('state에는 저장 상태만 반환하고 envelope·ID·비밀번호를 제외한다', async () => {
+    const vault = testVault(), row = stored(vault);
+    const { service } = harness([...authorized(), [runner()], [], []], [[row]], vault);
+    const result = await service.state(user, { householdId: home });
+    expect(result.credentials).toEqual({ stored: true, runnerId, version: 1, updatedAt: now.toISOString() });
+    const raw = JSON.stringify(result);
+    expect(raw.includes(login.loginId) || raw.includes(login.password) || raw.includes('ciphertext')).toBe(false);
   });
 });

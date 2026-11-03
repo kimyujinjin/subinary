@@ -10,7 +10,7 @@ afterEach(() => { search.value = ""; });
 const fixture: MacBankJob = {
   id: "00000000-0000-4000-8000-000000000001", householdId: "00000000-0000-4000-8000-000000000002",
   ownerUserId: "00000000-0000-4000-8000-000000000003", runnerId: "00000000-0000-4000-8000-000000000004",
-  state: "queued", claimId: null, continueVersion: 0, errorCode: null, logoutConfirmed: false, observations: [],
+  state: "queued", claimId: null, credentialVersion: null, consentVersion: 1, continueVersion: 0, errorCode: null, logoutConfirmed: false, observations: [],
   createdAt: "2026-11-03T00:00:00Z", updatedAt: "2026-11-03T00:00:00Z", expiresAt: "2026-11-03T00:10:00Z", claimedAt: null, completedAt: null,
 };
 describe("모아 버튼에서 Mac 자동 실행 상태 표시", () => {
@@ -24,7 +24,7 @@ describe("모아 버튼에서 Mac 자동 실행 상태 표시", () => {
     const html = renderToStaticMarkup(<BankStartPanel householdId={fixture.householdId} userId={fixture.ownerUserId} />);
     expect(html).toContain("신한은행 조회 시작"); expect(html).toMatch(/<button[^>]*disabled[^>]*>신한은행 조회 시작/);
     expect(html).not.toContain("codex://"); expect(html).not.toContain("요청문 복사"); expect(html).not.toContain("textarea");
-    expect(html).toContain("로그인 정보 저장·이체·상환·정기 조회는 허용하지 않아요");
+    expect(html).toContain("별도"); expect(html).toContain("이체");
   });
   it("대기·실행·인증 요청은 저장 완료로 보이지 않는다", () => {
     for (const state of ["queued", "claimed", "running", "authentication_required", "reading", "logging_out"] as const) {
@@ -34,7 +34,7 @@ describe("모아 버튼에서 Mac 자동 실행 상태 표시", () => {
   });
   it("추가 인증은 정상 은행 화면에서 진행하고 완료 후 이어갈 수 있음을 설명한다", () => {
     const html = renderToStaticMarkup(<BankMacJob job={{ ...fixture, state: "authentication_required" }} />);
-    expect(html).toContain("정상 로그인·추가 인증"); expect(html).toContain("인증 완료, 계속 조회");
+    expect(html).toContain("은행이 추가 인증"); expect(html).toContain("인증 완료, 계속 조회");
   });
   it("결과 불명은 재로그인하거나 새 금액으로 표시하지 않는다", () => {
     const html = renderToStaticMarkup(<BankMacJob job={{ ...fixture, state: "failed", errorCode: "operation_unknown" }} />);
