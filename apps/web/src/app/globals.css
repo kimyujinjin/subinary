@@ -137,6 +137,27 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 
+  /* 리뉴얼 모양 토큰(docs/ux-renewal-2026-11.md §3.2): 카드 16 · 컨트롤 12 · full 3종만 쓴다. */
+  --radius-card: 1rem;
+  --radius-control: 0.75rem;
+
+  /* 리뉴얼 타이포 6단계(§3.1). 새 코드는 text-[13px] 같은 임의 값 대신 이것만 쓴다. */
+  --text-display: 1.75rem;
+  --text-display--line-height: 2.125rem;
+  --text-display--font-weight: 700;
+  --text-title: 1.375rem;
+  --text-title--line-height: 1.75rem;
+  --text-title--font-weight: 700;
+  --text-heading: 1.0625rem;
+  --text-heading--line-height: 1.5rem;
+  --text-heading--font-weight: 600;
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.375rem;
+  --text-caption: 0.8125rem;
+  --text-caption--line-height: 1.125rem;
+  --text-micro: 0.6875rem;
+  --text-micro--line-height: 0.875rem;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -189,7 +210,10 @@
   /* safe-area 합성: Capacitor 8 SystemBars는 구형 Android WebView(<140)에서
    * env(safe-area-inset-*) 대신 --safe-area-inset-* 커스텀 프로퍼티를 주입한다.
    * 두 소스를 max()로 합쳐 어느 환경이든 흡수(양쪽 다 없으면 0). */
-  --safe-top: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px));
+  --safe-top: max(
+    env(safe-area-inset-top, 0px),
+    var(--safe-area-inset-top, 0px)
+  );
   --safe-bottom: max(
     env(safe-area-inset-bottom, 0px),
     var(--safe-area-inset-bottom, 0px)
@@ -237,19 +261,14 @@ html.kb-open [data-bottom-nav] {
   }
   body {
     @apply bg-background text-foreground;
-    font-family:
-      ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
       "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
     -webkit-font-smoothing: antialiased;
     letter-spacing: -0.01em;
   }
 }
 
-/* 핵심 금융 화면의 공통 표면. 작은 상태·행동 버튼은 별도 위계를 유지한다. */
+/* 핵심 금융 화면의 공통 표면. 카드 구분은 테두리가 아니라 배경 톤(background 위 card)으로 한다(§3.2). */
 .finance-panel {
-  @apply rounded-3xl border border-border/70 bg-card text-card-foreground;
-  box-shadow: 0 3px 16px -10px rgb(25 40 63 / 14%);
-}
-.dark .finance-panel {
-  box-shadow: none;
+  @apply rounded-card bg-card text-card-foreground;
 }
