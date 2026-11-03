@@ -85,10 +85,11 @@ export function BankStartPanel({ householdId, userId, disabled = false }: { hous
     <p className="text-sm leading-relaxed">모아에서 요청하면 연결한 Mac의 Codex가 신한은행에 접속해 조회하고 결과를 저장해요. Mac이 켜져 있고 실행기가 연결되어 있어야 해요.</p>
     {pairing && !paired ? <section className="space-y-3 rounded-xl border p-4" aria-label="Mac 실행기 연결 승인">
       <h3 className="font-semibold">이 Mac의 Codex 연결</h3>
-      <p className="text-sm leading-relaxed">이 Mac에 7일 동안 내가 버튼으로 요청한 신한은행 조회와 본인 결과 저장을 허용해요. 은행 인증은 Mac의 정상 은행 화면에서 진행해요. 언제든 연결을 해제할 수 있어요.</p>
-      <Button disabled={disabled || busy} onClick={() => { void write("approve"); }}>이 Mac 연결</Button>
+      <p className="text-sm leading-relaxed">연결을 해제할 때까지 이 Mac에서 내가 버튼으로 요청한 신한은행 조회와 본인 결과 저장을 허용해요. 은행 인증은 Mac의 정상 은행 화면에서 진행해요. 모아에서 언제든 연결을 해제할 수 있어요.</p>
+      <Button disabled={disabled || busy} onClick={() => { void write("approve"); }}>연결 해제 전까지 허용</Button>
     </section> : null}
     <p className="text-sm text-muted-foreground">{data?.runner ? `${data.runner.label} · ${data.runner.online ? "연결됨" : "오프라인"}` : "연결된 Mac이 없어요. Mac 실행기에서 기기 연결을 진행해 주세요."}</p>
+    {data?.runner ? <p className="text-xs text-muted-foreground">{data.runner.expiresAt === null ? "연결 해제 전까지 허용 · 버튼으로 요청할 때만 조회해요." : `연결 허용 기한 ${connectionTime(data.runner.expiresAt)}`}</p> : null}
     <p className="text-xs leading-relaxed text-muted-foreground">{MAC_BANK_RUNNER_CONSENT_TEXT}</p>
     <Button type="button" className="min-h-12 w-full" disabled={disabled || busy || active || !data?.runner?.online || uncertain}
       onClick={event => { if (event.detail <= 1) void write("start"); }}>{busy ? "요청 중…" : active ? "Mac에서 진행 중" : "신한은행 조회 시작"}</Button>

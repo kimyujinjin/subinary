@@ -4,9 +4,11 @@
 
 ## 최초 연결
 
-Mac에서 기존 Codex 로그인과 Computer Use 권한을 준비한 뒤 `python3 -B tools/mac-bank-runner/install.py`를 실행한다. 생성된 모아 링크에서 정상 로그인한 본인이 ‘이 Mac 연결’을 누른다. 승인 화면은 7일 동안 버튼으로 요청한 신한은행 조회와 본인 결과 저장만 허용한다고 설명한다. Mac에 생성한 별도 기기 키는 소유자 전용 파일에 보관하고 서버에는 해시만 저장한다. ChatGPT 토큰, 브라우저 쿠키, 은행 비밀번호를 모아 서버로 보내지 않는다.
+Mac에서 기존 Codex 로그인과 Computer Use 권한을 준비한 뒤 `python3 -B tools/mac-bank-runner/install.py`를 실행한다. 생성된 모아 링크에서 정상 로그인한 본인이 ‘연결 해제 전까지 허용’을 누른다. 승인 화면은 연결을 해제할 때까지 버튼으로 요청한 신한은행 조회와 본인 결과 저장만 허용한다고 설명한다. Mac에 생성한 별도 기기 키는 소유자 전용 파일에 보관하고 서버에는 해시만 저장한다. ChatGPT 토큰, 브라우저 쿠키, 은행 비밀번호를 모아 서버로 보내지 않는다.
 
 Mac 로그인 시 `cloud.subinary.moa-bank-runner` LaunchAgent가 시작된다. 이는 사용자가 만든 요청의 수신기이며 은행의 일일 조회 예약이 아니다. 기존 일일 예약의 중지 상태는 변경하지 않는다. 모아의 Mac 연결 해제로 실행 권한을 철회할 수 있다.
+
+승인 요청의 `grantMode: until_revoked`는 `grant_expires_at = NULL`로 기록한다. 기존 클라이언트의 모드 생략과 `seven_days`는 최초 승인 시 7일을 유지한다. 기존 본인이 코드로 명시 재승인한 `until_revoked`만 기간을 확대한다. 연결 해제, 회원 제거·조회 권한 상실, 계정·가구 삭제는 기간과 관계없이 접근을 차단한다. 은행·ChatGPT의 정상 인증 유효기간은 이 설정과 별개다.
 
 ## 버튼과 인증
 
@@ -31,6 +33,8 @@ Mac 실행은 기존 `validation_resources.py`의 해시가 일치하는 API 프
 ## 독립 스키마
 
 `tools/mac-bank-runner/schema.sql`만 별도로 검토·적용한다. `mac_bank_runner_schema_migrations`에 모듈 버전과 SQL SHA-256을 같은 트랜잭션에서 기록한다. 기존 은행 마이그레이션 0068·0069 및 main Drizzle journal은 변경하지 않는다. main journal의 마지막 시간을 앞당겨 미적용 마이그레이션을 건너뛰지 않도록 `__drizzle_migrations`에 이 모듈을 기록하지 않는다.
+
+v2는 v1 파일을 변경하지 않고 `schema-v2.sql`로 적용한다. 승인된 본인 연결의 만료 시각만 NULL을 허용하도록 모듈의 명명된 scope 제약을 바꾸며 기존 7일 연결이나 로그인 정보를 일괄 갱신하지 않는다. 같은 모듈 journal에 v2 버전·파일 해시를 따로 기록한다.
 
 ## 운영 확인
 

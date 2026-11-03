@@ -6,6 +6,11 @@ export const MAC_BANK_ONLINE_MS = 30_000;
 export const MAC_BANK_JOB_TTL_MS = 600_000;
 export const MAC_BANK_INTERVAL_MS = 900_000;
 
+/** 소유자에 결박한 승인만 유효하며 만료 없음도 명시적 철회를 넘을 수 없다. */
+export function macBankGrantActive(ownerBound: boolean, expiresAt: Date | null, revoked: boolean, now: Date): boolean {
+  return ownerBound && !revoked && (expiresAt === null || expiresAt.getTime() > now.getTime());
+}
+
 /** 종료하지 않은 작업만 실행 권한을 갖는다. */
 export function macBankActive(state: MacBankJobState): boolean {
   return MAC_BANK_ACTIVE_STATES.some(value => value === state);

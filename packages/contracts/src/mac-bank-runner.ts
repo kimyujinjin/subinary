@@ -9,7 +9,8 @@ export const MAC_BANK_RUNNER_CONSENT_VERSION = 1 as const;
 export const macBankPairSchema = z.object({ pairId: uuid, secret: z.string().regex(/^[0-9a-f]{64}$/),
   userCode: z.string().regex(/^[0-9a-f]{32}$/), label: z.string().trim().min(1).max(40) }).strict();
 export type MacBankPair = z.infer<typeof macBankPairSchema>;
-export const macBankApproveSchema = z.object({ householdId: uuid, pairId: uuid, userCode: z.string().regex(/^[0-9a-f]{32}$/) }).strict();
+export const macBankApproveSchema = z.object({ householdId: uuid, pairId: uuid, userCode: z.string().regex(/^[0-9a-f]{32}$/),
+  grantMode: z.enum(['seven_days', 'until_revoked']).optional() }).strict();
 export type MacBankApprove = z.infer<typeof macBankApproveSchema>;
 export const macBankScopeSchema = z.object({ householdId: uuid }).strict();
 export const macBankJobRequestSchema = z.object({ householdId: uuid, requestId: uuid, consentVersion: z.literal(1).optional() }).strict();
@@ -40,7 +41,7 @@ export const macBankJobSchema = z.object({ id: uuid, householdId: uuid, ownerUse
   createdAt: instant, updatedAt: instant, expiresAt: instant,
   claimedAt: instant.nullable(), completedAt: instant.nullable() }).strict();
 export type MacBankJob = z.infer<typeof macBankJobSchema>;
-export const macBankRunnerSchema = z.object({ id: uuid, label: z.string().max(40), online: z.boolean(), lastSeenAt: instant.nullable(), expiresAt: instant }).strict();
+export const macBankRunnerSchema = z.object({ id: uuid, label: z.string().max(40), online: z.boolean(), lastSeenAt: instant.nullable(), expiresAt: instant.nullable() }).strict();
 export type MacBankRunner = z.infer<typeof macBankRunnerSchema>;
 export const macBankRunnerStateSchema = z.object({ runner: macBankRunnerSchema.nullable(), job: macBankJobSchema.nullable(), previousResult: previousResult.nullable() }).strict();
 export type MacBankRunnerState = z.infer<typeof macBankRunnerStateSchema>;

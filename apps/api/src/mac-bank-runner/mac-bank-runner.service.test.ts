@@ -99,6 +99,66 @@ describe('Mac 전용 grant와 본인 작업 서비스', () => {
     expect(await service.approve(user, { householdId: home, pairId: runnerId, userCode }))
       .toEqual({ runnerId, expiresAt: new Date(now.getTime() + 7 * 86_400_000).toISOString() });
   });
+  it('최초 명시적 해제 전까지 승인은 소유 범위와 함께 null 만료를 저장한다', async () => {
+    const pending = { ...runner(), owner_user_id: null, household_id: null, member_id: null, member_joined_at: null, grant_expires_at: null };
+    const { service } = harness([...authorized(), [pending]]);
+    expect(await service.approve(user, { householdId: home, pairId: runnerId, userCode, grantMode: 'until_revoked' }))
+      .toEqual({ runnerId, expiresAt: null });
+  });
+  it('기존 7일 승인은 본인의 명시적 재승인에서만 만료 없음으로 확대한다', async () => {
+    for (const grant of [runner(), { ...runner(), grant_expires_at: new Date(now.getTime() - 1) }]) {
+      const { service, execute } = harness([...authorized(), [grant]]);
+      expect(await service.approve(user, { householdId: home, pairId: runnerId, userCode, grantMode: 'until_revoked' }))
+        .toEqual({ runnerId, expiresAt: null });
+      expect(execute).toHaveBeenCalledTimes(2);
+    }
+  });
+  it('생략 또는 7일 모드는 기존 승인 만료를 갱신하거나 영구 승인을 강등하지 않는다', async () => {
+    for (const grantMode of [undefined, 'seven_days']) {
+      for (const grant of [runner(), { ...runner(), grant_expires_at: null }]) {
+        const { service, execute } = harness([...authorized(), [grant]]);
+        const result = await service.approve(user, { householdId: home, pairId: runnerId, userCode, ...(grantMode ? { grantMode } : {}) });
+        expect(result).toEqual({ runnerId, expiresAt: grant.grant_expires_at?.toISOString() ?? null });
+        expect(execute).toHaveBeenCalledTimes(1);
+      }
+    }
+  });
+  it('만료된 7일 승인은 기본 재전송만으로 갱신되지 않는다', async () => {
+    const { service } = harness([...authorized(), [{ ...runner(), grant_expires_at: now }]]);
+    await expect(service.approve(user, { householdId: home, pairId: runnerId, userCode })).rejects.toBeInstanceOf(ConflictException);
+  });
+  it('철회·다른 owner·다른 가입 세대는 영구 모드 재승인으로 복구되지 않는다', async () => {
+    for (const changed of [{ ...runner(), revoked_at: now }, { ...runner(), owner_user_id: uuid(20) },
+      { ...runner(), member_joined_at: new Date(joined.getTime() - 1) }]) {
+      const { service, execute } = harness([...authorized(), [changed]]);
+      await expect(service.approve(user, { householdId: home, pairId: runnerId, userCode, grantMode: 'until_revoked' })).rejects.toThrow();
+      expect(execute).toHaveBeenCalledTimes(1);
+    }
+  });
+  it('영구 grant의 heartbeat는 paired true와 null 만료를 반환하지만 만료된 7일은 거부한다', async () => {
+    const forever = { ...runner(), grant_expires_at: null };
+    const live = harness([[forever], ...authorized(), [forever], []]);
+    expect(await live.service.heartbeat(secret)).toMatchObject({ paired: true, grantExpiresAt: null });
+    const expired = { ...runner(), grant_expires_at: now };
+    const old = harness([[expired], ...authorized(), [expired]]);
+    await expect(old.service.heartbeat(secret)).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+  it('영구 grant도 취소 뒤 도착한 완료와 철회 뒤 요청을 허용하지 않는다', async () => {
+    const forever = { ...runner(), grant_expires_at: null };
+    const late = harness([[forever], ...authorized(), [forever], [{ ...job('cancelled'), completed_at: now }]]);
+    const result = await late.service.complete(secret, jobId, { claimId, outcome: 'succeeded', logoutConfirmed: true, observations: [capture] });
+    expect(result.job.state).toBe('cancelled'); expect(result.job.observations).toEqual([]);
+    const revoked = harness([[{ ...forever, revoked_at: now }]]);
+    await expect(revoked.service.heartbeat(secret)).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+  it('상태와 신규 작업도 만료 없는 본인 grant를 처리한다', async () => {
+    const forever = { ...runner(), grant_expires_at: null };
+    const state = harness([...authorized(), [forever], [], []]);
+    expect((await state.service.state(user, { householdId: home })).runner?.expiresAt).toBeNull();
+    const queued = { ...job('queued'), claim_id: null, claimed_at: null };
+    const next = harness([...authorized(), [], [], [forever], [queued]]);
+    expect((await next.service.enqueue(user, { householdId: home, requestId: jobId })).job.state).toBe('queued');
+  });
   it('동일 requestId의 기존 결과는 반환하고 새 작업을 생성하지 않는다', async () => {
     const { service, execute } = harness([...authorized(), [job()]]);
     expect((await service.enqueue(user, { householdId: home, requestId: jobId })).job.id).toBe(jobId);

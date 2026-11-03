@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { macBankCompleteSchema, macBankPairSchema, macBankJobRequestSchema } from '@family/contracts';
-import { macBankActive, macBankTransition, macBankClaimLive, macBankMembershipMatches, macBankRequestMatches, macBankObservations } from './mac-bank-runner.policy';
+import { macBankCompleteSchema, macBankPairSchema, macBankJobRequestSchema, macBankApproveSchema, macBankRunnerSchema } from '@family/contracts';
+import { macBankActive, macBankTransition, macBankClaimLive, macBankMembershipMatches, macBankRequestMatches, macBankObservations, macBankGrantActive } from './mac-bank-runner.policy';
 
 const now = new Date('2026-11-03T06:00:00.000Z');
 const capture = (fingerprint = 'a'.repeat(64), at = now.toISOString()) => ({ formatVersion: 1, provider: 'shinhan', source: 'browser_assisted',
@@ -9,6 +9,23 @@ const capture = (fingerprint = 'a'.repeat(64), at = now.toISOString()) => ({ for
 const id = '11111111-1111-4111-8111-111111111111';
 
 describe('Mac 조회 실행의 종료·권한 경계', () => {
+  it('만료 없는 승인은 owner 결박과 미철회가 모두 있어야 유효하다', () => {
+    expect(macBankGrantActive(true, null, false, now)).toBe(true);
+    expect(macBankGrantActive(false, null, false, now)).toBe(false);
+    expect(macBankGrantActive(true, null, true, now)).toBe(false);
+    expect(macBankGrantActive(true, now, false, now)).toBe(false);
+    expect(macBankGrantActive(true, new Date(now.getTime() + 1), false, now)).toBe(true);
+  });
+  it('승인 요청은 기존 무옵션·7일과 명시적 해제 전까지 모드를 구분한다', () => {
+    const value = { householdId: id, pairId: id, userCode: 'b'.repeat(32) };
+    expect(macBankApproveSchema.safeParse(value).success).toBe(true);
+    expect(macBankApproveSchema.safeParse({ ...value, grantMode: 'seven_days' }).success).toBe(true);
+    expect(macBankApproveSchema.safeParse({ ...value, grantMode: 'until_revoked' }).success).toBe(true);
+    expect(macBankApproveSchema.safeParse({ ...value, grantMode: 'daily' }).success).toBe(false);
+    const runner = { id, label: '합성 Mac', online: true, lastSeenAt: now.toISOString(), expiresAt: null };
+    expect(macBankRunnerSchema.safeParse(runner).success).toBe(true);
+    expect(macBankRunnerSchema.safeParse({ ...runner, expiresAt: now.toISOString() }).success).toBe(true);
+  });
   it('인증 대기는 워커 단계 전환으로 해제할 수 없다', () => {
     expect(macBankTransition('claimed', 'running')).toBe(true);
     expect(macBankTransition('reading', 'logging_out')).toBe(true);

@@ -14,7 +14,7 @@ export const macBankRunnerApi = {
     signal?.throwIfAborted(); own(result.job, householdId, userId); return result;
   },
   async approve(token: AccessToken, householdId: string, pairId: string, userCode: string, signal?: AbortSignal) {
-    await apiFetch(`${base}/approve`, { accessToken: token, method: "POST", body: { householdId, pairId, userCode }, signal }); signal?.throwIfAborted();
+    await apiFetch(`${base}/approve`, { accessToken: token, method: "POST", body: { householdId, pairId, userCode, grantMode: "until_revoked" }, signal }); signal?.throwIfAborted();
   },
   async start(token: AccessToken, householdId: string, userId: string, requestId: string, signal?: AbortSignal) {
     const result = macBankJobSchema.parse(await apiFetch(`${base}/jobs`, { accessToken: token, method: "POST", body: { householdId, requestId }, signal }));

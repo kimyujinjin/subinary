@@ -1,10 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MacBankJob } from "@family/contracts";
 import { BankMacJob, BankStartPanel } from "./bank-start-panel";
 
-vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
+const search = vi.hoisted(() => ({ value: "" }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(search.value) }));
 vi.mock("@/lib/auth-context", () => ({ useAuth: () => ({ authedFetch: vi.fn() }) }));
+afterEach(() => { search.value = ""; });
 const fixture: MacBankJob = {
   id: "00000000-0000-4000-8000-000000000001", householdId: "00000000-0000-4000-8000-000000000002",
   ownerUserId: "00000000-0000-4000-8000-000000000003", runnerId: "00000000-0000-4000-8000-000000000004",
@@ -12,6 +14,12 @@ const fixture: MacBankJob = {
   createdAt: "2026-11-03T00:00:00Z", updatedAt: "2026-11-03T00:00:00Z", expiresAt: "2026-11-03T00:10:00Z", claimedAt: null, completedAt: null,
 };
 describe("모아 버튼에서 Mac 자동 실행 상태 표시", () => {
+  it("최초 연결 화면은 해제 전까지 허용할 범위와 철회 방법을 표시한다", () => {
+    search.value = "macPair=00000000-0000-4000-8000-000000000004&macCode=" + "a".repeat(32);
+    const html = renderToStaticMarkup(<BankStartPanel householdId={fixture.householdId} userId={fixture.ownerUserId} />);
+    expect(html).toContain("연결 해제 전까지 허용"); expect(html).toContain("모아에서 언제든 연결을 해제");
+    expect(html).not.toContain("7일 동안"); expect(html).not.toContain('type="password"');
+  });
   it("연결 상태를 받기 전에는 조회 버튼을 비활성화하고 복사·초안 링크를 제공하지 않는다", () => {
     const html = renderToStaticMarkup(<BankStartPanel householdId={fixture.householdId} userId={fixture.ownerUserId} />);
     expect(html).toContain("신한은행 조회 시작"); expect(html).toMatch(/<button[^>]*disabled[^>]*>신한은행 조회 시작/);

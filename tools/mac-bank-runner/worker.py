@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Callable
@@ -161,6 +162,18 @@ RESULT_SCHEMA: dict[str, object] = {'type': 'object', 'additionalProperties': Fa
     'required': ['status', 'logoutConfirmed', 'errorCode']}
 
 
+def bank_origin_observed(text_value: str) -> bool:
+    """native AX의 HTTPS 생략 표시를 정규화하되 정확한 은행 호스트만 인정한다."""
+    for address in re.findall(r'\bURL:\s*([^\s,]+)', text_value):
+        try:
+            url = urllib.parse.urlsplit(address if '://' in address else 'https://' + address)
+            if url.scheme == 'https' and url.hostname == 'bank.shinhan.com' and url.port in {None, 443} and not url.username and not url.password:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 class CodexClient:
     """공식 stdio 프로토콜의 도구 결과를 검사하며 대화 원문을 저장하지 않는다."""
     def __init__(self, process: subprocess.Popen[bytes], check_active: Callable[[], None]) -> None:
@@ -271,8 +284,9 @@ class CodexClient:
                     # 전체 AX/이미지/화면 값은 저장하거나 출력하지 않는다.
                     texts = [part.get('text', '') for part in result.get('content', []) if isinstance(part, dict) and part.get('type') == 'text']
                     text_value = '\n'.join(part for part in texts if isinstance(part, str))
-                    self.bank_origin_seen = self.bank_origin_seen or 'https://bank.shinhan.com' in text_value
-                    self.logout_seen = self.logout_seen or ('https://bank.shinhan.com' in text_value
+                    observed_bank = bank_origin_observed(text_value)
+                    self.bank_origin_seen = self.bank_origin_seen or observed_bank
+                    self.logout_seen = self.logout_seen or (observed_bank
                         and bool(re.search(r'(?:안전하게|정상적으로)?\s*로그아웃\s*(?:되었|되셨|완료)', text_value)))
             elif kind == 'dynamicToolCall':
                 if item.get('tool') != 'moa_capture':

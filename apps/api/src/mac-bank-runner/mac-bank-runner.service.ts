@@ -8,7 +8,7 @@ import { macBankPairSchema, macBankApproveSchema, macBankScopeSchema, macBankJob
   type MacBankHeartbeat, type MacBankJobState, type BankConnectionError } from '@family/contracts';
 import { DB } from '../database/database.constants';
 import { MAC_BANK_ONLINE_MS, MAC_BANK_JOB_TTL_MS, MAC_BANK_INTERVAL_MS, macBankActive, macBankTransition,
-  macBankClaimLive, macBankMembershipMatches, macBankRequestMatches, macBankObservations } from './mac-bank-runner.policy';
+  macBankClaimLive, macBankMembershipMatches, macBankRequestMatches, macBankObservations, macBankGrantActive } from './mac-bank-runner.policy';
 
 type Tx = Pick<Db, 'execute'>;
 type Time = Date | string;
@@ -45,6 +45,7 @@ export class MacBankRunnerService {
       return await this.db.transaction(async tx => {
         const [ready] = await this.rows<{ ready: boolean }>(tx, sql`select to_regclass('public.mac_bank_runners') is not null
           and to_regclass('public.mac_bank_runner_jobs') is not null
+          and exists(select 1 from public.mac_bank_runner_schema_migrations where version='mac-bank-runner-v2')
           and exists(select 1 from pg_attribute where attrelid=to_regclass('public.mac_bank_runner_jobs') and attname='completion_hash' and not attisdropped)
           and (select count(*) from pg_trigger where not tgisinternal and tgenabled in ('O','A') and tgname in
           ('mac_bank_job_guard','mac_bank_member_revoke','mac_bank_user_revoke','mac_bank_household_revoke'))=4 as ready`);
@@ -85,7 +86,7 @@ export class MacBankRunnerService {
     }
     const member = await this.member(tx, peek.owner_user_id, peek.household_id);
     const [row] = await this.rows<RunnerRow>(tx, sql`select * from mac_bank_runners where id=${peek.id} for update`);
-    if (!row || row.revoked_at || !row.grant_expires_at || date(row.grant_expires_at) <= now
+    if (!row || !macBankGrantActive(!!row.owner_user_id && !!row.household_id, row.grant_expires_at ? date(row.grant_expires_at) : null, !!row.revoked_at, now)
       || !macBankMembershipMatches(row.member_id, row.member_joined_at ? date(row.member_joined_at) : null, member.id, date(member.joined_at)))
       throw new UnauthorizedException('Mac 연결 승인이 만료되었습니다.');
     return row;
@@ -127,23 +128,28 @@ export class MacBankRunnerService {
       return { runnerId: row.id, pairExpiresAt: iso(row.pair_expires_at) };
     }); } finally { value.secret = ''; value.userCode = ''; }
   }
-  /** 정상 모아 JWT의 본인 가입 세대에 한 번만 결박하고 7일 실행 권한을 준다. */
-  async approve(user: string, input: unknown): Promise<{ runnerId: string; expiresAt: string }> {
+  /** 기본 승인은 7일이며 본인의 명시적 요청만 연결 해제 전까지로 확대한다. */
+  async approve(user: string, input: unknown): Promise<{ runnerId: string; expiresAt: string | null }> {
     const value = this.parse(macBankApproveSchema, input);
     try { return await this.tx(async (tx, now) => {
       const member = await this.member(tx, user, value.householdId);
       const [row] = await this.rows<RunnerRow>(tx, sql`select * from mac_bank_runners where id=${value.pairId} for update`);
       if (!row || row.revoked_at || !equal(row.user_code_hash, hash(value.userCode))) throw new NotFoundException('Mac 연결 요청을 찾지 못했어요.');
       if (row.owner_user_id) {
-        if (row.owner_user_id !== user || row.household_id !== value.householdId || !row.grant_expires_at || date(row.grant_expires_at) <= now
+        if (row.owner_user_id !== user || row.household_id !== value.householdId
           || !macBankMembershipMatches(row.member_id, row.member_joined_at ? date(row.member_joined_at) : null, member.id, date(member.joined_at))) throw conflict();
-        return { runnerId: row.id, expiresAt: iso(row.grant_expires_at) };
+        if (value.grantMode === 'until_revoked' && row.grant_expires_at !== null) {
+          await tx.execute(sql`update mac_bank_runners set grant_expires_at=null where id=${row.id}`);
+          return { runnerId: row.id, expiresAt: null };
+        }
+        if (row.grant_expires_at !== null && date(row.grant_expires_at) <= now) throw conflict();
+        return { runnerId: row.id, expiresAt: row.grant_expires_at ? iso(row.grant_expires_at) : null };
       }
       if (date(row.pair_expires_at) <= now) throw conflict();
-      const until = new Date(now.getTime() + 7 * 86_400_000);
+      const until = value.grantMode === 'until_revoked' ? null : new Date(now.getTime() + 7 * 86_400_000);
       await tx.execute(sql`update mac_bank_runners set owner_user_id=${user},household_id=${value.householdId},member_id=${member.id},
-        member_joined_at=${iso(member.joined_at)},grant_expires_at=${until.toISOString()} where id=${row.id}`);
-      return { runnerId: row.id, expiresAt: until.toISOString() };
+        member_joined_at=${iso(member.joined_at)},grant_expires_at=${until?.toISOString() ?? null} where id=${row.id}`);
+      return { runnerId: row.id, expiresAt: until?.toISOString() ?? null };
     }); } finally { value.userCode = ''; }
   }
   /** 미승인 페어링은 401 대신 대기 상태를 반환하고 승인된 실행기만 온라인으로 표시한다. */
@@ -154,7 +160,7 @@ export class MacBankRunnerService {
       await this.expire(tx, row.owner_user_id, now);
       await tx.execute(sql`update mac_bank_runners set last_seen_at=${now.toISOString()} where id=${row.id}`);
       const [job] = await this.rows<JobRow>(tx, sql`select * from mac_bank_runner_jobs where runner_id=${row.id} and state in ${active} order by created_at desc limit 1`);
-      return { paired: true, runnerId: row.id, pairExpiresAt: iso(row.pair_expires_at), grantExpiresAt: iso(row.grant_expires_at!), job: job ? this.dto(job) : null };
+      return { paired: true, runnerId: row.id, pairExpiresAt: iso(row.pair_expires_at), grantExpiresAt: row.grant_expires_at ? iso(row.grant_expires_at) : null, job: job ? this.dto(job) : null };
     });
   }
   /** 현재 본인 상태와 이전 성공 관측을 분리해 보여 주며 다른 가입 세대의 기록은 반환하지 않는다. */
@@ -163,13 +169,14 @@ export class MacBankRunnerService {
     return this.tx(async (tx, now) => {
       const member = await this.member(tx, user, household); await this.expire(tx, user, now);
       const [runner] = await this.rows<RunnerRow>(tx, sql`select * from mac_bank_runners where owner_user_id=${user} and household_id=${household}
-        and member_id=${member.id} and member_joined_at=${iso(member.joined_at)} and revoked_at is null and grant_expires_at>${now.toISOString()} order by created_at desc,id desc limit 1`);
+        and member_id=${member.id} and member_joined_at=${iso(member.joined_at)} and revoked_at is null
+        and (grant_expires_at is null or grant_expires_at>${now.toISOString()}) order by created_at desc,id desc limit 1`);
       const [job] = await this.rows<JobRow>(tx, sql`select * from mac_bank_runner_jobs where owner_user_id=${user} and household_id=${household}
         and member_id=${member.id} and member_joined_at=${iso(member.joined_at)} order by created_at desc,id desc limit 1`);
       const [previous] = await this.rows<JobRow>(tx, sql`select * from mac_bank_runner_jobs where owner_user_id=${user} and household_id=${household}
         and member_id=${member.id} and member_joined_at=${iso(member.joined_at)} and state='succeeded' order by completed_at desc,id desc limit 1`);
       return { runner: runner ? { id: runner.id, label: runner.label, online: !!runner.last_seen_at && now.getTime() - date(runner.last_seen_at).getTime() <= MAC_BANK_ONLINE_MS,
-        lastSeenAt: runner.last_seen_at ? iso(runner.last_seen_at) : null, expiresAt: iso(runner.grant_expires_at!) } : null,
+        lastSeenAt: runner.last_seen_at ? iso(runner.last_seen_at) : null, expiresAt: runner.grant_expires_at ? iso(runner.grant_expires_at) : null } : null,
         job: job ? this.dto(job) : null, previousResult: previous ? { jobId: previous.id, completedAt: iso(previous.completed_at!), observations: this.dto(previous).observations } : null };
     });
   }
@@ -188,7 +195,8 @@ export class MacBankRunnerService {
         and (state in ${active} or claimed_at>${new Date(now.getTime() - MAC_BANK_INTERVAL_MS).toISOString()}) limit 1`);
       if (recent.length) throw conflict();
       const [runner] = await this.rows<RunnerRow>(tx, sql`select * from mac_bank_runners where owner_user_id=${user} and household_id=${value.householdId}
-        and member_id=${member.id} and member_joined_at=${iso(member.joined_at)} and revoked_at is null and grant_expires_at>${now.toISOString()}
+        and member_id=${member.id} and member_joined_at=${iso(member.joined_at)} and revoked_at is null
+        and (grant_expires_at is null or grant_expires_at>${now.toISOString()})
         and last_seen_at>=${new Date(now.getTime() - MAC_BANK_ONLINE_MS).toISOString()} order by last_seen_at desc,id desc limit 1 for update`);
       if (!runner) throw new ServiceUnavailableException('연결한 Mac이 온라인인지 확인해 주세요.');
       const [job] = await this.rows<JobRow>(tx, sql`insert into mac_bank_runner_jobs(id,runner_id,household_id,owner_user_id,member_id,member_joined_at,expires_at)

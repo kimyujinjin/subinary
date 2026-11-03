@@ -58,10 +58,17 @@ class ProtocolTests(unittest.TestCase):
     def test_native_success_and_logout_are_observed(self):
         item = {'id': 'native-1', 'type': 'mcpToolCall', 'server': 'cua_repl', 'tool': 'js'}
         self.client.observe(self.event('item/started', item))
-        self.client.observe(self.event('item/completed', dict(item, status='completed', result={'content': [{'type': 'text', 'text': 'https://bank.shinhan.com 안전하게 로그아웃 되었습니다'}]})))
+        self.client.observe(self.event('item/completed', dict(item, status='completed', result={'content': [{'type': 'text', 'text': 'URL: bank.shinhan.com/index.jsp\n안전하게 로그아웃 되었습니다'}]})))
         self.assertEqual(self.client.native_count, 1)
         self.assertTrue(self.client.logout_seen)
         self.assertTrue(self.client.bank_origin_seen)
+
+    def test_native_ax_scheme_elision_and_exact_host(self):
+        for address in ['https://bank.shinhan.com/index.jsp', 'bank.shinhan.com/index.jsp', 'https://bank.shinhan.com:443/']:
+            self.assertTrue(worker.bank_origin_observed('HTML 콘텐츠, URL: ' + address))
+        for address in ['http://bank.shinhan.com/', 'bank.shinhan.com.evil.invalid/', 'bank.shinhan.com@evil.invalid/', 'https://evil.invalid/?next=https://bank.shinhan.com', 'https://bank.shinhan.com:999/']:
+            self.assertFalse(worker.bank_origin_observed('HTML 콘텐츠, URL: ' + address))
+        self.assertFalse(worker.bank_origin_observed('임의 본문 링크 https://bank.shinhan.com'))
 
     def test_failed_native_tool_unknown_tool_and_cross_turn(self):
         cases = [self.event('item/started', {'type': 'commandExecution'}),
