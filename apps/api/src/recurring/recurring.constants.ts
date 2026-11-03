@@ -18,6 +18,9 @@ export const RECURRING_ALGORITHM_VERSION = 1;
 /** 판별 창(개월). 로드맵 C-5의 "최근 3~6개월". */
 export const RECURRING_LOOKBACK_MONTHS = 6;
 
+/** 시작 시 누락을 복구하고 이후 30분마다 정기 결제 근거를 갱신한다. */
+export const RECURRING_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+
 /**
  * 같은 series로 묶을 금액 허용 변동폭(basis points, 500 = 5%).
  *

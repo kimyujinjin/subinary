@@ -24,6 +24,13 @@ export {
   MERCHANT_TRAINING_READINESS,
 } from './constants.js';
 export { createLogger } from './logger.js';
+export { resolvePaymentCardLink } from './card-link.js';
+export type {
+  PaymentCardLink,
+  PaymentCardLinkCandidate,
+  PaymentCardLinkSource,
+  PaymentCardVisibility,
+} from './card-link.js';
 export type { CreateLoggerOptions, Logger } from './logger.js';
 export {
   OUTBOX_EVENT_TYPES,
@@ -209,3 +216,29 @@ export type {
   MiniappRouteCheck,
 } from './miniapp-bridge.js';
 export { isMiniappResponse } from "./miniapp-bridge.js";
+
+export {
+  assertManualFinanceNotFuture,
+  manualFinanceCanRead,
+  manualFinanceCanWrite,
+  manualFinanceSeoulDate,
+  summarizeManualAssets,
+  summarizeManualHousingPlans,
+} from './manual-finance.js';
+
+export { composeFinancialOverview } from './loan-overview.js';
+export type {
+  LoanOverviewManualItem,
+  LoanOverviewLoanItem,
+  LoanOverviewInput,
+  LoanOverviewResult,
+  LoanOverviewExclusionReason,
+} from './loan-overview.js';
+export type {
+  ManualFinancePolicyActor,
+  ManualFinancePolicyRecord,
+  ManualAssetSummaryInput,
+  ManualAssetTotals,
+  ManualHousingSummaryInput,
+  ManualHousingTotals,
+} from './manual-finance.js';

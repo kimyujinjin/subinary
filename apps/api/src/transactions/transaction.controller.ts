@@ -80,6 +80,7 @@ export class TransactionController {
     @Query('attribution') attribution?: string,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
+    @Query('review') review?: string,
   ): Promise<TransactionListResponse> {
     return this.transactionService.list(user.userId, {
       householdId,
@@ -87,6 +88,7 @@ export class TransactionController {
       cardId,
       type,
       status,
+      review,
       categoryId,
       from,
       to,

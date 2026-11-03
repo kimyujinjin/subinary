@@ -15,12 +15,14 @@ import type {
   AuthResult,
   CardBreakdown,
   CardCreateRequest,
+  CardLast4CorrectionRequest,
   CardSummary,
   CardUpdateRequest,
   CardSmsDeclineListResponse,
   CardSmsDeclineDismissRequest,
   CardSmsDeclineDismissResponse,
   CardSmsEventDetail,
+  CardSmsPostingStatusResponse,
   CardSmsReviewRequest,
   CardSmsReviewResponse,
   ManualParsePreviewRequest,
@@ -354,6 +356,8 @@ export interface TransactionListParams {
   cardId?: string;
   type?: string;
   status?: string;
+  /** Unexcluded pending/duplicate rows this actor can resolve; server filtered. */
+  review?: "1";
   categoryId?: string;
   from?: string;
   to?: string;
@@ -607,9 +611,10 @@ export const api = {
   },
 
   cards: {
-    list: (accessToken: AccessToken, householdId: string) =>
+    list: (accessToken: AccessToken, householdId: string, signal?: AbortSignal) =>
       apiFetch<CardSummary[]>(`/v1/cards${buildQuery({ householdId })}`, {
         accessToken,
+        signal,
       }),
     // create additionally reports how many previously-unlinked transactions the
     // registration retroactively linked (server-side backfill), for disclosure.
@@ -619,12 +624,18 @@ export const api = {
         body,
         accessToken,
       }),
-    get: (accessToken: AccessToken, id: string) =>
-      apiFetch<CardSummary>(`/v1/cards/${id}`, { accessToken }),
+    get: (accessToken: AccessToken, id: string, signal?: AbortSignal) =>
+      apiFetch<CardSummary>(`/v1/cards/${id}`, { accessToken, signal }),
     update: (accessToken: AccessToken, id: string, body: CardUpdateRequest) =>
       apiFetch<CardSummary>(`/v1/cards/${id}`, {
         method: "PATCH",
         body,
+        accessToken,
+      }),
+    correctLast4: (accessToken: AccessToken, id: string, body: CardLast4CorrectionRequest) =>
+      apiFetch<CardSummary>(`/v1/cards/${encodeURIComponent(id)}/last4`, {
+        method: "PATCH",
+        body: { last4: body.last4, expectedLast4: body.expectedLast4, expectedOwnerMemberId: body.expectedOwnerMemberId },
         accessToken,
       }),
   },
@@ -824,6 +835,9 @@ export const api = {
     /** manual-text 등록 후 파싱 상태 폴링(GET card-sms-events/:id). */
     eventStatus: (accessToken: AccessToken, id: string) =>
       apiFetch<CardSmsEventDetail>(`/v1/card-sms-events/${id}`, { accessToken }),
+    /** Registration feedback does not need to download the original message. */
+    postingStatus: (accessToken: AccessToken, id: string) =>
+      apiFetch<CardSmsPostingStatusResponse>(`/v1/card-sms-events/${id}/posting`, { accessToken }),
     /**
      * 격리(quarantined)·실패(parse_failed) 건을 사람이 확인·교정해 확정한다.
      * 거래를 만들고 동시에 학습 라벨을 남긴다(ADR-0023 S3).

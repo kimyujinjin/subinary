@@ -13,6 +13,7 @@ import type {
   CardSmsEventSummary,
   TransactionSummary,
 } from "@family/contracts";
+import { smsPostingDisposition } from "@/lib/sms-posting";
 
 /**
  * 홈이 '확인이 필요한 문자'를 노출하는 기간(3일).
@@ -52,7 +53,7 @@ export function pendingReviewTransactions(
   const byId = new Map<string, TransactionSummary>();
   for (const list of lists) {
     for (const t of list ?? []) {
-      if (t.excludedAt != null) continue;
+      if (t.excludedAt != null || (t.status !== "pending_review" && t.status !== "duplicate_suspected")) continue;
       byId.set(t.id, t);
     }
   }
@@ -85,6 +86,35 @@ export function partitionSmsByWindow(
   return { recent, older };
 }
 
+/** Separate genuine review from status-only waits, once per event across caches. */
+export function partitionTodoSms(
+  sms: readonly CardSmsEventSummary[] | undefined,
+  unposted: readonly CardSmsEventSummary[] | undefined,
+): { sms: CardSmsEventSummary[]; unpostedNeedsReview: CardSmsEventSummary[]; processing: CardSmsEventSummary[]; unpostedUnknown: CardSmsEventSummary[] } {
+  const originalIds = new Set((sms ?? []).map(event => event.id));
+  const byId = new Map<string, CardSmsEventSummary>();
+  for (const event of [...(sms ?? []), ...(unposted ?? [])]) {
+    const previous = byId.get(event.id);
+    // Explicit posting metadata beats an older cache without that metadata.
+    const rank = (item: CardSmsEventSummary) => {
+      const kind = smsPostingDisposition(item);
+      return kind === "posted" ? 4 : kind === "not_applicable" ? 3 : kind === "needs_review" ? 2 : kind === "processing" ? 1 : 0;
+    };
+    if (!previous || (event.posting && !previous.posting)
+        || (Boolean(event.posting) === Boolean(previous.posting) && rank(event) >= rank(previous))) {
+      byId.set(event.id, event);
+    }
+  }
+  const result = { sms: [] as CardSmsEventSummary[], unpostedNeedsReview: [] as CardSmsEventSummary[], processing: [] as CardSmsEventSummary[], unpostedUnknown: [] as CardSmsEventSummary[] };
+  for (const event of byId.values()) {
+    const kind = smsPostingDisposition(event);
+    if (kind === "needs_review") (originalIds.has(event.id) ? result.sms : result.unpostedNeedsReview).push(event);
+    else if (kind === "processing") result.processing.push(event);
+    else if (kind === "unknown") result.unpostedUnknown.push(event);
+  }
+  return result;
+}
+
 /** 할 일 3종의 건수 묶음. 합계 배지·카드 노출 판단의 단일 원천. */
 export interface TodoCountBreakdown {
   /** 미해결 결제 실패 묶음 수. */
@@ -93,11 +123,13 @@ export interface TodoCountBreakdown {
   reviews: number;
   /** 읽지 못한 문자 수(전 기간). */
   sms: number;
+  /** Other genuine review SMS, already deduplicated against sms. Never all unposted. */
+  unpostedNeedsReview?: number;
 }
 
 /** 배지에 찍히는 합계. 세 소스 중 하나라도 못 읽었으면 그 축은 0으로 센다. */
 export function todoTotal(counts: TodoCountBreakdown): number {
-  return counts.declines + counts.reviews + counts.sms;
+  return counts.declines + counts.reviews + counts.sms + (counts.unpostedNeedsReview ?? 0);
 }
 
 /**

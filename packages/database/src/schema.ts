@@ -17,6 +17,7 @@ import {
   check,
   date,
   doublePrecision,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -31,6 +32,7 @@ import {
   uuid,
   vector,
 } from 'drizzle-orm/pg-core';
+
 
 /* -------------------------------------------------------------------------- */
 /* pgEnum                                                                     */
@@ -591,6 +593,8 @@ export const cardSmsParseStatus = pgEnum('card_sms_parse_status', [
   'parse_failed',
   'pending_review',
   'quarantined',
+  // 모임금고 저금 등 카드 결제가 아닌 안내. 원문은 보존하고 거래는 만들지 않는다.
+  'ignored',
 ]);
 
 /** 카드 거래 종류(승인/취소/거절/미상). declined=승인거절·거부·실패(체결 안 됨, 미승격). */
@@ -1716,12 +1720,14 @@ export type NewCategoryRecategorizeItem =
  * - member: 특정 구성원(scopeRefId=householdMembers.id)
  * - category: 특정 카테고리(scopeRefId=expenseCategories.id)
  * - card: 특정 카드(scopeRefId=paymentCards.id)
+ * - card_group: 같은 구성원의 명시한 개인 카드 묶음(cardIds)
  */
 export const budgetScopeType = pgEnum('budget_scope_type', [
   'household',
   'member',
   'category',
   'card',
+  'card_group',
 ]);
 
 /** 예산 주기(MVP는 월 예산만). */
@@ -1748,6 +1754,8 @@ export const budgets = pgTable(
     name: text('name'),
     scopeType: budgetScopeType('scope_type').notNull(),
     scopeRefId: uuid('scope_ref_id'),
+    /** 카드 묶음의 정렬된 고정 목록. 카드 상태가 바뀌어도 과거 범위는 유지한다. */
+    cardIds: uuid('card_ids').array().notNull().default(sql`'{}'::uuid[]`),
     amount: integer('amount').notNull(),
     /** Asia/Seoul 회계월의 첫날(`YYYY-MM-01`). 순간이 아니므로 date로 저장한다. */
     effectiveMonth: date('effective_month', { mode: 'string' }).notNull(),
@@ -1775,6 +1783,15 @@ export const budgets = pgTable(
     uniqueIndex('budgets_household_month_scope_unique')
       .on(table.householdId, table.effectiveMonth)
       .where(sql`${table.scopeType} = 'household'`),
+    uniqueIndex('budgets_household_month_card_group_unique')
+      .on(table.householdId, table.effectiveMonth, table.cardIds)
+      .where(sql`${table.scopeType} NOT IN ('household', 'member', 'category', 'card')`),
+    check('budgets_card_group_shape_check', sql`(
+      (${table.scopeType} IN ('household', 'member', 'category', 'card') AND cardinality(${table.cardIds}) = 0)
+      OR (${table.scopeType} NOT IN ('household', 'member', 'category', 'card')
+        AND ${table.scopeRefId} IS NULL AND cardinality(${table.cardIds}) BETWEEN 2 AND 20
+        AND ${table.cardIds} = budget_card_ids_canonical(${table.cardIds}))
+    )`),
     index('budgets_household_effective_month_idx').on(
       table.householdId,
       table.effectiveMonth,
@@ -1788,6 +1805,17 @@ export const budgets = pgTable(
 
 export type Budget = typeof budgets.$inferSelect;
 export type NewBudget = typeof budgets.$inferInsert;
+
+/** 과거월을 포함한 카드 범위 정정 이력. 한도와 예산 ID는 별도 변경하지 않는다. */
+export const budgetScopeCorrections = pgTable('budget_scope_corrections', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  budgetId: uuid('budget_id').notNull().references(() => budgets.id, { onDelete: 'cascade' }),
+  previousCardIds: uuid('previous_card_ids').array().notNull(),
+  cardIds: uuid('card_ids').array().notNull(),
+  actorUserId: uuid('actor_user_id').notNull().references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index('budget_scope_corrections_budget_id_idx').on(table.budgetId)]);
+
 
 /**
  * 예산 월 복사 멱등 원장. 한 사용자 동작의 재시도는 최초에 생성한 budget ID 집합을
@@ -4341,7 +4369,7 @@ export type NewModelTrafficPolicy = typeof modelTrafficPolicies.$inferInsert;
 /**
  * 정기 지출 series의 사용자 상태.
  *
- * - `candidate`: 엔진이 만든 **미확정 후보**. 폐기·재생성 가능한 projection이다.
+ * - `candidate`: 엔진이 만든 **미확정 후보**. 근거가 1:1로 이어지면 자동 갱신에서도 ID를 유지한다.
  * - `confirmed` / `rejected`: 사용자의 판단. **조용히 지우지 않는다.**
  * - `needs_review`: 재계산 결과 근거가 사라졌거나 series가 합쳐/갈라져 기존 판단을
  *   그대로 이어 붙일 수 없는 상태. 시스템이 사용자의 결정을 임의로 폐기하는 대신
@@ -4568,6 +4596,13 @@ export type RecurringSeriesEvidence =
 export type NewRecurringSeriesEvidence =
   typeof recurringSeriesEvidence.$inferInsert;
 
+/** 후보가 0건이어도 성공한 계산 시각을 남기는 가구별 갱신 상태(`0063`). */
+export const recurringRecomputeState = pgTable('recurring_recompute_state', {
+  householdId: uuid('household_id').primaryKey().references(() => households.id, { onDelete: 'cascade' }),
+  computedAt: timestamp('computed_at', { withTimezone: true }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 /**
  * 플레이그라운드 미니앱의 진행 상태(`0061`).
  *
@@ -4610,3 +4645,256 @@ export const playStates = pgTable(
 
 export type PlayState = typeof playStates.$inferSelect;
 export type NewPlayState = typeof playStates.$inferInsert;
+
+/* -------------------------------------------------------------------------- */
+/* manual finance — 수동 기록, 카드 원장·법적 소유권과 분리                    */
+/* -------------------------------------------------------------------------- */
+
+export const manualAssets = pgTable('manual_assets', {
+  id: uuid('id').primaryKey(),
+  householdId: uuid('household_id').notNull().references(() => households.id),
+  /** 작성·공유 권한의 소유자이며 법적 명의를 뜻하지 않는다. */
+  ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
+  kind: text('kind').$type<'account' | 'saving' | 'stock' | 'loan'>().notNull(),
+  label: text('label').notNull(),
+  visibility: text('visibility').$type<'private' | 'household'>().notNull().default('private'),
+  amount: numeric('amount', { precision: 20, scale: 0 }),
+  currency: text('currency').notNull().default('KRW'),
+  asOfDate: date('as_of_date', { mode: 'string' }),
+  source: text('source').$type<'manual'>(),
+  legalOwnerLabel: text('legal_owner_label'),
+  note: text('note'),
+  version: integer('version').notNull().default(1),
+  /** 최초 입력의 SHA-256. 수정·삭제 뒤에도 같은 작성 요청이 재생성되지 않는다. */
+  creationPayloadHash: text('creation_payload_hash').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+}, (table) => [
+  index('manual_assets_household_scope_idx').on(table.householdId, table.visibility, table.ownerUserId),
+  check('manual_assets_kind_check', sql`${table.kind} IN ('account', 'saving', 'stock', 'loan')`),
+  check('manual_assets_visibility_check', sql`${table.visibility} IN ('private', 'household')`),
+  check('manual_assets_amount_check', sql`${table.amount} IS NULL OR ${table.amount} >= 0`),
+  check('manual_assets_currency_check', sql`${table.currency} = 'KRW'`),
+  check('manual_assets_snapshot_check', sql`(${table.amount} IS NULL AND ${table.asOfDate} IS NULL AND ${table.source} IS NULL) OR (${table.amount} IS NOT NULL AND ${table.asOfDate} IS NOT NULL AND ${table.source} IS NOT NULL AND ${table.source} = 'manual')`),
+  check('manual_assets_date_check', sql`${table.asOfDate} IS NULL OR (${table.asOfDate} >= DATE '0001-01-01' AND ${table.asOfDate} <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::date)`),
+  check('manual_assets_label_check', sql`char_length(btrim(${table.label})) BETWEEN 1 AND 100`),
+  check('manual_assets_notes_check', sql`(${table.legalOwnerLabel} IS NULL OR char_length(btrim(${table.legalOwnerLabel})) BETWEEN 1 AND 100) AND (${table.note} IS NULL OR char_length(btrim(${table.note})) BETWEEN 1 AND 1000)`),
+  check('manual_assets_version_check', sql`${table.version} > 0`),
+  check('manual_assets_creation_hash_check', sql`${table.creationPayloadHash} ~ '^[0-9a-f]{64}$'`),
+]);
+export type ManualAssetRecord = typeof manualAssets.$inferSelect;
+export type NewManualAssetRecord = typeof manualAssets.$inferInsert;
+
+export const manualHousingPlans = pgTable('manual_housing_plans', {
+  id: uuid('id').primaryKey(),
+  householdId: uuid('household_id').notNull().references(() => households.id),
+  ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
+  label: text('label').notNull(),
+  visibility: text('visibility').$type<'private' | 'household'>().notNull().default('private'),
+  occupancyYear: integer('occupancy_year'),
+  contractStage: text('contract_stage'),
+  /** 자유 메모. 통장 재원 ID·배정·차입 예측을 저장하지 않는다. */
+  fundingNote: text('funding_note'),
+  version: integer('version').notNull().default(1),
+  creationPayloadHash: text('creation_payload_hash').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+}, (table) => [
+  index('manual_housing_plans_household_scope_idx').on(table.householdId, table.visibility, table.ownerUserId),
+  check('manual_housing_plans_visibility_check', sql`${table.visibility} IN ('private', 'household')`),
+  check('manual_housing_plans_label_check', sql`char_length(btrim(${table.label})) BETWEEN 1 AND 100`),
+  check('manual_housing_plans_notes_check', sql`(${table.contractStage} IS NULL OR char_length(btrim(${table.contractStage})) BETWEEN 1 AND 100) AND (${table.fundingNote} IS NULL OR char_length(btrim(${table.fundingNote})) BETWEEN 1 AND 2000)`),
+  check('manual_housing_plans_year_check', sql`${table.occupancyYear} IS NULL OR ${table.occupancyYear} BETWEEN 1 AND 9999`),
+  check('manual_housing_plans_version_check', sql`${table.version} > 0`),
+  check('manual_housing_plans_creation_hash_check', sql`${table.creationPayloadHash} ~ '^[0-9a-f]{64}$'`),
+]);
+export type ManualHousingPlanRecord = typeof manualHousingPlans.$inferSelect;
+export type NewManualHousingPlanRecord = typeof manualHousingPlans.$inferInsert;
+
+export const manualHousingPayments = pgTable('manual_housing_payments', {
+  id: uuid('id').primaryKey(),
+  planId: uuid('plan_id').notNull().references(() => manualHousingPlans.id, { onDelete: 'cascade' }),
+  /** 부모 version CAS와 같은 트랜잭션에서 전체 교체하며 입력 순서를 보존한다. */
+  position: integer('position').notNull().default(0),
+  kind: text('kind').$type<'contract' | 'interim' | 'balance' | 'option'>().notNull(),
+  installment: integer('installment'),
+  dueDate: date('due_date', { mode: 'string' }),
+  amount: numeric('amount', { precision: 20, scale: 0 }),
+  paidAmount: numeric('paid_amount', { precision: 20, scale: 0 }),
+  paidDate: date('paid_date', { mode: 'string' }),
+}, (table) => [
+  unique('manual_housing_payments_plan_position_unique').on(table.planId, table.position),
+  check('manual_housing_payments_position_check', sql`${table.position} BETWEEN 0 AND 99`),
+  check('manual_housing_payments_kind_check', sql`${table.kind} IN ('contract', 'interim', 'balance', 'option')`),
+  check('manual_housing_payments_installment_check', sql`${table.installment} IS NULL OR ${table.installment} BETWEEN 1 AND 1000`),
+  check('manual_housing_payments_amount_check', sql`${table.amount} IS NULL OR ${table.amount} >= 0`),
+  check('manual_housing_payments_paid_check', sql`${table.paidAmount} IS NULL OR (${table.amount} IS NOT NULL AND ${table.paidAmount} >= 0 AND ${table.paidAmount} <= ${table.amount})`),
+  check('manual_housing_payments_paid_date_check', sql`(${table.paidAmount} IS NOT NULL AND ${table.paidAmount} > 0 AND ${table.paidDate} IS NOT NULL) OR ((${table.paidAmount} IS NULL OR ${table.paidAmount} = 0) AND ${table.paidDate} IS NULL)`),
+  check('manual_housing_payments_calendar_check', sql`(${table.dueDate} IS NULL OR ${table.dueDate} BETWEEN DATE '0001-01-01' AND DATE '9999-12-31') AND (${table.paidDate} IS NULL OR (${table.paidDate} >= DATE '0001-01-01' AND ${table.paidDate} <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::date))`),
+]);
+export type ManualHousingPaymentRecord = typeof manualHousingPayments.$inferSelect;
+export type NewManualHousingPaymentRecord = typeof manualHousingPayments.$inferInsert;
+
+/** 변경의 식별자와 버전만 보관한다. 금액·이름·메모·입력 본문을 복제하지 않는다. */
+export const manualFinanceAudit = pgTable('manual_finance_audit', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  householdId: uuid('household_id').notNull().references(() => households.id),
+  actorUserId: uuid('actor_user_id').notNull().references(() => users.id),
+  entityType: text('entity_type').$type<'asset' | 'housing_plan'>().notNull(),
+  entityId: uuid('entity_id').notNull(),
+  action: text('action').$type<'create' | 'update' | 'delete' | 'membership_removed'>().notNull(),
+  version: integer('version').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  // MAX 버전의 일반 수정 이력과 개인정보 공유 철회는 서로 다른 사건이다.
+  unique('manual_finance_audit_entity_version_action_unique').on(table.entityType, table.entityId, table.version, table.action),
+  index('manual_finance_audit_household_idx').on(table.householdId, table.createdAt),
+  check('manual_finance_audit_entity_type_check', sql`${table.entityType} IN ('asset', 'housing_plan')`),
+  check('manual_finance_audit_action_check', sql`${table.action} IN ('create', 'update', 'delete', 'membership_removed')`),
+  check('manual_finance_audit_version_check', sql`${table.version} > 0`),
+]);
+export type ManualFinanceAuditRecord = typeof manualFinanceAudit.$inferSelect;
+
+/* -------------------------------------------------------------------------- */
+/* Reviewed Shinhan browser observations — no provider credentials or sessions */
+/* -------------------------------------------------------------------------- */
+
+export const loanRecords = pgTable('loan_records', {
+  id: uuid('id').primaryKey(),
+  householdId: uuid('household_id').notNull().references(() => households.id),
+  ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
+  accountFingerprint: text('account_fingerprint').notNull(),
+  accountLast4: text('account_last4').notNull(),
+  loanType: text('loan_type').$type<'interim' | 'jeonse'>().notNull(),
+  label: text('label').notNull(),
+  visibility: text('visibility').$type<'private' | 'household'>().notNull().default('private'),
+  totalMode: text('total_mode').$type<'reference' | 'distinct' | 'replacement'>().notNull().default('reference'),
+  replacesManualAssetId: uuid('replaces_manual_asset_id').references(() => manualAssets.id),
+  manualExpectedVersion: integer('manual_expected_version'),
+  /** A sharing grant belongs to one membership incarnation, never a later rejoin. */
+  sharedMemberId: uuid('shared_member_id').references(() => householdMembers.id),
+  sharedJoinedAt: timestamp('shared_joined_at', { withTimezone: true }),
+  version: integer('version').notNull().default(1),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+}, (table) => [
+  // One active record per household/owner/account. A record left in a former
+  // household must not block a fresh reviewed import in the current household.
+  uniqueIndex('loan_records_owner_fingerprint_unique').on(table.householdId, table.ownerUserId, table.accountFingerprint)
+    .where(sql`${table.deletedAt} IS NULL`),
+  unique('loan_records_snapshot_scope_unique').on(table.id, table.householdId, table.ownerUserId),
+  uniqueIndex('loan_records_manual_replacement_unique').on(table.replacesManualAssetId)
+    .where(sql`${table.deletedAt} IS NULL AND ${table.replacesManualAssetId} IS NOT NULL`),
+  index('loan_records_household_scope_idx').on(table.householdId, table.visibility, table.ownerUserId),
+  check('loan_records_fingerprint_check', sql`${table.accountFingerprint} ~ '^[0-9a-f]{64}$'`),
+  check('loan_records_last4_check', sql`${table.accountLast4} ~ '^[0-9]{4}$'`),
+  check('loan_records_type_check', sql`${table.loanType} IN ('interim', 'jeonse')`),
+  check('loan_records_label_check', sql`char_length(btrim(${table.label})) BETWEEN 1 AND 100`),
+  check('loan_records_visibility_check', sql`${table.visibility} IN ('private', 'household')`),
+  check('loan_records_total_mode_check', sql`${table.totalMode} IN ('reference', 'distinct', 'replacement')`),
+  check('loan_records_mapping_check', sql`(${table.totalMode} = 'replacement' AND ${table.replacesManualAssetId} IS NOT NULL AND ${table.manualExpectedVersion} IS NOT NULL AND ${table.manualExpectedVersion} > 0) OR (${table.totalMode} IN ('reference', 'distinct') AND ${table.replacesManualAssetId} IS NULL AND ${table.manualExpectedVersion} IS NULL)`),
+  check('loan_records_sharing_grant_check', sql`(${table.visibility} = 'household' AND ${table.sharedMemberId} IS NOT NULL AND ${table.sharedJoinedAt} IS NOT NULL) OR (${table.visibility} = 'private' AND ${table.sharedMemberId} IS NULL AND ${table.sharedJoinedAt} IS NULL)`),
+  check('loan_records_version_check', sql`${table.version} > 0`),
+]);
+export type LoanRecord = typeof loanRecords.$inferSelect;
+export type NewLoanRecord = typeof loanRecords.$inferInsert;
+
+/** Immutable observations; metadata changes may advance the record beyond its latest snapshot. */
+export const loanSnapshots = pgTable('loan_snapshots', {
+  /** The client's commit request UUID is also its global idempotency identity. */
+  id: uuid('id').primaryKey(),
+  recordId: uuid('record_id').notNull(),
+  householdId: uuid('household_id').notNull(),
+  ownerUserId: uuid('owner_user_id').notNull(),
+  outstandingPrincipalKrw: numeric('outstanding_principal_krw', { precision: 20, scale: 0 }).notNull(),
+  maturityDate: date('maturity_date', { mode: 'string' }),
+  capturedAt: timestamp('captured_at', { withTimezone: true }).notNull(),
+  source: text('source').$type<'browser_assisted'>().notNull().default('browser_assisted'),
+  formatVersion: integer('format_version').notNull().default(1),
+  payloadHash: text('payload_hash').notNull(),
+  recordVersion: integer('record_version').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  foreignKey({ name: 'loan_snapshots_record_scope_fk',
+    columns: [table.recordId, table.householdId, table.ownerUserId],
+    foreignColumns: [loanRecords.id, loanRecords.householdId, loanRecords.ownerUserId] }),
+  unique('loan_snapshots_record_version_unique').on(table.recordId, table.recordVersion),
+  check('loan_snapshots_amount_check', sql`${table.outstandingPrincipalKrw} >= 0`),
+  check('loan_snapshots_maturity_check', sql`${table.maturityDate} IS NULL OR ${table.maturityDate} BETWEEN DATE '0001-01-01' AND DATE '9999-12-31'`),
+  check('loan_snapshots_capture_check', sql`${table.capturedAt} >= TIMESTAMPTZ '0001-01-01 00:00:00+00' AND ${table.capturedAt} <= CURRENT_TIMESTAMP + INTERVAL '5 minutes'`),
+  check('loan_snapshots_source_check', sql`${table.source} = 'browser_assisted'`),
+  check('loan_snapshots_format_version_check', sql`${table.formatVersion} = 1`),
+  check('loan_snapshots_payload_hash_check', sql`${table.payloadHash} ~ '^[0-9a-f]{64}$'`),
+  check('loan_snapshots_record_version_check', sql`${table.recordVersion} > 0`),
+]);
+export type LoanSnapshot = typeof loanSnapshots.$inferSelect;
+export type NewLoanSnapshot = typeof loanSnapshots.$inferInsert;
+
+/** Dedicated provider vault envelope; never shares the SMS device key. */
+export type FinanceSecretEnvelope = { version: number; iv: string; tag: string; ciphertext: string };
+export const financeConnections = pgTable('finance_connections', {
+  id: uuid('id').primaryKey(),
+  householdId: uuid('household_id').notNull().references(() => households.id),
+  ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
+  memberId: uuid('member_id').notNull().references(() => householdMembers.id),
+  memberJoinedAt: timestamp('member_joined_at', { withTimezone: true }).notNull(),
+  provider: text('provider').$type<'toss_securities'>().notNull().default('toss_securities'),
+  clientFingerprint: text('client_fingerprint').notNull(),
+  status: text('status').$type<'connecting' | 'select_account' | 'ready' | 'refreshing' | 'error' | 'reauth_required' | 'disconnected'>().notNull(),
+  version: integer('version').notNull().default(1),
+  consentedAt: timestamp('consented_at', { withTimezone: true }).notNull().defaultNow(),
+  consentVersion: integer('consent_version').notNull().default(1),
+  refreshOnOpen: boolean('refresh_on_open').notNull().default(true),
+  credentials: jsonb('credentials').$type<FinanceSecretEnvelope>(),
+  tokenIssuance: text('token_issuance').$type<'started' | 'complete' | 'uncertain'>().notNull().default('started'),
+  token: jsonb('token').$type<FinanceSecretEnvelope>(),
+  tokenExpiresAt: timestamp('token_expires_at', { withTimezone: true }),
+  accounts: jsonb('accounts').$type<FinanceSecretEnvelope>(),
+  selectedAccountId: text('selected_account_id'),
+  operationId: uuid('operation_id'),
+  operationStartedAt: timestamp('operation_started_at', { withTimezone: true }),
+  lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+  retryNotBefore: timestamp('retry_not_before', { withTimezone: true }),
+  lastSuccessAt: timestamp('last_success_at', { withTimezone: true }),
+  lastSnapshotId: uuid('last_snapshot_id'),
+  errorCode: text('error_code'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  disconnectedAt: timestamp('disconnected_at', { withTimezone: true }),
+}, (table) => [
+  unique('finance_connections_scope_unique').on(table.id, table.householdId, table.ownerUserId),
+  // One issuance authority across app users, households and API replicas.
+  uniqueIndex('finance_connections_client_active_unique').on(table.clientFingerprint)
+    .where(sql`${table.disconnectedAt} IS NULL OR ${table.tokenIssuance} <> 'complete'`),
+  index('finance_connections_owner_idx').on(table.householdId, table.ownerUserId),
+  check('finance_connections_provider_check', sql`${table.provider} = 'toss_securities'`),
+  check('finance_connections_issuance_check', sql`${table.tokenIssuance} IN ('started','complete','uncertain')`),
+  check('finance_connections_version_check', sql`${table.version} > 0 AND ${table.consentVersion} = 1`),
+  check('finance_connections_status_check', sql`${table.status} IN ('connecting','select_account','ready','refreshing','error','reauth_required','disconnected')`),
+  check('finance_connections_fingerprint_check', sql`${table.clientFingerprint} ~ '^[0-9a-f]{64}$'`),
+  check('finance_connections_account_check', sql`${table.selectedAccountId} IS NULL OR ${table.selectedAccountId} ~ '^[0-9a-f]{64}$'`),
+  check('finance_connections_disconnected_check', sql`${table.disconnectedAt} IS NULL OR (${table.status} = 'disconnected' AND ${table.credentials} IS NULL AND ${table.token} IS NULL AND ${table.accounts} IS NULL AND ${table.operationId} IS NULL AND ${table.refreshOnOpen} = false)`),
+]);
+
+/** A request starts pending once and becomes terminal once; terminal observations cannot be rewritten. */
+export const financeConnectionSnapshots = pgTable('finance_connection_snapshots', {
+  id: uuid('id').primaryKey(),
+  connectionId: uuid('connection_id').notNull(),
+  householdId: uuid('household_id').notNull(),
+  ownerUserId: uuid('owner_user_id').notNull(),
+  connectionVersion: integer('connection_version').notNull(),
+  state: text('state').$type<'pending' | 'succeeded' | 'failed'>().notNull().default('pending'),
+  payload: jsonb('payload').$type<Record<string, unknown>>(),
+  errorCode: text('error_code'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+}, (table) => [
+  foreignKey({ name: 'finance_connection_snapshots_scope_fk', columns: [table.connectionId, table.householdId, table.ownerUserId],
+    foreignColumns: [financeConnections.id, financeConnections.householdId, financeConnections.ownerUserId] }),
+  index('finance_connection_snapshots_connection_idx').on(table.connectionId, table.createdAt),
+  check('finance_connection_snapshots_state_check', sql`(${table.state} = 'pending' AND ${table.payload} IS NULL AND ${table.completedAt} IS NULL) OR (${table.state} = 'succeeded' AND ${table.payload} IS NOT NULL AND ${table.completedAt} IS NOT NULL AND ${table.errorCode} IS NULL) OR (${table.state} = 'failed' AND ${table.payload} IS NULL AND ${table.completedAt} IS NOT NULL)`),
+  check('finance_connection_snapshots_version_check', sql`${table.connectionVersion} > 0`),
+]);

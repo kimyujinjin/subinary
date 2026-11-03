@@ -1,100 +1,52 @@
-/* ---------------------------------------------------------------------------
- * 하단 탭 · 헤더 아바타 활성 판정 (IA 개편)
- *
- * 왜 순수 모듈로 뺐나: 활성 판정이 `layout.tsx` 안의 인라인 배열이라 테스트가 없었고,
- * 경로가 하나 늘 때마다 조용히 깨졌다(`/todo`·`/declines`·`/more/*`가 그랬다).
- * 판정 규칙만 여기 모으고 화면은 결과만 쓴다.
- *
- * 경로 끝 슬래시를 정규화한다 — 모바일(Capacitor) 빌드는 `trailingSlash: true`라
- * 같은 화면이 `/todo`와 `/todo/` 두 모양으로 온다(next.config.ts:34).
- * ------------------------------------------------------------------------- */
+/** Primary destinations share one route map with native back navigation. */
+export type TabKey = "home" | "assets" | "ledger";
 
-/** 하단 탭 5칸 + 헤더 아바타(account). 어디에도 속하지 않으면 `null`. */
-export type TabKey =
-  | "home"
-  | "transactions"
-  | "ai"
-  | "budgets"
-  | "todo"
-  | "account";
+export const PRIMARY_TABS = [
+  { key: "home", href: "/dashboard", label: "홈" },
+  { key: "ledger", href: "/transactions", label: "가계부" },
+  { key: "assets", href: "/assets", label: "자산" },
+] as const satisfies ReadonlyArray<{ key: TabKey; href: string; label: string }>;
 
-/**
- * '할 일' 탭이 활성으로 취급하는 경로.
- *
- * `/declines`를 포함하는 이유: 실패한 결제는 `/todo`의 한 섹션이고, 거기서 탭해
- * 들어가는 **처리 화면**이다. `/more`에도 링크가 있지만(기록 열람) 사용자가 지금
- * 무엇을 하고 있는지는 "할 일을 처리하는 중"이 맞다.
- */
+/** Existing task and management URLs remain available under 전체. */
 export const TODO_PATHS: ReadonlyArray<string> = ["/todo", "/declines"];
-
-/**
- * 헤더 아바타(내 계정)가 활성으로 취급하는 관리 경로.
- *
- * 이 목록은 예전 '더보기' 탭의 `MORE_PATHS`를 그대로 물려받았다 — 탭이 헤더로
- * 올라갔을 뿐 "여기는 관리 화면"이라는 표시는 사라지면 안 된다.
- */
 export const ACCOUNT_PATHS: ReadonlyArray<string> = [
-  "/more",
-  "/play",
-  "/household",
-  "/cards",
-  "/devices",
-  "/categories",
-  "/ai-operations",
+  "/more", "/play", "/household", "/devices", "/categories", "/ai-operations",
 ];
 
-/**
- * 하단 탭이 가리키는 **루트 경로 5개**(중앙 AI 버튼 포함). 순서는 탭바와 같다.
- *
- * `TODO_PATHS`/`ACCOUNT_PATHS`와 다른 목록인 이유: 저것들은 "어느 탭을 밝힐까"(하위
- * 경로 포함)이고, 이것은 "여기가 그 탭의 첫 화면인가"다. Android 하드웨어 뒤로가기가
- * 앱을 닫아야 하는 지점이 정확히 이 5곳이다(lib/back-button.ts).
- */
-export const TAB_ROOTS: ReadonlyArray<string> = [
-  "/dashboard",
-  "/transactions",
-  "/ai",
-  "/budgets",
-  "/todo",
-];
+/** Only these three destinations use Android's double-back exit behavior. */
+export const TAB_ROOTS: ReadonlyArray<string> = PRIMARY_TABS.map((tab) => tab.href);
 
-/** 끝 슬래시를 뗀 경로(루트는 `/` 유지). */
+/** Capacitor exports may add trailing slashes. */
 export function normalizePath(pathname: string): string {
   if (!pathname) return "/";
-  const trimmed = pathname.replace(/\/+$/, "");
-  return trimmed === "" ? "/" : trimmed;
+  return pathname.replace(/\/+$/, "") || "/";
 }
 
-/** `pathname`이 `base` 자신이거나 그 하위 경로인가. */
 export function isUnder(pathname: string, base: string): boolean {
   const path = normalizePath(pathname);
   const root = normalizePath(base);
   return path === root || path.startsWith(`${root}/`);
 }
 
-/**
- * 지금 화면이 탭의 **루트**인가(하위 경로는 false).
- *
- * `activeTabFor(p) != null`과 헷갈리기 쉽다 — 그쪽은 `/transactions/123`도 '거래
- * 탭'으로 세지만 여기서는 false다. 뒤로가기는 하위 화면에서 상위로 올라가야 한다.
- */
 export function isTabRoot(pathname: string): boolean {
-  const path = normalizePath(pathname);
-  return TAB_ROOTS.some((root) => path === normalizePath(root));
+  return TAB_ROOTS.includes(normalizePath(pathname));
+}
+
+export function activeTabFor(pathname: string): TabKey | null {
+  if (isUnder(pathname, "/dashboard")) return "home";
+  if (isUnder(pathname, "/assets") || isUnder(pathname, "/cards") || isUnder(pathname, "/plan")) return "assets";
+  if (["/transactions", "/ledger", "/budgets", ...TODO_PATHS, "/more/recurring"].some((p) => isUnder(pathname, p))) return "ledger";
+  return null;
 }
 
 /**
- * 지금 화면이 어느 탭에 속하는가.
- *
- * 순서가 규칙이다 — `/declines`처럼 두 곳에서 링크되는 화면은 **먼저 일치한 쪽**이
- * 이긴다. 할 일(처리)이 계정(관리)보다 앞이다.
+ * No in-app history: return a deep link to its containing destination.
+ * Normal in-app back still returns to the actual previous list/detail screen.
  */
-export function activeTabFor(pathname: string): TabKey | null {
-  if (isUnder(pathname, "/dashboard")) return "home";
-  if (isUnder(pathname, "/transactions")) return "transactions";
-  if (isUnder(pathname, "/ai")) return "ai";
-  if (isUnder(pathname, "/budgets")) return "budgets";
-  if (TODO_PATHS.some((p) => isUnder(pathname, p))) return "todo";
-  if (ACCOUNT_PATHS.some((p) => isUnder(pathname, p))) return "account";
-  return null;
+export function parentTabHref(pathname: string): string {
+  if (isUnder(pathname, "/declines")) return "/todo";
+  if (normalizePath(pathname) === "/more") return "/dashboard";
+  if ([...ACCOUNT_PATHS, "/ai", "/notifications"].some((p) => isUnder(pathname, p)) && !isUnder(pathname, "/more/recurring")) return "/more";
+  const tab = activeTabFor(pathname);
+  return PRIMARY_TABS.find((item) => item.key === tab)?.href ?? "/dashboard";
 }

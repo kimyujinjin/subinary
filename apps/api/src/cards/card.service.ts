@@ -14,22 +14,23 @@
  */
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, ne } from 'drizzle-orm';
 
 import type {
   CardCreateRequest,
+  CardLast4CorrectionRequest,
   CardSummary,
   CardUpdateRequest,
 } from '@family/contracts';
+import { cardLast4CorrectionRequestSchema } from '@family/contracts';
 import { schema, type Db } from '@family/database';
-
-/** Trailing 4 digits used for auto-link/backfill matching (min 4 digits). */
-const CARD_TAIL_LENGTH = 4;
+import { resolvePaymentCardLink } from '@family/shared';
 
 /**
  * Card registration result: the card plus how many previously-unlinked
@@ -39,24 +40,6 @@ const CARD_TAIL_LENGTH = 4;
 export type CardCreateResult = CardSummary & {
   linkedTransactionCount: number;
 };
-
-/** Digits-only last 4, tolerating `****1234` vs `1234`; null under 4 digits. */
-function lastFourDigits(value: string | null): string | null {
-  if (!value) return null;
-  const digits = value.replace(/\D/g, '');
-  return digits.length < CARD_TAIL_LENGTH ? null : digits.slice(-CARD_TAIL_LENGTH);
-}
-
-/**
- * 발급사 비교용 정규화 키. 등록 카드는 `현대`, 파싱 이벤트는 `현대카드`처럼 '카드'
- * 접미사가 달라 공백·접미사를 제거해 맞춘다. 일반 `카드`(특정 실패)는 빈 키(→ null)가
- * 되어 매칭에서 제외된다. worker `resolveCard`의 동일 규칙과 대칭.
- */
-function normalizeIssuer(value: string | null): string | null {
-  if (!value) return null;
-  const key = value.replace(/\s+/g, '').replace(/카드$/, '');
-  return key.length > 0 ? key : null;
-}
 
 import { DB } from '../database/database.constants';
 
@@ -148,14 +131,9 @@ export class CardService {
   /* ---------------------------------------------------------------------- */
 
   /**
-   * Registers a card under the caller's household. The card's `ownerMemberId`
-   * is always the creator's own membership, so any active member may register
-   * their own card. `visibility` governs the visibility of transactions later
-   * auto-linked to this card (spec §1.4/§1.5).
-   *
-   * After insert, retroactively links previously-unlinked transactions whose
-   * source SMS shares this card's last 4 digits ({@link backfillUnlinked}) and
-   * returns the count so the UI can disclose the (visibility-changing) backfill.
+   * 호출자의 가구에 카드를 등록한다. 소유자는 명시한 활성 구성원이며 생략 시
+   * 등록자 본인이다. 등록 후 원본 구성원·발급사·번호가 유일하게 일치하는 미연결
+   * 거래만 소급 연결하고, 실제 연결 건수를 반환한다.
    */
   async create(
     userId: string,
@@ -200,10 +178,8 @@ export class CardService {
    * a card registered after its transactions arrived would never claim them.
    *
    * Safeguards mirror the promotion path:
-   * - 뒤 4자리 매칭: 같은 뒤 4자리 활성 카드가 *유일*할 때만(모호성 방지);
-   * - 발급사 매칭(번호 없는 문자): 같은 발급사 활성 카드가 *유일*할 때만, 원본 SMS에
-   *   카드번호가 없는 거래에 한해(뒤 4자리로 붙는 거래와 배타적) — worker `resolveCard`
-   *   발급사 폴백과 대칭;
+   * - 원본 구성원 소유 카드 또는 공용 카드 중 발급사·뒤 4자리로 유일한 카드만 연결;
+   * - 번호 없는 문자도 같은 구성원 범위를 지키며 공통 판정 함수를 사용;
    * - only `cardId IS NULL` rows, and never `pending_review` rows (those were
    *   flagged for human review and must not be silently claimed);
    * - linked rows inherit the card's visibility (consistent with promotion and
@@ -214,17 +190,15 @@ export class CardService {
   private async backfillUnlinked(
     card: schema.PaymentCard,
   ): Promise<number> {
-    const tail = lastFourDigits(card.maskedNumber);
-    const issuerKey = normalizeIssuer(card.issuer);
-    if (!tail && !issuerKey) {
-      return 0;
-    }
-
     try {
       const activeCards = await this.db
         .select({
+          id: schema.paymentCards.id,
           maskedNumber: schema.paymentCards.maskedNumber,
           issuer: schema.paymentCards.issuer,
+          ownerMemberId: schema.paymentCards.ownerMemberId,
+          isShared: schema.paymentCards.isShared,
+          visibility: schema.paymentCards.visibility,
         })
         .from(schema.paymentCards)
         .where(
@@ -234,23 +208,11 @@ export class CardService {
           ),
         );
 
-      // 모호성 가드: 같은 뒤 4자리 / 같은 발급사 활성 카드가 각각 유일할 때만 적용.
-      const tailUnique =
-        tail != null &&
-        activeCards.filter((c) => lastFourDigits(c.maskedNumber) === tail)
-          .length === 1;
-      const issuerUnique =
-        issuerKey != null &&
-        activeCards.filter((c) => normalizeIssuer(c.issuer) === issuerKey)
-          .length === 1;
-      if (!tailUnique && !issuerUnique) {
-        return 0;
-      }
-
       // cardId=null·비검토 거래 + 원본 SMS의 뒤 4자리·발급사.
       const candidates = await this.db
         .select({
           id: schema.cardTransactions.id,
+          memberId: schema.cardSmsEvents.memberId,
           maskedCardNumber: schema.cardSmsEvents.maskedCardNumber,
           issuer: schema.cardSmsEvents.issuer,
         })
@@ -262,6 +224,7 @@ export class CardService {
         .where(
           and(
             eq(schema.cardTransactions.householdId, card.householdId),
+            eq(schema.cardTransactions.memberId, schema.cardSmsEvents.memberId),
             isNull(schema.cardTransactions.cardId),
             ne(schema.cardTransactions.status, 'pending_review'),
           ),
@@ -269,14 +232,8 @@ export class CardService {
 
       const matchIds = new Set<string>();
       for (const c of candidates) {
-        const cTail = lastFourDigits(c.maskedCardNumber);
-        // 뒤 4자리 일치(번호 있는 거래).
-        if (tailUnique && cTail === tail) {
-          matchIds.add(c.id);
-          continue;
-        }
-        // 번호 없는 거래 → 발급사 일치.
-        if (issuerUnique && !cTail && normalizeIssuer(c.issuer) === issuerKey) {
+        const link = resolvePaymentCardLink(c, activeCards);
+        if (link.cardId === card.id) {
           matchIds.add(c.id);
         }
       }
@@ -284,16 +241,22 @@ export class CardService {
         return 0;
       }
 
-      await this.db
+      const linked = await this.db
         .update(schema.cardTransactions)
         .set({
           cardId: card.id,
           visibility: card.visibility,
           updatedAt: new Date(),
         })
-        .where(inArray(schema.cardTransactions.id, [...matchIds]));
+        .where(and(
+          inArray(schema.cardTransactions.id, [...matchIds]),
+          isNull(schema.cardTransactions.cardId),
+          ne(schema.cardTransactions.status, 'pending_review'),
+        ))
+        .returning({ id: schema.cardTransactions.id });
 
-      return matchIds.size;
+      // 조회 후 사용자가 직접 연결했거나 검토로 바꾼 거래는 덮어쓰지 않는다.
+      return linked.length;
     } catch {
       return 0;
     }
@@ -388,6 +351,103 @@ export class CardService {
       throw new NotFoundException('card not found');
     }
     return toCardSummary(updated);
+  }
+
+  /**
+   * A correction is independent of create/backfill. The household FOR UPDATE lock
+   * serializes corrections and conflicts with the FK KEY SHARE of card INSERTs.
+   * READ COMMITTED then observes an INSERT that committed before our lock was acquired.
+   * Lock order: household -> active actor membership -> cards ordered by id.
+   * Later row locks use NOWAIT: existing promotion writers lock a card before
+   * their household FK check, so waiting while holding this household can deadlock.
+   */
+  async correctLast4(userId: string, id: string, input: CardLast4CorrectionRequest): Promise<CardSummary> {
+    // This service can also be called directly, without the HTTP validation pipe.
+    const parsed = cardLast4CorrectionRequestSchema.safeParse(input);
+    if (!parsed.success) throw new BadRequestException('카드 뒤 4자리와 변경 전 번호를 확인해 주세요.');
+    const { last4, expectedLast4, expectedOwnerMemberId } = parsed.data;
+    const initial = await this.loadCard(id);
+    const initialMember = await this.requireMembership(initial.householdId, userId);
+    this.assertCanCorrectLast4(initialMember, initial);
+
+    try {
+      return await this.db.transaction(async (tx) => {
+        const [household] = await tx.select({ id: schema.households.id }).from(schema.households)
+          .where(and(eq(schema.households.id, initial.householdId), isNull(schema.households.deletedAt)))
+          .for('update').limit(1);
+        if (!household) throw new ForbiddenException('not a household member');
+        const [member] = await tx.select().from(schema.householdMembers).where(and(
+          eq(schema.householdMembers.householdId, initial.householdId),
+          eq(schema.householdMembers.userId, userId), eq(schema.householdMembers.status, 'active'),
+        )).for('share', { noWait: true }).limit(1);
+        if (!member) throw new ForbiddenException('not a household member');
+        const cards = await tx.select().from(schema.paymentCards)
+          .where(eq(schema.paymentCards.householdId, initial.householdId))
+          .orderBy(asc(schema.paymentCards.id)).for('update', { noWait: true });
+        const target = cards.find(card => card.id === id);
+        if (!target) throw new NotFoundException('card not found');
+        this.assertCanCorrectLast4(member, target);
+        if (target.ownerMemberId !== expectedOwnerMemberId) throw this.last4Stale();
+
+        // Legacy decoration such as ****1234 is understood, but a PAN or malformed
+        // non-null value is never truncated or guessed to mean an unregistered card.
+        const digits = target.maskedNumber?.replace(/[^0-9]/g, '') ?? null;
+        if (digits !== null && digits.length !== 4) throw this.last4Stale();
+        const currentLast4 = digits;
+        if (currentLast4 === last4) return toCardSummary(target); // also safe after a lost response
+        if (currentLast4 !== expectedLast4) throw this.last4Stale();
+
+        if (target.status === 'active') {
+          for (const other of cards) {
+            if (other.id === id || other.status !== 'active') continue;
+            // Either shared card overlaps the other owner's matching scope. Reuse
+            // the normal issuer/tail matcher rather than duplicating its normalization.
+            const source = { memberId: target.isShared ? other.ownerMemberId : target.ownerMemberId,
+              issuer: target.issuer, maskedCardNumber: last4 };
+            const otherDigits = other.maskedNumber?.replace(/[^0-9]/g, '') ?? null;
+            if (otherDigits !== null && otherDigits.length !== 4) {
+              // Compare only issuer/owner overlap with an identical synthetic tail.
+              // The malformed stored value is never truncated into guessed digits.
+              if (resolvePaymentCardLink(source, [{ ...other, maskedNumber: last4 }]).cardId === other.id) {
+                throw this.last4Stale();
+              }
+              continue;
+            }
+            if (resolvePaymentCardLink(source, [other]).cardId === other.id) {
+              throw new ConflictException({ code: 'card_last4_conflict',
+                message: '같은 조건으로 자동 연결되는 카드가 이미 있어요. 카드 목록을 확인해 주세요.' });
+            }
+          }
+        }
+        const [updated] = await tx.update(schema.paymentCards).set({ maskedNumber: last4, updatedAt: new Date() })
+          .where(and(eq(schema.paymentCards.id, id), eq(schema.paymentCards.householdId, target.householdId),
+            target.maskedNumber === null ? isNull(schema.paymentCards.maskedNumber)
+              : eq(schema.paymentCards.maskedNumber, target.maskedNumber)))
+          .returning();
+        if (!updated) throw this.last4Stale();
+        return toCardSummary(updated);
+      }, { isolationLevel: 'read committed' });
+    } catch (error) {
+      // Drizzle wraps the driver's SQLSTATE in cause. Do not expose SQL or binds.
+      let cause: unknown = error;
+      for (let depth = 0; depth < 4 && cause !== null && typeof cause === 'object'; depth += 1) {
+        const record = cause as { code?: unknown; cause?: unknown };
+        if (record.code === '55P03') throw this.last4Stale();
+        cause = record.cause;
+      }
+      throw error;
+    }
+  }
+
+  private assertCanCorrectLast4(member: schema.HouseholdMember, card: schema.PaymentCard): void {
+    if (member.id !== card.ownerMemberId && !MANAGER_ROLES.includes(member.role)) {
+      throw new ForbiddenException('insufficient permission');
+    }
+  }
+
+  private last4Stale(): ConflictException {
+    return new ConflictException({ code: 'card_last4_stale',
+      message: '카드 정보가 변경됐거나 번호를 확인할 수 없어요. 카드 목록을 다시 확인해 주세요.' });
   }
 
   /* ---------------------------------------------------------------------- */

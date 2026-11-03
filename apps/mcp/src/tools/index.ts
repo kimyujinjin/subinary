@@ -2,6 +2,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import type { FamilyApiClient } from '../api-client';
 import { registerFinanceSummary } from './finance-summary';
+import { registerFinanceReview } from './finance-review';
+import type { McpConfig } from '../config';
 import { registerMemoryForget } from './memory-forget';
 import { registerMemoryRead } from './memory-read';
 import { registerMemoryRemember } from './memory-remember';
@@ -16,11 +18,14 @@ import { registerMemoryTimeline } from './memory-timeline';
 export function registerAllTools(
   server: McpServer,
   client: FamilyApiClient,
+  mode: McpConfig['toolMode'] = 'finance-readonly',
 ): void {
+  registerFinanceSummary(server, client);
+  registerFinanceReview(server, client, mode === 'finance-review');
+  if (mode !== 'all') return;
   registerMemorySearch(server, client);
   registerMemoryRead(server, client);
   registerMemoryRemember(server, client);
   registerMemoryForget(server, client);
   registerMemoryTimeline(server, client);
-  registerFinanceSummary(server, client);
 }

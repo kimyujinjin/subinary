@@ -16,23 +16,26 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   and,
   asc,
   desc,
   eq,
+  exists,
   gt,
   inArray,
   isNotNull,
   isNull,
   lt,
+  notExists,
   or,
   sql,
   type SQL,
 } from 'drizzle-orm';
 
-import { cardSmsParseStatusSchema } from '@family/contracts';
+import { cardSmsParseStatusSchema, cardSmsReviewPolicySchema } from '@family/contracts';
 import type {
   CardSmsDeclineDismissRequest,
   CardSmsDeclineDismissResponse,
@@ -40,14 +43,21 @@ import type {
   CardSmsDeclineListResponse,
   CardSmsEventDetail,
   CardSmsEventSummary,
+  CardSmsPosting,
+  CardSmsPostingStatusResponse,
+  CardSmsReviewGroupsResponse,
+  CardSmsReviewPolicy,
 } from '@family/contracts';
-import { schema, type Db } from '@family/database';
+import { schema, type Db, type DbExecutor } from '@family/database';
 import {
   buildMerchantAliasIndex,
   resolveCanonicalMerchant,
 } from '@family/shared';
 
 import { DB } from '../database/database.constants';
+import { MoneyRuntimeService } from '../money/money-runtime.service';
+import { groupReviewEvents } from './card-sms-review-groups';
+import { cardSmsPosting } from './card-sms-posting';
 
 /** Pagination bounds (spec §5.2 — default 50, max 100). */
 const DEFAULT_LIMIT = 50;
@@ -71,7 +81,10 @@ interface Cursor {
 
 @Injectable()
 export class CardSmsQueryService {
-  constructor(@Inject(DB) private readonly db: Db) {}
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    @Optional() private readonly moneyRuntime?: MoneyRuntimeService,
+  ) {}
 
   /**
    * Lists card-SMS event summaries for a household the actor belongs to,
@@ -83,21 +96,33 @@ export class CardSmsQueryService {
     status: string | undefined,
     limit: string | undefined,
     cursor: string | undefined,
+    posting?: string,
   ): Promise<CardSmsEventSummary[]> {
     if (!householdId) {
       throw new BadRequestException('householdId is required');
     }
-    await this.requireMembership(householdId, userId);
+    const actorMemberId = await this.requireMembership(householdId, userId);
 
     const take = this.parseLimit(limit);
     const statusFilter = this.parseStatus(status);
     const keyset = this.decodeCursor(cursor);
+    if (posting !== undefined && posting !== 'unposted') throw new BadRequestException('invalid posting filter');
 
     const conditions: SQL[] = [
       eq(schema.cardSmsEvents.householdId, householdId),
+      eq(schema.cardSmsEvents.memberId, actorMemberId),
     ];
     if (statusFilter) {
       conditions.push(inArray(schema.cardSmsEvents.parseStatus, statusFilter));
+    }
+    if (posting === 'unposted') {
+      // This separate inbox excludes the existing parse-failure/review/decline queues.
+      conditions.push(isNull(schema.cardTransactions.id));
+      conditions.push(or(
+        eq(schema.cardSmsEvents.parseStatus, 'pending'),
+        and(inArray(schema.cardSmsEvents.parseStatus, ['parsed', 'pending_review']),
+          inArray(schema.cardSmsEvents.transactionType, ['approval', 'cancellation'])),
+      ) as SQL);
     }
     if (keyset) {
       const after = or(
@@ -112,14 +137,13 @@ export class CardSmsQueryService {
       }
     }
 
-    const rows = await this.db
-      .select()
-      .from(schema.cardSmsEvents)
+    const rows = await this.postingQuery()
       .where(and(...conditions))
       .orderBy(desc(schema.cardSmsEvents.createdAt), desc(schema.cardSmsEvents.id))
       .limit(take);
 
-    return rows.map(toSummary);
+    return rows.map((row) => toSummary(row.event, cardSmsPosting(row.event, row.transaction,
+      row.snapshotId != null, this.moneyRuntime?.contractMode, actorMemberId)));
   }
 
   /**
@@ -127,17 +151,122 @@ export class CardSmsQueryService {
    * to the actor's household membership.
    */
   async get(userId: string, id: string): Promise<CardSmsEventDetail> {
-    const [event] = await this.db
-      .select()
-      .from(schema.cardSmsEvents)
+    const [row] = await this.postingQuery()
       .where(eq(schema.cardSmsEvents.id, id))
       .limit(1);
 
-    if (!event) {
+    if (!row) {
       throw new NotFoundException('card-sms event not found');
     }
-    await this.requireMembership(event.householdId, userId);
-    return toDetail(event);
+    const event = row.event;
+    const actorMemberId = await this.requireMembership(event.householdId, userId);
+    if (event.memberId !== actorMemberId) throw new ForbiddenException('본인에게 수신된 문자만 조회할 수 있습니다.');
+    return toDetail(event, cardSmsPosting(event, row.transaction,
+      row.snapshotId != null, this.moneyRuntime?.contractMode, actorMemberId));
+  }
+
+  /** Minimal status poll: never select or return the raw message or parsed amounts. */
+  async getPosting(userId: string, id: string): Promise<CardSmsPostingStatusResponse> {
+    const event = schema.cardSmsEvents;
+    const transaction = schema.cardTransactions;
+    const snapshot = schema.fxRateSnapshots;
+    const [row] = await this.db.select({ event: {
+      id: event.id, householdId: event.householdId, memberId: event.memberId,
+      parseStatus: event.parseStatus, transactionType: event.transactionType,
+      currency: event.currency,
+    }, transaction: { id: transaction.id, householdId: transaction.householdId,
+      memberId: transaction.memberId, visibility: transaction.visibility, status: transaction.status },
+      snapshotId: snapshot.id,
+    }).from(event)
+      .leftJoin(transaction, eq(transaction.sourceEventId, event.id))
+      .leftJoin(snapshot, and(
+        eq(snapshot.baseCurrency, sql`upper(coalesce(${event.currency}, 'KRW'))`),
+        eq(snapshot.quoteCurrency, 'KRW'),
+        eq(snapshot.asOfDate, sql`(coalesce(${event.occurredAt}, ${event.receivedAt}) at time zone 'Asia/Seoul')::date`),
+        eq(snapshot.moneyContractVersion, 2),
+      ))
+      .where(eq(event.id, id)).limit(1);
+    if (!row) throw new NotFoundException('card-sms event not found');
+    const memberId = await this.requireMembership(row.event.householdId, userId);
+    if (row.event.memberId !== memberId) throw new ForbiddenException('본인에게 수신된 문자만 조회할 수 있습니다.');
+    return { id: row.event.id, parseStatus: row.event.parseStatus, transactionType: row.event.transactionType,
+      posting: cardSmsPosting(row.event, row.transaction, row.snapshotId != null, this.moneyRuntime?.contractMode, memberId) };
+  }
+
+  /** One SQL statement observes event, actual source-event linkage and current exact-key snapshot. */
+  private postingQuery() {
+    const event = schema.cardSmsEvents;
+    const transaction = schema.cardTransactions;
+    const snapshot = schema.fxRateSnapshots;
+    return this.db.select({ event, transaction: { id: transaction.id, householdId: transaction.householdId,
+      memberId: transaction.memberId, visibility: transaction.visibility, status: transaction.status },
+      snapshotId: snapshot.id,
+    }).from(event)
+      .leftJoin(transaction, eq(transaction.sourceEventId, event.id))
+      .leftJoin(snapshot, and(
+        eq(snapshot.baseCurrency, sql`upper(coalesce(${event.currency}, 'KRW'))`),
+        eq(snapshot.quoteCurrency, 'KRW'),
+        eq(snapshot.asOfDate, sql`(coalesce(${event.occurredAt}, ${event.receivedAt}) at time zone 'Asia/Seoul')::date`),
+        eq(snapshot.moneyContractVersion, 2),
+      ));
+  }
+
+  /** 본인의 파싱 실패·격리 문자를 같은 양식으로 묶으며 원문을 반환하지 않는다. */
+  async reviewGroups(userId: string, householdId: string): Promise<CardSmsReviewGroupsResponse> {
+    if (!householdId) throw new BadRequestException('householdId is required');
+    const memberId = await this.requireMembership(householdId, userId);
+    const rows = await this.db.select().from(schema.cardSmsEvents).where(and(
+      eq(schema.cardSmsEvents.householdId, householdId),
+      eq(schema.cardSmsEvents.memberId, memberId),
+      inArray(schema.cardSmsEvents.parseStatus, ['parse_failed', 'quarantined']),
+      notExists(this.db.select({ id: schema.cardTransactions.id }).from(schema.cardTransactions)
+        .where(eq(schema.cardTransactions.sourceEventId, schema.cardSmsEvents.id))),
+    )).orderBy(desc(schema.cardSmsEvents.createdAt), desc(schema.cardSmsEvents.id)).limit(MAX_LIMIT + 1);
+    const policies = await this.db.select().from(schema.cardSmsTemplates).where(and(
+      eq(schema.cardSmsTemplates.confirmedBy, userId),
+      sql`${schema.cardSmsTemplates.recipe}->>'householdId' = ${householdId}`,
+      sql`${schema.cardSmsTemplates.recipe}->>'memberId' = ${memberId}`,
+      exists(this.db.select({ id: schema.cardSmsEvents.id }).from(schema.cardSmsEvents).where(and(
+        eq(schema.cardSmsEvents.id, schema.cardSmsTemplates.sourceEventId),
+        eq(schema.cardSmsEvents.householdId, householdId), eq(schema.cardSmsEvents.memberId, memberId),
+      ))),
+    )).orderBy(desc(schema.cardSmsTemplates.updatedAt));
+    return { ...groupReviewEvents(rows.slice(0, MAX_LIMIT), householdId, memberId, rows.length > MAX_LIMIT),
+      policies: policies.flatMap((row) => {
+        const policy = cardSmsReviewPolicySchema.safeParse({ id: row.id, approvedCardId: row.recipe.approvedCardId,
+          enabled: row.recipe.automationEnabled === true, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() });
+        return policy.success ? [policy.data] : [];
+      }) };
+  }
+
+  /** 본인이 허용한 자동 정리만 중지한다. 기존 거래·설정 이력은 삭제하지 않는다. */
+  async disableReviewPolicy(userId: string, householdId: string, policyId: string): Promise<CardSmsReviewPolicy> {
+    return this.db.transaction(async (tx) => {
+      const memberId = await this.requireMembership(householdId, userId, tx, true);
+      const [row] = await tx.select().from(schema.cardSmsTemplates).where(and(
+        eq(schema.cardSmsTemplates.id, policyId), eq(schema.cardSmsTemplates.confirmedBy, userId),
+        sql`${schema.cardSmsTemplates.recipe}->>'householdId' = ${householdId}`,
+        sql`${schema.cardSmsTemplates.recipe}->>'memberId' = ${memberId}`,
+        exists(tx.select({ id: schema.cardSmsEvents.id }).from(schema.cardSmsEvents).where(and(
+          eq(schema.cardSmsEvents.id, schema.cardSmsTemplates.sourceEventId),
+          eq(schema.cardSmsEvents.householdId, householdId), eq(schema.cardSmsEvents.memberId, memberId),
+        ))),
+      )).limit(1).for('update');
+      if (!row) throw new NotFoundException('자동 정리 설정을 찾을 수 없습니다.');
+      const updatedAt = row.recipe.automationEnabled === true ? new Date() : row.updatedAt;
+      const policy = cardSmsReviewPolicySchema.parse({ id: row.id, approvedCardId: row.recipe.approvedCardId,
+        enabled: false, createdAt: row.createdAt.toISOString(), updatedAt: updatedAt.toISOString() });
+      if (row.recipe.automationEnabled === true) {
+        await tx.update(schema.cardSmsTemplates).set({ recipe: { ...row.recipe, automationEnabled: false }, updatedAt })
+          .where(eq(schema.cardSmsTemplates.id, row.id));
+        await tx.insert(schema.feedbackEvents).values({
+          householdId, targetType: 'card-sms-policy', targetId: row.id, predictionTraceId: null,
+          labelSchemaVersion: 'card-sms-policy-v1', label: { action: 'disable', policyId: row.id },
+          source: 'human_confirmed', actorUserId: userId, occurredAt: updatedAt,
+        });
+      }
+      return policy;
+    });
   }
 
   /* ---------------------------------------------------------------------- */
@@ -445,22 +574,30 @@ export class CardSmsQueryService {
   private async requireMembership(
     householdId: string,
     userId: string,
-  ): Promise<void> {
-    const [member] = await this.db
+    executor: DbExecutor = this.db,
+    lock = false,
+  ): Promise<string> {
+    const query = executor
       .select({ id: schema.householdMembers.id })
       .from(schema.householdMembers)
+      .innerJoin(schema.users, eq(schema.householdMembers.userId, schema.users.id))
+      .innerJoin(schema.households, eq(schema.householdMembers.householdId, schema.households.id))
       .where(
         and(
           eq(schema.householdMembers.householdId, householdId),
           eq(schema.householdMembers.userId, userId),
           eq(schema.householdMembers.status, 'active'),
+          isNull(schema.users.deletedAt),
+          isNull(schema.households.deletedAt),
         ),
       )
       .limit(1);
+    const [member] = await (lock ? query.for('share') : query);
 
     if (!member) {
       throw new ForbiddenException('not a household member');
     }
+    return member.id;
   }
 
   /** Clamps the requested page size to `[1, MAX_LIMIT]` (default 50). */
@@ -523,13 +660,14 @@ export class CardSmsQueryService {
 /* -------------------------------------------------------------------------- */
 
 /** Maps a card-SMS event row to its lightweight summary (no raw text). */
-function toSummary(event: schema.CardSmsEvent): CardSmsEventSummary {
+function toSummary(event: schema.CardSmsEvent, posting: CardSmsPosting): CardSmsEventSummary {
   return {
     id: event.id,
     eventId: event.eventId,
     sender: event.sender,
     receivedAt: event.receivedAt.toISOString(),
     parseStatus: event.parseStatus,
+    posting,
     issuer: event.issuer,
     transactionType: event.transactionType,
     amount: event.amount,
@@ -544,9 +682,9 @@ function toSummary(event: schema.CardSmsEvent): CardSmsEventSummary {
 }
 
 /** Maps a card-SMS event row to the full detail (summary + raw text). */
-function toDetail(event: schema.CardSmsEvent): CardSmsEventDetail {
+function toDetail(event: schema.CardSmsEvent, posting: CardSmsPosting): CardSmsEventDetail {
   return {
-    ...toSummary(event),
+    ...toSummary(event, posting),
     rawContent: event.rawContent,
     maskedCardNumber: event.maskedCardNumber,
   };

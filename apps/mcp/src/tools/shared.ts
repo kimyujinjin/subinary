@@ -67,7 +67,7 @@ export function describeError(err: unknown): string {
   if (err instanceof ApiError) {
     switch (err.status) {
       case 401:
-        return '인증이 만료되었거나 자격 증명이 올바르지 않습니다. FAMILY_EMAIL/FAMILY_PASSWORD를 확인하세요.';
+        return '인증이 만료되었거나 로그인 정보가 올바르지 않습니다. 가계부 연결 화면에서 다시 로그인해 주세요.';
       case 403:
         return '접근 권한이 없습니다. 로그인한 사용자가 소유한 데이터만 조회하거나 변경할 수 있습니다 (API가 권한을 강제합니다).';
       case 404:

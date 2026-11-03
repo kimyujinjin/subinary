@@ -1,8 +1,8 @@
 "use client";
 /* ---------------------------------------------------------------------------
- * Family Memory AI — web · 거래 내역 페이지 (오늘의집 디자인 언어)
+ * Family Memory AI — web · 거래 내역 페이지
  *
- * 상단 필터 칩 행(기간/카테고리/카드/구성원/유형/상태) + 무한 스크롤(useInfiniteQuery).
+ * 기간·검색 + 접는 상세 필터 + 무한 스크롤(useInfiniteQuery).
  * 목록은 날짜별 그룹("7월 17일" 헤더) + ListRow(카테고리 아이콘 · 가맹점 ·
  * 카드/구성원/카테고리 · 금액 · 상태 배지). 행 클릭 → 상세 Dialog에서
  * 카테고리 변경(applyRule)/공개 범위/메모/정상·중복 표시/취소연결을 처리한다.
@@ -11,7 +11,7 @@
  * - 타인 summary_only(masked) 항목은 가맹점을 '(비공개)'로 표기하고 편집을 막는다.
  * - 권한은 서버(서비스 계층)가 강제하며, 실패 시 배너로 메시지를 노출한다.
  * ------------------------------------------------------------------------- */
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -20,6 +20,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type {
+  CardSummary,
   CardVisibility,
   MemberColor,
   TransactionSummary,
@@ -31,7 +32,6 @@ import { Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -64,13 +64,14 @@ import { ListRow, Money, StatusBadge } from "@/components/widgets";
 import { ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { categoryIcon } from "@/lib/category-icon";
+import { cardIdentityLabel } from "@/lib/card-identity-label";
 import {
   formatDate,
   formatMoney,
   formatMonth,
   currentMonth,
 } from "@/lib/format";
-import { isMonthKey, monthRange, recentMonths } from "@/lib/month";
+import { monthRange, recentMonths } from "@/lib/month";
 import { memberColorClass, sharedColorClass } from "@/lib/member-color";
 import {
   attributedMemberId,
@@ -92,7 +93,24 @@ import {
   detailFallbackReason,
 } from "@/lib/transaction-detail-fallback";
 import { cn } from "@/lib/utils";
+import {
+  createTransactionEditSession,
+  validateTransactionEdit,
+  type TransactionEditErrors,
+  type TransactionEditPatch,
+} from "@/lib/transaction-edit";
+import {
+  cancelTransactionReads,
+  transactionDetailKey,
+  writeTransactionResult,
+} from "@/lib/transaction-detail-cache";
+import { registerTransactionDetailBack, type TransactionDetailBackSource } from "@/lib/transaction-detail-back";
 import { AddTransactionDialog } from "./add-transaction-dialog";
+import { TransactionFxDetails } from "@/components/transaction-fx-details";
+import { LedgerNav } from "@/components/ledger-nav";
+import { TransactionFilters } from "./transaction-filters";
+import type { ActiveTransactionFilter, TransactionFilterKey } from "./filter-summary";
+import { initialTransactionMonth, transactionReviewPeriodQuery } from "@/lib/transaction-review-filter";
 import {
   matchesCandidateSearch,
   retainSelection,
@@ -125,8 +143,6 @@ const SEARCH_DEBOUNCE_MS = 300;
 /** 검색어 최대 길이(서버 절삭 기준과 동일). */
 const SEARCH_MAX_LENGTH = 100;
 
-/** 전체(필터 없음) sentinel — SelectItem은 빈 문자열 value 금지. */
-const ALL = "all";
 /** 상세에서 카드 연결을 해제('카드 미연결')하기 위한 Select sentinel(빈 값 금지). */
 const CARD_NONE = "__none__";
 
@@ -235,14 +251,6 @@ const dayLabelWithYearFormatter = new Intl.DateTimeFormat("ko-KR", {
   day: "numeric",
 });
 
-/** 필터 칩 클래스(기본 = 화이트 칩, 활성 = 오늘의집 검정 칩). */
-function chipClass(active: boolean): string {
-  return cn(
-    "h-8 rounded-full border bg-card px-3 text-[13px] font-medium shadow-none",
-    active && "border-foreground bg-foreground text-background",
-  );
-}
-
 /* -------------------------------------------------------------------------- */
 /* Page                                                                       */
 /* -------------------------------------------------------------------------- */
@@ -274,10 +282,7 @@ function TransactionsView() {
   const router = useRouter();
   const initial = (key: string): string => searchParams.get(key) ?? "";
 
-  const [month, setMonth] = useState<string>(() => {
-    const m = searchParams.get("month");
-    return m && isMonthKey(m) ? m : currentMonth();
-  });
+  const [month, setMonth] = useState<string>(() => initialTransactionMonth(searchParams, currentMonth()));
   const [memberId, setMemberId] = useState<string>(() => initial("memberId"));
   const [cardId, setCardId] = useState<string>(() => initial("cardId"));
   const [categoryId, setCategoryId] = useState<string>(() =>
@@ -285,6 +290,7 @@ function TransactionsView() {
   );
   const [type, setType] = useState<string>(() => initial("type"));
   const [status, setStatus] = useState<string>(() => initial("status"));
+  const [reviewOnly, setReviewOnly] = useState(() => initial("review") === "1");
   /** 검색 입력값(즉시 반영) — 실제 쿼리는 아래 디바운스된 `q`를 쓴다. */
   const [qInput, setQInput] = useState<string>(() => initial("q"));
   const [q, setQ] = useState<string>(qInput);
@@ -315,12 +321,21 @@ function TransactionsView() {
   /** 인라인 카테고리 변경 시 merchant_category_rules로 저장할지(applyRule). */
   const [applyRule, setApplyRule] = useState(false);
 
-  // 무한 스크롤: 필터 변경 시 queryKey가 바뀌어 자동으로 첫 페이지부터 새로 로드된다
-  // (별도 페이지 리셋 불필요). (Radix Select는 문자열 값을 직접 준다)
-  const bindFilter =
-    (setter: (value: string) => void) => (value: string) => {
-      setter(value);
-    };
+  // 필터는 닫아도 유지한다. 표시 조건만 지울 때 기간·검색은 바꾸지 않는다.
+  const filterSetters = { categoryId: setCategoryId, cardId: setCardId, memberId: setMemberId, type: setType, status: setStatus };
+  const changeFilter = (key: TransactionFilterKey, value: string) => filterSetters[key](value);
+  const clearFilter = (key: ActiveTransactionFilter["key"]) => {
+    if (key === "reviewOnly") setReviewOnly(false);
+    else if (key === "excludedOnly") setExcludedOnly(false);
+    else if (key === "sharedOnly") setSharedOnly(false);
+    else changeFilter(key, "");
+  };
+  const clearConditions = () => {
+    for (const setter of Object.values(filterSetters)) setter("");
+    setReviewOnly(false);
+    setExcludedOnly(false);
+    setSharedOnly(false);
+  };
 
   /** 모든 필터를 기본값(이번 달·전체)으로 되돌린다(빈 상태 CTA). */
   const resetFilters = () => {
@@ -330,6 +345,7 @@ function TransactionsView() {
     setCategoryId("");
     setType("");
     setStatus("");
+    setReviewOnly(false);
     setQInput("");
     setQ("");
     setExcludedOnly(false);
@@ -342,6 +358,7 @@ function TransactionsView() {
     categoryId !== "" ||
     type !== "" ||
     status !== "" ||
+    reviewOnly ||
     q !== "" ||
     excludedOnly ||
     sharedOnly ||
@@ -356,8 +373,7 @@ function TransactionsView() {
   // 필터 상태 → URL. 기본값은 파라미터에서 빼 링크를 짧게 유지한다.
   // `txn`(알림 딥링크)은 아래 상세 열기 effect가 소유하므로 여기서 건드리지 않는다.
   useEffect(() => {
-    const params = new URLSearchParams();
-    if (month !== currentMonth()) params.set("month", month);
+    const params = transactionReviewPeriodQuery(month, reviewOnly, currentMonth());
     if (memberId) params.set("memberId", memberId);
     if (cardId) params.set("cardId", cardId);
     if (categoryId) params.set("categoryId", categoryId);
@@ -366,6 +382,8 @@ function TransactionsView() {
     if (q) params.set("q", q);
     if (excludedOnly) params.set("excluded", "only");
     if (sharedOnly) params.set("attribution", "shared");
+    const selectedTransaction = new URLSearchParams(window.location.search).get("txn");
+    if (selectedTransaction) params.set("txn", selectedTransaction);
     const qs = params.toString();
     // replace: 필터를 다섯 번 바꿨다고 뒤로가기를 다섯 번 눌러야 하면 안 된다.
     router.replace(qs ? `/transactions?${qs}` : "/transactions", {
@@ -378,6 +396,7 @@ function TransactionsView() {
     categoryId,
     type,
     status,
+    reviewOnly,
     q,
     excludedOnly,
     sharedOnly,
@@ -416,8 +435,8 @@ function TransactionsView() {
     attributedMemberId(txn, sharedCardIds);
 
   const cardById = useMemo(() => {
-    const map = new Map<string, { alias: string; issuer: string }>();
-    for (const c of cards) map.set(c.id, { alias: c.alias, issuer: c.issuer });
+    const map = new Map<string, CardSummary>();
+    for (const c of cards) map.set(c.id, c);
     return map;
   }, [cards]);
 
@@ -432,7 +451,7 @@ function TransactionsView() {
     .map((m) => ({ value: m.memberId, label: m.name }));
   const cardOptions: Option[] = cards.map((c) => ({
     value: c.id,
-    label: `${c.alias} · ${c.issuer}`,
+    label: cardIdentityLabel(c, memberNameById),
   }));
   const categoryFilterOptions: Option[] = categories.map((c) => ({
     value: c.id,
@@ -442,6 +461,10 @@ function TransactionsView() {
     value: m,
     label: formatMonth(m),
   }));
+  // 오래된 기간의 딥링크도 현재 선택값이 빈칸으로 보이지 않도록 유지한다.
+  if (month && !monthOptions.some((option) => option.value === month)) {
+    monthOptions.unshift({ value: month, label: formatMonth(month) });
+  }
 
   // --- 목록 쿼리 ---
   const { from, to } = useMemo(() => monthRange(month), [month]);
@@ -452,6 +475,7 @@ function TransactionsView() {
       categoryId: categoryId || undefined,
       type: type || undefined,
       status: status || undefined,
+      review: reviewOnly ? ("1" as const) : undefined,
       q: q || undefined,
       excluded: excludedOnly ? ("only" as const) : undefined,
       attribution: sharedOnly ? ("shared" as const) : undefined,
@@ -465,6 +489,7 @@ function TransactionsView() {
       categoryId,
       type,
       status,
+      reviewOnly,
       q,
       excludedOnly,
       sharedOnly,
@@ -564,7 +589,7 @@ function TransactionsView() {
 
   const inList = detailId != null && items.some((t) => t.id === detailId);
   const detailFallbackQuery = useQuery({
-    queryKey: ["transaction-detail", detailId],
+    queryKey: transactionDetailKey(householdId, detailId),
     enabled: detailId != null && !inList,
     retry: false,
     queryFn: () =>
@@ -580,6 +605,7 @@ function TransactionsView() {
       detailFallbackQuery.data ??
       null)
     : null;
+  const detailCard = detailTxn?.cardId ? cardById.get(detailTxn.cardId) : undefined;
 
   // 폴백까지 실패한 경우 = 열 수 없는 딥링크. 이유(없음/막힘/오류)를 구분해 알린다.
   const detailFallbackError =
@@ -588,6 +614,7 @@ function TransactionsView() {
       : null;
 
   const mutation = useMutation({
+    onMutate: (action: RowAction) => cancelTransactionReads(queryClient, householdId, action.id),
     mutationFn: (action: RowAction): Promise<TransactionSummary> =>
       authedFetch((token) => {
         switch (action.kind) {
@@ -611,8 +638,10 @@ function TransactionsView() {
           }
         }
       }),
-    onSuccess: () => {
+    onSuccess: (updated) => {
       setActionError(null);
+      // PATCH's response is authoritative immediately, including off-list deep links.
+      writeTransactionResult(queryClient, updated);
       // 거래·집계·예산·인사이트·가맹점후보를 단일 헬퍼로 일괄 무효화(실시간 힌트
       // 경로와 동일 범위 — 조합 불일치/누락 방지).
       invalidateTransactionScope(queryClient);
@@ -632,21 +661,23 @@ function TransactionsView() {
   };
 
   // 금액·날짜 수정(변경된 필드만 PATCH). 빈 body면 no-op.
-  const editFields = (
+  const editFields = async (
     txn: TransactionSummary,
-    body: { amount?: number; occurredAt?: string },
-  ) => {
-    if (body.amount === undefined && body.occurredAt === undefined) return;
-    mutation.mutate({ kind: "update", id: txn.id, body });
+    body: TransactionEditPatch,
+  ): Promise<TransactionSummary> => {
+    if (body.amount === undefined && body.occurredAt === undefined) return txn;
+    return mutation.mutateAsync({ kind: "update", id: txn.id, body });
   };
 
   // 하드 삭제(되돌리기 불가). 성공 시 상세 닫기 + 목록/집계 무효화.
   const deleteMutation = useMutation({
     mutationFn: (id: string) =>
       authedFetch((token) => api.transactions.remove(token, id)),
-    onSuccess: () => {
+    onMutate: (id: string) => ({ householdId, id }),
+    onSuccess: (_result, id, context) => {
       setActionError(null);
-      setDetailId(null);
+      queryClient.removeQueries({ queryKey: transactionDetailKey(context?.householdId ?? householdId, id) });
+      setDetailId((current) => current === id ? null : current);
       invalidateTransactionScope(queryClient);
     },
     onError: (error) => setActionError(errorMessage(error)),
@@ -690,7 +721,7 @@ function TransactionsView() {
   const saveMemo = (txn: TransactionSummary, memo: string) => {
     mutation.mutate(
       { kind: "update", id: txn.id, body: { memo } },
-      { onSuccess: () => setMemoTarget(null) },
+      { onSuccess: () => setMemoTarget((current) => current?.id === txn.id ? null : current) },
     );
   };
 
@@ -701,7 +732,7 @@ function TransactionsView() {
         id: txn.id,
         approvalTransactionId: approvalId,
       },
-      { onSuccess: () => setLinkTarget(null) },
+      { onSuccess: () => setLinkTarget((current) => current?.id === txn.id ? null : current) },
     );
   };
 
@@ -714,7 +745,7 @@ function TransactionsView() {
     return cardById.get(txn.cardId)?.alias ?? "카드";
   };
 
-  // 색과 동일하게 카드 소유자 기준 이름(미연결이면 거래 귀속 구성원).
+  // 이름과 색은 거래 구성원 기준이다. 연결된 카드 소유자와 혼동하지 않는다.
   /**
    * 아이콘 색. 공용 카드는 사람 색을 쓰지 않는다 — 색이 곧 "누구"를 뜻하므로, 귀속을
    * 보류한 거래에 특정 색을 주면 화면이 이름(공용)과 다른 답을 말한다.
@@ -745,173 +776,55 @@ function TransactionsView() {
   const showError = listQuery.isError;
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h1 className="sr-only">거래 내역</h1>
-          <p className="text-muted-foreground text-sm">
-            우리 가족의 카드 소비를 한곳에서 볼 수 있어요
-          </p>
-        </div>
-        <Button size="sm" onClick={() => setAddOpen(true)}>
+    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
+      <header className="flex min-h-11 items-center justify-between gap-3">
+        <h1 className="text-[28px] font-bold tracking-tight">가계부</h1>
+        <Button size="sm" variant="ghost" className="bg-finance-highlight text-finance-highlight-foreground hover:bg-finance-highlight/80 min-h-11 rounded-xl px-4" onClick={() => setAddOpen(true)}>
           거래 추가
         </Button>
-      </div>
+      </header>
 
-      {/* 검색 — 가맹점 이름과 메모를 부분 일치로 찾는다. 타인의 summary_only 거래는
-          서버가 검색 대상에서 제외한다(결과 존재만으로 프라이버시가 새므로). */}
-      <div className="relative">
-        <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-        <Input
-          type="search"
-          inputMode="search"
-          value={qInput}
-          onChange={(e) => setQInput(e.target.value)}
-          maxLength={SEARCH_MAX_LENGTH}
-          placeholder="가맹점이나 메모로 찾기"
-          aria-label="거래 검색"
-          className="pl-9"
-        />
-        {qInput ? (
-          <button
-            type="button"
-            onClick={() => setQInput("")}
-            aria-label="검색어 지우기"
-            className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 flex size-7 -translate-y-1/2 items-center justify-center rounded-full"
-          >
-            <X className="size-4" />
-          </button>
-        ) : null}
-      </div>
+      <LedgerNav active="transactions" month={month} />
 
-      {/* 필터 칩 행 — Select 로직/sentinel 매핑은 그대로, 트리거만 칩 스타일 */}
-      <div className="flex flex-wrap gap-2">
-        <Select
-          value={month || ALL}
-          onValueChange={(v) => bindFilter(setMonth)(v === ALL ? "" : v)}
-        >
-          <SelectTrigger
-            size="sm"
-            aria-label="기간 필터"
-            className={chipClass(month !== "")}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>전체 기간</SelectItem>
-            {monthOptions.map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={categoryId || ALL}
-          onValueChange={(v) => bindFilter(setCategoryId)(v === ALL ? "" : v)}
-        >
-          <SelectTrigger
-            size="sm"
-            aria-label="카테고리 필터"
-            className={chipClass(categoryId !== "")}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>전체 카테고리</SelectItem>
-            {categoryFilterOptions.map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={cardId || ALL}
-          onValueChange={(v) => bindFilter(setCardId)(v === ALL ? "" : v)}
-        >
-          <SelectTrigger
-            size="sm"
-            aria-label="카드 필터"
-            className={chipClass(cardId !== "")}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>전체 카드</SelectItem>
-            {cardOptions.map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={memberId || ALL}
-          onValueChange={(v) => bindFilter(setMemberId)(v === ALL ? "" : v)}
-        >
-          <SelectTrigger
-            size="sm"
-            aria-label="구성원 필터"
-            className={chipClass(memberId !== "")}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>전체 구성원</SelectItem>
-            {memberOptions.map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={type || ALL}
-          onValueChange={(v) => bindFilter(setType)(v === ALL ? "" : v)}
-        >
-          <SelectTrigger
-            size="sm"
-            aria-label="유형 필터"
-            className={chipClass(type !== "")}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>전체 유형</SelectItem>
-            {TYPE_OPTIONS.map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={status || ALL}
-          onValueChange={(v) => bindFilter(setStatus)(v === ALL ? "" : v)}
-        >
-          <SelectTrigger
-            size="sm"
-            aria-label="상태 필터"
-            className={chipClass(status !== "")}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>전체 상태</SelectItem>
-            {STATUS_OPTIONS.map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      <TransactionFilters
+        month={month}
+        monthOptions={monthOptions}
+        values={{ categoryId, cardId, memberId, type, status, reviewOnly, excludedOnly, sharedOnly }}
+        choices={{ categoryId: categoryFilterOptions, cardId: cardOptions, memberId: memberOptions, type: TYPE_OPTIONS, status: STATUS_OPTIONS }}
+        onMonthChange={setMonth}
+        onChange={changeFilter}
+        onClear={clearFilter}
+        onClearAll={clearConditions}
+        onToggleReview={() => {
+          setReviewOnly(!reviewOnly);
+          if (!reviewOnly) { setMonth(""); setStatus(""); setExcludedOnly(false); }
+        }}
+      >
+        {/* 검색은 기존 가맹점·메모 조건을 그대로 사용한다. */}
+        <div className="relative">
+          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2" aria-hidden="true" />
+          <Input
+            type="search"
+            inputMode="search"
+            value={qInput}
+            onChange={(e) => setQInput(e.target.value)}
+            maxLength={SEARCH_MAX_LENGTH}
+            placeholder="가맹점이나 메모로 찾기"
+            aria-label="거래 검색"
+            className="min-h-12 rounded-2xl border-border/70 bg-card pl-11 pr-12 shadow-none"
+          />
+          {qInput ? (
+            <button
+              type="button"
+              onClick={() => setQInput("")}
+              aria-label="검색어 지우기"
+              className="text-muted-foreground hover:text-foreground focus-visible:outline-ring absolute top-1/2 right-1 flex size-11 -translate-y-1/2 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2"
+            >
+              <X className="size-4" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+      </TransactionFilters>
 
       {actionError ? (
         <div
@@ -922,49 +835,20 @@ function TransactionsView() {
         </div>
       ) : null}
 
-      {/*
-        '빼놓은 거래만' 상태를 눈에 보이게 한다. 이 필터는 Select에 없고 URL로만
-        들어오므로, 표시가 없으면 사용자는 필터가 걸린 줄 모르고 "거래가 사라졌다"로
-        읽는다. 해제는 한 번에 되어야 한다.
-      */}
-      {excludedOnly ? (
-        <div className="border-warning/40 bg-warning/10 flex items-center justify-between gap-3 rounded-xl border px-4 py-3">
-          <p className="text-warning-strong text-sm">
-            합계에서 빼놓은 거래만 보고 있어요
-          </p>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setExcludedOnly(false)}
-          >
-            전체 보기
-          </Button>
-        </div>
-      ) : null}
-
-      {sharedOnly ? (
-        <div className="bg-muted/50 flex items-center justify-between gap-3 rounded-xl border px-4 py-3">
-          <p className="text-sm">함께 쓰는 카드로 결제한 내역만 보고 있어요</p>
-          <Button size="sm" variant="ghost" onClick={() => setSharedOnly(false)}>
-            전체 보기
-          </Button>
-        </div>
-      ) : null}
-
       {/* 목록 — 날짜별 그룹 + ListRow */}
-      <Card>
-        <CardContent className="flex flex-col gap-5">
+      <section aria-label="거래 내역" className="min-w-0">
+        <div className="flex min-w-0 flex-col gap-6">
           {showLoading ? (
             <div className="flex flex-col gap-1" role="status" aria-live="polite">
               <span className="sr-only">거래를 불러오고 있어요</span>
               {[0, 1, 2, 3, 4].map((i) => (
-                <div key={i} className="flex items-center gap-3 px-2 py-3">
-                  <Skeleton className="size-10 rounded-full" />
-                  <div className="flex flex-1 flex-col gap-2">
-                    <Skeleton className="h-4 w-32" />
-                    <Skeleton className="h-3 w-44" />
+                <div key={i} className="flex min-w-0 items-center gap-2.5 px-1 py-3.5 sm:gap-3 sm:px-2">
+                  <Skeleton className="size-9 shrink-0 rounded-full sm:size-10" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-2">
+                    <Skeleton className="h-4 w-3/4 max-w-32" />
+                    <Skeleton className="h-3 w-full max-w-44" />
                   </div>
-                  <Skeleton className="h-4 w-16" />
+                  <Skeleton className="h-4 w-16 shrink-0" />
                 </div>
               ))}
             </div>
@@ -980,12 +864,12 @@ function TransactionsView() {
               {hasActiveFilter ? (
                 <>
                   <p className="pt-1 text-[15px] font-semibold">
-                    조건에 맞는 거래가 없어요
+                    {reviewOnly ? "조건에 맞는 확인할 거래가 없어요" : "조건에 맞는 거래가 없어요"}
                   </p>
                   <p className="text-muted-foreground text-sm">
                     필터를 바꿔서 다시 찾아볼까요?
                   </p>
-                  <Button variant="tint" className="mt-3" onClick={resetFilters}>
+                  <Button variant="tint" className="mt-3 min-h-11" onClick={resetFilters}>
                     필터 초기화하기
                   </Button>
                 </>
@@ -997,7 +881,7 @@ function TransactionsView() {
                   <p className="text-muted-foreground text-sm">
                     카드 문자가 도착하면 자동으로 정리해 드려요
                   </p>
-                  <Button variant="tint" className="mt-3" asChild>
+                  <Button variant="tint" className="mt-3 min-h-11" asChild>
                     <Link href="/devices">장치 연결하러 가기</Link>
                   </Button>
                 </>
@@ -1006,16 +890,14 @@ function TransactionsView() {
           ) : (
             <>
               {groups.map((group) => (
-                <section key={group.key} className="flex flex-col gap-1">
-                  <div className="flex items-baseline justify-between px-2">
-                    <h2 className="text-muted-foreground text-[13px] font-semibold">
+                <section key={group.key} className="finance-panel flex min-w-0 flex-col px-3 py-2 sm:px-5">
+                  <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-border/70 px-1 py-3 sm:px-2">
+                    <h2 className="text-foreground text-[13px] font-semibold">
                       {group.label}
                     </h2>
-                    <Money
-                      amount={group.total}
-                      muted
-                      className="text-[13px]"
-                    />
+                    <p className="text-muted-foreground ml-auto min-w-0 text-right text-xs [overflow-wrap:anywhere]">
+                      원화 승인 소계 <Money amount={group.total} className="ml-1 text-foreground font-semibold" />
+                    </p>
                   </div>
                   <div className="flex flex-col">
                     {group.items.map((txn) => {
@@ -1026,12 +908,13 @@ function TransactionsView() {
                       return (
                         <ListRow
                           key={txn.id}
-                          icon={<Icon />}
-                          iconClassName={
+                          icon={<Icon aria-hidden="true" />}
+                          iconClassName={cn(
+                            "rounded-xl",
                             txn.masked || excluded
                               ? "bg-muted text-muted-foreground"
                               : sharedIconClass(txn)
-                          }
+                          )}
                           title={
                             txn.masked ? (
                               <span className="text-muted-foreground">
@@ -1045,7 +928,7 @@ function TransactionsView() {
                           value={
                             <span
                               className={cn(
-                                "flex flex-col items-end",
+                                "flex min-w-0 max-w-full flex-col items-end",
                                 excluded && "line-through opacity-60",
                               )}
                             >
@@ -1055,14 +938,14 @@ function TransactionsView() {
                                 <Money amount={txn.netAmount} currency={txn.currency} />
                               )}
                               {txn.originalCurrency && txn.originalAmount != null ? (
-                                <span className="text-muted-foreground text-[11px]">
+                                <span className="text-muted-foreground max-w-full text-[11px]">
                                   {formatMoney(txn.originalAmount, txn.originalCurrency)}
                                 </span>
                               ) : null}
                             </span>
                           }
                           valueSub={
-                            <span className="flex items-center justify-end gap-1.5">
+                            <span className="flex max-w-full flex-wrap items-center justify-end gap-1.5">
                               {isCancellation ? (
                                 <span className="text-xs">
                                   {TYPE_LABELS[txn.transactionType]}
@@ -1080,12 +963,12 @@ function TransactionsView() {
                           onClick={
                             txn.masked ? undefined : () => setDetailId(txn.id)
                           }
-                          chevron={!txn.masked}
-                          className={
+                          className={cn(
+                            "rounded-xl border-b border-border/50 py-4 last:border-b-0 hover:bg-muted/60",
                             busyId === txn.id
                               ? "pointer-events-none opacity-60"
                               : undefined
-                          }
+                          )}
                         />
                       );
                     })}
@@ -1106,7 +989,7 @@ function TransactionsView() {
                   <button
                     type="button"
                     onClick={() => void fetchNextPage()}
-                    className="text-accent-foreground text-[13px] font-medium"
+                    className="text-accent-foreground hover:bg-muted focus-visible:outline-ring min-h-11 rounded-xl px-5 text-[13px] font-medium focus-visible:outline-2 focus-visible:outline-offset-2"
                   >
                     더 보기
                   </button>
@@ -1118,15 +1001,22 @@ function TransactionsView() {
               </div>
             </>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       {detailTxn ? (
         <TransactionDetailDialog
+          key={`${householdId}:${detailTxn.id}`}
           txn={detailTxn}
           busy={mutation.isPending || deleteMutation.isPending}
-          cardLabel={cardLabelOf(detailTxn)}
+          actionStatus={mutation.variables?.id === detailTxn.id ? mutation.status : "idle"}
+          actionError={mutation.variables?.id === detailTxn.id && mutation.isError ? errorMessage(mutation.error) : null}
+          cardLabel={detailCard
+            ? cardIdentityLabel(detailCard, memberNameById)
+            : detailTxn.cardId ? "카드 정보 확인 불가" : "카드 미연결"}
           memberName={memberNameOf(detailTxn)}
+          ownershipMismatch={detailCard != null && !detailCard.isShared
+            && detailCard.ownerMemberId !== detailTxn.memberId}
           cardOptions={cardOptions}
           categoryOptions={categoryFilterOptions}
           applyRule={applyRule}
@@ -1220,9 +1110,12 @@ function TransactionsView() {
  */
 function TransactionDetailDialog({
   txn,
-  busy,
+  busy: actionBusy,
+  actionStatus,
+  actionError,
   cardLabel,
   memberName,
+  ownershipMismatch,
   cardOptions,
   categoryOptions,
   applyRule,
@@ -1242,8 +1135,11 @@ function TransactionDetailDialog({
 }: Readonly<{
   txn: TransactionSummary;
   busy: boolean;
+  actionStatus: "idle" | "pending" | "success" | "error";
+  actionError: string | null;
   cardLabel: string;
   memberName: string;
+  ownershipMismatch: boolean;
   cardOptions: ReadonlyArray<Option>;
   categoryOptions: ReadonlyArray<Option>;
   applyRule: boolean;
@@ -1252,7 +1148,7 @@ function TransactionDetailDialog({
   onChangeCategory: (categoryId: string) => void;
   onCreateCategory: (name: string) => Promise<void>;
   onChangeVisibility: (visibility: string) => void;
-  onEditFields: (body: { amount?: number; occurredAt?: string }) => void;
+  onEditFields: (body: TransactionEditPatch) => Promise<TransactionSummary>;
   onOpenMemo: () => void;
   onOpenLink: () => void;
   onMarkValid: () => void;
@@ -1261,6 +1157,8 @@ function TransactionDetailDialog({
   onDelete: () => void;
   onClose: () => void;
 }>) {
+  const [editSaving, setEditSaving] = useState(false);
+  const busy = actionBusy || editSaving;
   const isCancellation = txn.transactionType === "cancellation";
   const excluded = txn.excludedAt != null;
   const isPending =
@@ -1277,27 +1175,92 @@ function TransactionDetailDialog({
   const initialDate = toDateTimeLocal(occurredAt(txn));
   const [editAmount, setEditAmount] = useState(String(txn.amount));
   const [editDate, setEditDate] = useState(initialDate);
+  const [editErrors, setEditErrors] = useState<TransactionEditErrors>({});
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editNotice, setEditNotice] = useState<string | null>(null);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const editSession = useRef(createTransactionEditSession());
+  const amountInput = useRef<HTMLInputElement>(null);
+  const dateInput = useRef<HTMLInputElement>(null);
+  const inputId = useId();
+  const backHandler = useRef<(source: TransactionDetailBackSource) => void>(() => undefined);
+  useEffect(() => {
+    const unregister = registerTransactionDetailBack(window, (source) => backHandler.current(source));
+    return () => { unregister(); editSession.current.invalidate(); };
+  }, []);
   const editDirty =
     (canEditAmount && editAmount.trim() !== String(txn.amount)) ||
     editDate !== initialDate;
   const cancelEdit = () => {
+    if (editSession.current.pending || busy) return;
+    editSession.current.invalidate();
     setEditAmount(String(txn.amount));
     setEditDate(initialDate);
+    setEditErrors({});
+    setEditError(null);
+    setEditNotice(null);
     setEditing(false);
   };
-  const saveEdits = () => {
-    const body: { amount?: number; occurredAt?: string } = {};
-    if (canEditAmount) {
-      const parsed = Number(editAmount.replace(/[,\s]/g, ""));
-      if (Number.isInteger(parsed) && parsed > 0 && parsed !== txn.amount) {
-        body.amount = parsed;
-      }
+  const startEdit = () => {
+    setEditAmount(String(txn.amount));
+    setEditDate(initialDate);
+    setEditErrors({});
+    setEditError(null);
+    setEditNotice(null);
+    setEditing(true);
+  };
+  const requestClose = () => {
+    if (discardOpen) { setDiscardOpen(false); return; }
+    if (deleteConfirmOpen) { setDeleteConfirmOpen(false); return; }
+    if (editSession.current.pending || busy) {
+      setEditNotice("저장 중이에요. 완료될 때까지 잠시 기다려 주세요.");
+      return;
     }
-    if (editDate && editDate !== initialDate) {
-      const d = new Date(editDate);
-      if (!Number.isNaN(d.getTime())) body.occurredAt = d.toISOString();
+    if (editing && editDirty) { setDiscardOpen(true); return; }
+    onClose();
+  };
+  backHandler.current = (source) => {
+    if (source === "browser") {
+      // popstate already navigated: do not restore a URL or claim an in-flight
+      // write was cancelled. Only discard this dialog's response callbacks.
+      editSession.current.invalidate();
+      onClose();
+      return;
     }
-    onEditFields(body);
+    requestClose();
+  };
+  const saveEdits = async () => {
+    if (editSession.current.pending || busy) return;
+    const validation = validateTransactionEdit({
+      amount: editAmount, date: editDate, initialAmount: txn.amount,
+      initialDate, canEditAmount,
+    });
+    setEditNotice(null);
+    setEditError(null);
+    if (!validation.ok) {
+      setEditErrors(validation.errors);
+      (validation.errors.amount ? amountInput : dateInput).current?.focus();
+      return;
+    }
+    setEditErrors({});
+    if (Object.keys(validation.patch).length === 0) { setEditing(false); return; }
+    setEditSaving(true);
+    await editSession.current.save(
+      () => onEditFields(validation.patch),
+      () => {
+        setEditSaving(false);
+        setEditing(false);
+        setEditNotice("수정 내용을 저장했어요.");
+      },
+      (error) => {
+        setEditSaving(false);
+        setEditNotice(null);
+        setEditError(errorMessage(error));
+        // Keep both inputs and focusable actions available for a correction/retry.
+        (canEditAmount ? amountInput : dateInput).current?.focus();
+      },
+    );
   };
 
   // 인라인 '새 카테고리 만들기' 상태.
@@ -1325,48 +1288,79 @@ function TransactionDetailDialog({
   };
 
   return (
-    <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-h-[92dvh] gap-3 overflow-y-auto overscroll-contain">
+    <Dialog open onOpenChange={(v) => !v && requestClose()}>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] grid-cols-[minmax(0,1fr)] gap-3 overflow-y-auto overscroll-contain p-4 [&>*]:min-w-0 sm:p-6">
         <DialogHeader>
-          <DialogTitle>{merchantLabel(txn)}</DialogTitle>
-          <DialogDescription>
-            {formatDate(occurredAt(txn))} · {cardLabel} · {memberName}
+          <DialogTitle className="break-words pr-6">{merchantLabel(txn)}</DialogTitle>
+          <DialogDescription className="break-words">
+            {formatDate(occurredAt(txn))} · 지출 구분: {memberName}
           </DialogDescription>
         </DialogHeader>
 
+        <div className="space-y-1 text-sm break-words">
+          <p className="text-muted-foreground">연결 카드: {cardLabel}</p>
+          {ownershipMismatch ? (
+            <p className="text-warning-strong" role="status">
+              거래 구성원과 카드 소유자가 달라요. 아래 카드 선택에서 올바른 카드에 연결됐는지 확인해 주세요.
+            </p>
+          ) : null}
+        </div>
+
         {/* 금액 요약 — 평소엔 읽기 뷰, '수정' 탭 시 인라인 편집으로 전환 */}
-        <div className="bg-muted relative flex flex-col items-center gap-1 rounded-xl px-4 py-4">
+        <div className="bg-muted relative flex min-w-0 max-w-full flex-col items-center gap-1 rounded-xl px-4 py-4">
           {editing ? (
             <div className="flex w-full flex-col gap-2">
-              <span className="text-muted-foreground text-[13px]">
-                금액·날짜 수정
+              <span className="text-muted-foreground text-[13px]" id={`${inputId}-heading`}>
+                금액·날짜 수정 · 저장을 눌러야 반영돼요
               </span>
               <div className="flex flex-col gap-2">
+                <Label htmlFor={`${inputId}-amount`}>금액</Label>
                 <Input
+                  id={`${inputId}-amount`}
+                  ref={amountInput}
                   inputMode="numeric"
-                  aria-label="금액"
+                  aria-invalid={Boolean(editErrors.amount)}
+                  aria-describedby={editErrors.amount ? `${inputId}-amount-error` : undefined}
                   value={editAmount}
                   disabled={busy || !canEditAmount}
-                  onChange={(e) => setEditAmount(e.target.value)}
+                  className="min-h-11"
+                  onChange={(e) => {
+                    setEditAmount(e.target.value);
+                    setEditErrors((errors) => ({ ...errors, amount: undefined }));
+                    setEditError(null);
+                  }}
                 />
+                {editErrors.amount ? <p id={`${inputId}-amount-error`} role="alert" className="text-destructive text-sm">{editErrors.amount}</p> : null}
+                <Label htmlFor={`${inputId}-date`}>날짜/시각 (이 기기의 시간)</Label>
                 <Input
+                  id={`${inputId}-date`}
+                  ref={dateInput}
                   type="datetime-local"
-                  aria-label="날짜/시각"
+                  aria-invalid={Boolean(editErrors.occurredAt)}
+                  aria-describedby={editErrors.occurredAt ? `${inputId}-date-error` : undefined}
                   value={editDate}
                   disabled={busy}
-                  onChange={(e) => setEditDate(e.target.value)}
+                  className="min-h-11 min-w-0 w-full"
+                  onChange={(e) => {
+                    setEditDate(e.target.value);
+                    setEditErrors((errors) => ({ ...errors, occurredAt: undefined }));
+                    setEditError(null);
+                  }}
                 />
+                {editErrors.occurredAt ? <p id={`${inputId}-date-error`} role="alert" className="text-destructive text-sm">{editErrors.occurredAt}</p> : null}
               </div>
+              {editError ? <p role="alert" className="text-destructive text-sm">{editError}</p> : null}
               {!canEditAmount ? (
                 <p className="text-muted-foreground text-[12px]">
                   취소가 연결된 거래는 금액을 바꿀 수 없어요. 날짜만 수정돼요.
                 </p>
               ) : null}
-              <div className="flex justify-end gap-2">
+              <div className="sticky bottom-0 flex justify-end gap-2 bg-muted py-2" aria-busy={editSaving}>
                 <Button
                   type="button"
                   size="sm"
                   variant="ghost"
+                  className="min-h-11 min-w-20"
                   disabled={busy}
                   onClick={cancelEdit}
                 >
@@ -1375,13 +1369,11 @@ function TransactionDetailDialog({
                 <Button
                   type="button"
                   size="sm"
+                  className="min-h-11 min-w-20"
                   disabled={busy || !editDirty}
-                  onClick={() => {
-                    saveEdits();
-                    setEditing(false);
-                  }}
+                  onClick={() => void saveEdits()}
                 >
-                  저장
+                  {editSaving ? "저장 중…" : "저장"}
                 </Button>
               </div>
             </div>
@@ -1391,8 +1383,8 @@ function TransactionDetailDialog({
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => setEditing(true)}
-                  className="text-accent-foreground absolute top-3 right-3 text-[13px] font-medium disabled:opacity-50"
+                  onClick={startEdit}
+                  className="text-accent-foreground absolute top-1 right-1 min-h-11 min-w-11 px-2 text-[13px] font-medium disabled:opacity-50"
                 >
                   수정
                 </button>
@@ -1413,13 +1405,10 @@ function TransactionDetailDialog({
                 )}
               </span>
               {txn.originalCurrency && txn.originalAmount != null ? (
-                <span className="text-muted-foreground text-[13px]">
-                  해외 결제 {formatMoney(txn.originalAmount, txn.originalCurrency)}
-                  {txn.exchangeRate
-                    ? ` · 환율 ${txn.exchangeRate.toLocaleString("ko-KR", { maximumFractionDigits: 2 })}`
-                    : ""}{" "}
-                  (승인 시점 환산, 실제 청구액은 다를 수 있어요)
-                </span>
+                <div className="w-full text-center">
+                  <p className="text-muted-foreground text-[13px]">해외 결제 {formatMoney(txn.originalAmount, txn.originalCurrency)}</p>
+                  <TransactionFxDetails currency={txn.originalCurrency} exchangeRate={txn.exchangeRate} fx={txn.fx} />
+                </div>
               ) : null}
               {excluded ? (
                 <span className="bg-background text-muted-foreground mt-1 rounded-full px-2 py-0.5 text-xs font-medium">
@@ -1470,7 +1459,20 @@ function TransactionDetailDialog({
           )}
         </div>
 
-        <div className="flex flex-col gap-3">
+        {editNotice ? <p role="status" aria-live="polite" className="text-muted-foreground text-sm">{editNotice}</p> : null}
+        {actionBusy ? (
+          <p role="status" className="text-muted-foreground text-sm">변경 내용을 처리하고 있어요.</p>
+        ) : actionError && !editing ? (
+          <p role="alert" className="text-destructive text-sm">{actionError}</p>
+        ) : actionStatus === "success" && !editNotice && !editing ? (
+          <p role="status" className="text-primary text-sm">변경 내용을 저장했어요.</p>
+        ) : null}
+
+        <div className="flex min-w-0 flex-col gap-3">
+          <div className="space-y-1 border-t pt-4">
+            <h2 className="text-sm font-semibold">카드 · 분류 · 공개 범위</h2>
+            <p className="text-muted-foreground text-xs">아래 항목은 선택하면 바로 저장돼요.</p>
+          </div>
           {/* 카드 연결/재지정 — 미연결·모호(pending_review) 거래 해소 경로 */}
           <div className="flex flex-col gap-2">
             <Label htmlFor="detail-card">카드</Label>
@@ -1479,8 +1481,8 @@ function TransactionDetailDialog({
               disabled={busy}
               onValueChange={onChangeCard}
             >
-              <SelectTrigger id="detail-card" className="w-full">
-                <SelectValue placeholder="카드 미연결" />
+              <SelectTrigger id="detail-card" className="min-h-11 min-w-0 w-full max-w-full">
+                <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder="카드 미연결" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={CARD_NONE}>카드 미연결</SelectItem>
@@ -1501,13 +1503,24 @@ function TransactionDetailDialog({
           {/* 카테고리 변경(+applyRule) */}
           <div className="flex flex-col gap-2">
             <Label htmlFor="detail-category">카테고리</Label>
+            <label className="flex min-h-11 cursor-pointer items-center gap-2">
+              <Checkbox
+                checked={applyRule}
+                disabled={busy}
+                onChange={(e) => onApplyRuleChange(e.target.checked)}
+              />
+              <span className="text-muted-foreground text-xs">
+                같은 가맹점도 다음부터 자동 분류하기
+              </span>
+            </label>
+            <p className="text-muted-foreground text-xs">자동 분류를 원하면 먼저 체크한 뒤 카테고리를 선택해 주세요. 지난 거래는 바뀌지 않아요.</p>
             <Select
               value={txn.categoryId ?? ""}
               disabled={busy}
               onValueChange={onChangeCategory}
             >
-              <SelectTrigger id="detail-category" className="w-full">
-                <SelectValue placeholder="미분류" />
+              <SelectTrigger id="detail-category" className="min-h-11 min-w-0 w-full max-w-full">
+                <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder="미분류" />
               </SelectTrigger>
               <SelectContent>
                 {categoryOptions.map((o) => (
@@ -1573,15 +1586,6 @@ function TransactionDetailDialog({
               </button>
             )}
 
-            <label className="flex w-fit cursor-pointer items-center gap-2">
-              <Checkbox
-                checked={applyRule}
-                onChange={(e) => onApplyRuleChange(e.target.checked)}
-              />
-              <span className="text-muted-foreground text-[13px]">
-                같은 가맹점은 다음부터 이 카테고리로 자동 분류해요
-              </span>
-            </label>
           </div>
 
           {/* 공개 범위 */}
@@ -1592,8 +1596,8 @@ function TransactionDetailDialog({
               disabled={busy}
               onValueChange={onChangeVisibility}
             >
-              <SelectTrigger id="detail-visibility" className="w-full">
-                <SelectValue />
+              <SelectTrigger id="detail-visibility" className="min-h-11 min-w-0 w-full max-w-full">
+                <SelectValue className="min-w-0 flex-1 truncate text-left" />
               </SelectTrigger>
               <SelectContent>
                 {VISIBILITY_OPTIONS.map((o) => (
@@ -1663,7 +1667,7 @@ function TransactionDetailDialog({
             ) : null}
 
             {/* 하드 삭제(되돌리기 불가) — 확인 다이얼로그 경유 */}
-            <AlertDialog>
+            <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
               <AlertDialogTrigger asChild>
                 <Button
                   variant="ghost"
@@ -1707,11 +1711,30 @@ function TransactionDetailDialog({
             variant="ghost"
             className="h-11 w-full"
             disabled={busy}
-            onClick={onClose}
+            onClick={requestClose}
           >
             닫기
           </Button>
         </DialogFooter>
+        <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
+          <AlertDialogContent onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            (canEditAmount ? amountInput : dateInput).current?.focus();
+          }}>
+            <AlertDialogHeader>
+              <AlertDialogTitle>수정 내용을 버릴까요?</AlertDialogTitle>
+              <AlertDialogDescription>아직 저장하지 않은 금액과 날짜가 있어요.</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>계속 수정하기</AlertDialogCancel>
+              <AlertDialogAction onClick={() => {
+                editSession.current.invalidate();
+                setDiscardOpen(false);
+                onClose();
+              }}>버리고 닫기</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );
@@ -1720,6 +1743,13 @@ function TransactionDetailDialog({
 /* -------------------------------------------------------------------------- */
 /* Memo modal                                                                 */
 /* -------------------------------------------------------------------------- */
+
+/** Nested transaction dialogs take native back before the detail behind them. */
+function useTransactionModalBack(onClose: () => void, busy: boolean) {
+  const handler = useRef<(source: TransactionDetailBackSource) => void>(() => undefined);
+  handler.current = (source) => { if (source === "browser" || !busy) onClose(); };
+  useEffect(() => registerTransactionDetailBack(window, (source) => handler.current(source)), []);
+}
 
 function MemoModal({
   txn,
@@ -1732,9 +1762,10 @@ function MemoModal({
   onClose: () => void;
   onSave: (memo: string) => void;
 }>) {
+  useTransactionModalBack(onClose, busy);
   const [memo, setMemo] = useState(txn.memo ?? "");
   return (
-    <Dialog open onOpenChange={(v) => !v && onClose()}>
+    <Dialog open onOpenChange={(v) => !v && !busy && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>메모 남기기</DialogTitle>
@@ -1757,6 +1788,7 @@ function MemoModal({
           />
         </div>
         <DialogFooter className="flex-col gap-2 sm:flex-col">
+          {busy ? <p role="status" className="text-muted-foreground text-sm">저장 중이에요. 완료될 때까지 잠시 기다려 주세요.</p> : null}
           <Button
             variant="default"
             className="h-11 w-full"
@@ -1794,6 +1826,7 @@ function LinkCancellationModal({
   onClose: () => void;
   onConfirm: (approvalTransactionId: string) => void;
 }>) {
+  useTransactionModalBack(onClose, busy);
   const { authedFetch } = useAuth();
   const [selected, setSelected] = useState("");
   const [search, setSearch] = useState("");
@@ -1849,7 +1882,7 @@ function LinkCancellationModal({
   );
 
   return (
-    <Dialog open onOpenChange={(v) => !v && onClose()}>
+    <Dialog open onOpenChange={(v) => !v && !busy && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>어떤 결제를 취소한 건가요?</DialogTitle>
@@ -1948,6 +1981,7 @@ function LinkCancellationModal({
           )}
         </div>
         <DialogFooter className="flex-col gap-2 sm:flex-col">
+          {busy ? <p role="status" className="text-muted-foreground text-sm">연결 중이에요. 완료될 때까지 잠시 기다려 주세요.</p> : null}
           <Button
             variant="default"
             className="h-11 w-full"

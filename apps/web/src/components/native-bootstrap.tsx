@@ -19,8 +19,9 @@ import { toast } from "sonner";
 import { decideBackAction } from "@/lib/back-button";
 import { consumeGameBack } from "@/lib/game-navigation";
 import { noteInAppNavigation } from "@/lib/nav-history";
-import { canGoBackInApp } from "@/lib/nav-history";
-import { isTabRoot, normalizePath } from "@/lib/nav-tabs";
+import { canGoBackInApp, prepareColdEntryReplacement } from "@/lib/nav-history";
+import { dispatchTransactionDetailBack } from "@/lib/transaction-detail-back";
+import { isTabRoot, normalizePath, parentTabHref } from "@/lib/nav-tabs";
 import {
   applyStatusBarStyle,
   exitApp,
@@ -45,6 +46,7 @@ export function NativeBootstrap() {
     void initNative({
       onDeepLink: (path) => router.push(path),
       onBackButton: () => {
+        if (!dispatchTransactionDetailBack(window)) return;
         const path = pathnameRef.current;
         if (normalizePath(path) === "/play/app") {
           if (!consumeGameBack()) router.replace("/play");
@@ -62,10 +64,11 @@ export function NativeBootstrap() {
           case "back":
             router.back();
             break;
-          case "home":
+          case "parent":
             // 딥링크로 연 하위 화면 — 돌아갈 앱 화면이 없다. replace: 뒤로가기가
             // 방금 떠난 화면으로 되돌아오는 고리를 만들지 않는다.
-            router.replace("/dashboard");
+            prepareColdEntryReplacement();
+            router.replace(parentTabHref(path));
             break;
           case "confirm-exit":
             exitPromptAt.current = Date.now();

@@ -108,6 +108,7 @@ const BUDGET_SCOPE_LABEL: Record<string, string> = {
   member: '구성원',
   category: '카테고리',
   card: '카드',
+  card_group: '선택한 카드',
 };
 
 /* -------------------------------------------------------------------------- */
@@ -700,10 +701,16 @@ export class FinanceAiService {
         name: schema.budgets.name,
         scopeType: schema.budgets.scopeType,
         scopeRefId: schema.budgets.scopeRefId,
+        cardIds: schema.budgets.cardIds,
         amount: schema.budgets.amount,
       })
       .from(schema.budgets)
-      .where(eq(schema.budgets.householdId, householdId));
+      .where(and(
+        eq(schema.budgets.householdId, householdId),
+        eq(schema.budgets.effectiveMonth, `${month}-01`),
+        // 집계와 문구가 원화 기준이므로 다른 통화의 예산과 비교하지 않는다.
+        eq(schema.budgets.currency, 'KRW'),
+      ));
     if (budgets.length === 0) return null;
 
     const elapsed = monthElapsedRate(month);
@@ -748,7 +755,9 @@ export class FinanceAiService {
           );
         }
         spent = memberNets.get(budget.scopeRefId ?? '') ?? 0;
-      } else {
+      } else if (budget.scopeType === 'card' || budget.scopeType === 'card_group') {
+        // 비어 있는 그룹을 가구 전체나 단일 카드로 해석하지 않는다.
+        if (budget.scopeType === 'card_group' && (budget.cardIds?.length ?? 0) === 0) continue;
         if (cardNets === null) {
           const breakdown = await this.analytics.cards(userId, householdId, {
             month,
@@ -759,7 +768,11 @@ export class FinanceAiService {
               .map((item) => [item.cardId as string, item.net]),
           );
         }
-        spent = cardNets.get(budget.scopeRefId ?? '') ?? 0;
+        spent = budget.scopeType === 'card_group'
+          ? [...new Set(budget.cardIds ?? [])].reduce((sum, cardId) => sum + (cardNets?.get(cardId) ?? 0), 0)
+          : cardNets.get(budget.scopeRefId ?? '') ?? 0;
+      } else {
+        continue;
       }
 
       if (spent <= 0) continue;

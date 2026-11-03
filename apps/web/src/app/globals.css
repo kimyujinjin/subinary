@@ -1,12 +1,7 @@
-/* ---------------------------------------------------------------------------
- * Family Memory AI — web · 전역 스타일 (Tailwind v4 + shadcn/ui, 오늘의집 벤치마킹)
- *
- * 디자인 언어: 오늘의집(bucketplace) 벤치마크.
- *  - 화이트 베이스 + 연한 보더(#EAEDEF) 카드, 섹션 회색(#F7F9FA)으로 위계.
- *  - 시그니처 민트 primary(#35C5F0), 텍스트/링크용 진한 민트(#0AA5DC).
- *  - 컴팩트 라운드(버튼 8px · 카드 16px), 금액은 tabular-nums 볼드.
- *  - 주 네비게이션은 하단 탭바(전 뷰포트 공통) — 레이아웃에서 구현.
- * ------------------------------------------------------------------------- */
+/* 모아 — 숫자와 상태를 먼저 읽을 수 있는 가족 가계부.
+ * 차분한 회색 바탕, 네이비 자산 요약, 흰 정보 카드. 실제 금액은 tabular-nums로 정렬한다.
+ * 라이트·다크의 본문/버튼/상태색 대비는 color-contrast.test.ts에서 확인한다.
+ */
 @import "tailwindcss";
 @import "tw-animate-css";
 
@@ -14,29 +9,36 @@
 
 /* --- 디자인 토큰 (라이트) -------------------------------------------------- */
 :root {
-  --radius: 0.75rem;
+  --radius: 1rem;
 
-  --background: #ffffff;
-  --foreground: #2f3438;
+  --background: #f4f6fa;
+  --foreground: #19283f;
 
   --card: #ffffff;
-  --card-foreground: #2f3438;
+  --card-foreground: #19283f;
   --popover: #ffffff;
-  --popover-foreground: #2f3438;
+  --popover-foreground: #19283f;
 
-  --primary: #35c5f0;
+  --primary: #2456cf;
   --primary-foreground: #ffffff;
 
-  --secondary: #f7f9fa;
-  --secondary-foreground: #454c53;
+  --secondary: #edf1f7;
+  --secondary-foreground: #40526c;
 
-  --muted: #f7f9fa;
-  --muted-foreground: #828c94;
+  --muted: #edf1f7;
+  --muted-foreground: #59677c;
 
-  --accent: #e9f9fe;
-  --accent-foreground: #0aa5dc;
+  --accent: #eaf0ff;
+  --accent-foreground: #2456cf;
 
-  --destructive: #f04452;
+  /* 네이비 요약 영역과 밝은 블루 강조는 본문·상태 색과 분리한다. */
+  --finance-hero: #172e50;
+  --finance-hero-foreground: #f7faff;
+  --finance-hero-muted: #b9cbe3;
+  --finance-highlight: #c1dcff;
+  --finance-highlight-foreground: #173b6b;
+
+  --destructive: #c43443;
   --destructive-foreground: #ffffff;
 
   /* 표면용(진행바 채우기·반투명 틴트 배경). 텍스트로 쓰지 말 것 — 아래 -strong을 쓴다. */
@@ -50,50 +52,56 @@
   --success-strong: #017044;
   --warning-strong: #b45309;
 
-  --border: #eaedef;
-  --input: #dbdfe3;
-  --ring: #35c5f0;
+  --border: #e3e8f0;
+  --input: #c4cede;
+  --ring: #2456cf;
 
-  --chart-1: #35c5f0;
+  --chart-1: #2456cf;
   --chart-2: #00a05b;
   --chart-3: #ff9500;
   --chart-4: #f04452;
   --chart-5: #7b61ff;
 
   --sidebar: #ffffff;
-  --sidebar-foreground: #2f3438;
-  --sidebar-primary: #35c5f0;
+  --sidebar-foreground: #19283f;
+  --sidebar-primary: #2456cf;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e9f9fe;
-  --sidebar-accent-foreground: #0aa5dc;
-  --sidebar-border: #eaedef;
-  --sidebar-ring: #35c5f0;
+  --sidebar-accent: #eaf0ff;
+  --sidebar-accent-foreground: #2456cf;
+  --sidebar-border: #e3e8f0;
+  --sidebar-ring: #2456cf;
 }
 
 /* --- 디자인 토큰 (다크) ---------------------------------------------------- */
 .dark {
-  --background: #121212;
-  --foreground: #e9ebed;
+  --background: #101824;
+  --foreground: #eef3fc;
 
-  --card: #1e1e1e;
-  --card-foreground: #e9ebed;
-  --popover: #2a2a2a;
-  --popover-foreground: #e9ebed;
+  --card: #192538;
+  --card-foreground: #eef3fc;
+  --popover: #25344b;
+  --popover-foreground: #eef3fc;
 
-  --primary: #35c5f0;
-  --primary-foreground: #06222e;
+  --primary: #a5c5ff;
+  --primary-foreground: #11294d;
 
-  --secondary: #2a2a2a;
-  --secondary-foreground: #c8cdd2;
+  --secondary: #26354c;
+  --secondary-foreground: #d9e5f7;
 
-  --muted: #2a2a2a;
-  --muted-foreground: #8b95a1;
+  --muted: #26354c;
+  --muted-foreground: #b1c1d9;
 
-  --accent: #0d3542;
-  --accent-foreground: #6fd6f7;
+  --accent: #273c5b;
+  --accent-foreground: #a5c5ff;
 
-  --destructive: #f55b66;
-  --destructive-foreground: #ffffff;
+  --finance-hero: #19375d;
+  --finance-hero-foreground: #f7faff;
+  --finance-hero-muted: #c2d3eb;
+  --finance-highlight: #c1dcff;
+  --finance-highlight-foreground: #173b6b;
+
+  --destructive: #ff8a96;
+  --destructive-foreground: #3b111a;
 
   --success: #34c77b;
   --warning: #ffb020;
@@ -104,22 +112,22 @@
 
   --border: #ffffff14;
   --input: #ffffff1f;
-  --ring: #35c5f0;
+  --ring: #a5c5ff;
 
-  --chart-1: #35c5f0;
+  --chart-1: #a5c5ff;
   --chart-2: #34c77b;
   --chart-3: #ffb020;
   --chart-4: #f55b66;
   --chart-5: #9b8afb;
 
-  --sidebar: #121212;
-  --sidebar-foreground: #e9ebed;
-  --sidebar-primary: #35c5f0;
-  --sidebar-primary-foreground: #06222e;
-  --sidebar-accent: #0d3542;
-  --sidebar-accent-foreground: #6fd6f7;
+  --sidebar: #192538;
+  --sidebar-foreground: #eef3fc;
+  --sidebar-primary: #a5c5ff;
+  --sidebar-primary-foreground: #11294d;
+  --sidebar-accent: #273c5b;
+  --sidebar-accent-foreground: #a5c5ff;
   --sidebar-border: #ffffff14;
-  --sidebar-ring: #35c5f0;
+  --sidebar-ring: #a5c5ff;
 }
 
 /* --- @theme inline: 토큰 → Tailwind 유틸리티 매핑 -------------------------- */
@@ -143,6 +151,11 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-finance-hero: var(--finance-hero);
+  --color-finance-hero-foreground: var(--finance-hero-foreground);
+  --color-finance-hero-muted: var(--finance-hero-muted);
+  --color-finance-highlight: var(--finance-highlight);
+  --color-finance-highlight-foreground: var(--finance-highlight-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-success: var(--success);
@@ -230,4 +243,13 @@ html.kb-open [data-bottom-nav] {
     -webkit-font-smoothing: antialiased;
     letter-spacing: -0.01em;
   }
+}
+
+/* 핵심 금융 화면의 공통 표면. 작은 상태·행동 버튼은 별도 위계를 유지한다. */
+.finance-panel {
+  @apply rounded-3xl border border-border/70 bg-card text-card-foreground;
+  box-shadow: 0 3px 16px -10px rgb(25 40 63 / 14%);
+}
+.dark .finance-panel {
+  box-shadow: none;
 }

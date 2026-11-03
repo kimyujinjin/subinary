@@ -10,11 +10,10 @@
  *   재승격/경합은 기존 레코드를 남기고 승인 잔액을 이중 반영하지 않는다.
  * - 금액은 KRW 정수(부동소수 금지). netAmount 규약(스펙 §1.2):
  *   approval → netAmount = amount - cancelledAmount, cancellation → netAmount = 0.
- * - 카드 자동연결: 파서 `maskedCardNumber` 뒤 4자리 ↔ 같은 household
- *   `payment_cards.maskedNumber` 뒤 4자리(스펙 §1.5). 매칭 없으면 cardId=null,
- *   visibility='household'. 뒤 4자리가 같은 활성 카드가 2장 이상이면 어느 카드인지
- *   확정 불가 → 임의 연결 대신 cardId=null + 후보 중 가장 제한적인 visibility(누출
- *   방지)로 두고, 승인은 pending_review로 표시해 사람 검토를 유도한다.
+ * - 카드 자동연결: 원본 구성원 소유 카드 또는 명시적 공용 카드만 후보로 삼는다.
+ *   발급사·뒤 4자리로 유일하게 식별한 경우만 연결하고, 카드번호가 없는 문자도
+ *   같은 구성원 범위를 지킨다. 모호하거나 타인 개인 카드만 일치하면 미연결·검토로
+ *   남기며 후보 중 가장 제한적인 공개범위를 유지한다.
  * - 카테고리: merchant_category_rules(household, merchantNormalized) →
  *   키워드(categorizeByKeyword → slug → 시스템 expense_categories) →
  *   LLM 제안(category-suggest 큐, 비동기 자가학습) → null (스펙 §1.3).
@@ -23,32 +22,94 @@
  * - 로그는 식별자/거래유형/상태만(금액·가맹점·PII 미기록, 스펙 §6/§1.1).
  */
 import { InjectQueue } from '@nestjs/bullmq';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '@family/config';
 import {
   schema,
+  MONEY_CONTRACT_VERSION_V2,
   type Db,
+  type DbExecutor,
   notTransferCategory,
   spendPeriodWindow,
 } from '@family/database';
+import {
+  applyRecipe,
+  automaticApprovalRejection,
+  scopedTemplateFingerprint,
+  templateFingerprint,
+  type CardSmsParseResult,
+  type TemplateRecipe,
+} from '@family/card-parsers';
 import {
   assertKrwInteger,
   categorizeByKeyword,
   createLogger,
   currencyExponent,
   normalizeMerchant,
+  resolvePaymentCardLink,
   QUEUE_NAMES,
   type NotificationDispatchJob,
+  type PaymentCardLink as CardLink,
 } from '@family/shared';
 import type { Queue } from 'bullmq';
-import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql, type SQL } from 'drizzle-orm';
+import { convertToKrw as convertMoneyToKrw, fxBaseDate, fxRateDisplayValue } from '@family/transaction-domain';
+import { and, eq, gte, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 
 import { DB } from '../database/database.module';
 import { FxRateService } from './fx-rate.service';
 import { MoneyShadowService } from './money-shadow.service';
 import { MoneyWriteService } from './money-write.service';
+import { MoneyRuntimeService } from './money-runtime.service';
+
+/** 개인 승인 정책의 자동 적용 결과. 차단 사유에는 원문이나 개인정보를 넣지 않는다. */
+export type AutomaticPromotionOutcome =
+  | { readonly status: 'applied'; readonly transactionId: string }
+  | { readonly status: 'blocked'; readonly reason: string };
+
+/** 읽기 전용 미리보기 결과. 실제 적용은 잠금 안에서 같은 검증을 다시 수행한다. */
+export type AutomaticPromotionPreview =
+  | { readonly status: 'eligible' }
+  | { readonly status: 'blocked'; readonly reason: string };
+
+interface ApprovedRecipe extends TemplateRecipe {
+  readonly approvedCardId: string;
+  readonly householdId: string;
+  readonly memberId: string;
+  readonly automationEnabled: true;
+}
+
+interface AutomaticPreparation {
+  readonly event: typeof schema.cardSmsEvents.$inferSelect;
+  readonly policy: typeof schema.cardSmsTemplates.$inferSelect;
+  readonly result: CardSmsParseResult & { amount: number; merchantRaw: string; occurredAt: Date };
+  readonly card: CardLink & { cardId: string };
+  readonly merchantNormalized: string | null;
+  readonly categoryId: string | null;
+}
+
+/** 금액 명령 이후의 거절도 트랜잭션 전체를 되돌리도록 사용하는 내부 신호. */
+class AutomaticPromotionBlocked extends Error {}
+
+function isApprovedRecipe(value: Record<string, unknown>): value is Record<string, unknown> & ApprovedRecipe {
+  const fields = value.fields;
+  return value.schemaVersion === 'card-sms-recipe-v1'
+    && value.transactionType === 'approval'
+    && typeof value.fingerprint === 'string'
+    && typeof value.issuer === 'string'
+    && typeof value.approvedCardId === 'string'
+    && typeof value.householdId === 'string'
+    && typeof value.memberId === 'string'
+    && value.automationEnabled === true
+    && fields !== null && typeof fields === 'object' && !Array.isArray(fields)
+    && Object.entries(fields).every(([field, rule]: [string, unknown]) => {
+      if (!['amount', 'occurredAt', 'merchant', 'installment'].includes(field)
+        || rule === null || typeof rule !== 'object' || Array.isArray(rule)) return false;
+      const index = (rule as Record<string, unknown>).candidateIndex;
+      return typeof index === 'number' && Number.isSafeInteger(index) && index >= 0;
+    });
+}
 
 /**
  * 외화 환산 결과. KRW 거래는 fx=null. 외화는 amount(KRW 환산 minor units) +
@@ -61,9 +122,6 @@ interface ConvertedAmount {
   originalCurrency: string | null;
   exchangeRate: number | null;
 }
-
-/** 공개 범위(스펙 §2 cardVisibility enum). 카드 없으면 'household'로 상속. */
-type CardVisibility = 'private' | 'household' | 'summary_only';
 
 /** 거래 상태(스펙 §2 txnStatus enum). */
 type TransactionStatus =
@@ -78,24 +136,6 @@ type TransactionStatus =
  * 이 창 안에 이미 있으면 새 승인을 duplicate_suspected로 표시한다.
  */
 const DUPLICATE_TIME_WINDOW_MS = 5 * 60 * 1000;
-
-/** 카드 자동연결에 필요한 최소 식별 자릿수(뒤 4자리). */
-const CARD_TAIL_LENGTH = 4;
-
-/** 카드 자동연결 결과(뒤 4자리 매칭). */
-interface CardLink {
-  cardId: string | null;
-  visibility: CardVisibility;
-  /** 뒤 4자리가 같은 활성 카드가 2장 이상이라 카드를 확정하지 못한 경우. */
-  ambiguous: boolean;
-}
-
-/** visibility 제한 강도 순위(클수록 더 비공개). */
-const VISIBILITY_RANK: Record<CardVisibility, number> = {
-  household: 0,
-  summary_only: 1,
-  private: 2,
-};
 
 /** 취소 승격 결과(로깅용). */
 interface CancellationOutcome {
@@ -144,6 +184,7 @@ export class TransactionPromotionService {
     // ADR-0027 5단계: enforce가 켜지면 승격의 금액 쓰기를 이쪽이 소유한다(D-1 해소).
     private readonly moneyWrite: MoneyWriteService,
     configService: ConfigService,
+    @Optional() private readonly moneyRuntime?: MoneyRuntimeService,
   ) {
     const nodeEnv = configService.get<AppConfig['app']>('app')?.nodeEnv;
     this.logger = createLogger('worker:transaction-promotion', {
@@ -152,10 +193,203 @@ export class TransactionPromotionService {
   }
 
   /**
+   * 개인이 승인한 문자 정책의 적용 가능성만 읽는다. 상태·정책·카드·중복 검증은
+   * 실제 적용과 공유하며 금액 명령, 감사 기록, 이벤트 갱신을 실행하지 않는다.
+   */
+  async previewAutomatic(
+    eventId: string,
+    expectedEventUpdatedAt: Date,
+    expectedPolicyUpdatedAt: Date,
+  ): Promise<AutomaticPromotionPreview> {
+    try {
+      await this.db.transaction(async (tx) => {
+        await this.prepareAutomatic(tx, eventId, expectedEventUpdatedAt, expectedPolicyUpdatedAt, false);
+      }, { isolationLevel: 'repeatable read', accessMode: 'read only' });
+      return { status: 'eligible' };
+    } catch (error: unknown) {
+      if (error instanceof AutomaticPromotionBlocked) return { status: 'blocked', reason: error.message };
+      throw error;
+    }
+  }
+
+  /**
+   * 명시적으로 재사용을 승인한 본인 정책만 자동 적용한다. 이벤트·정책·회원·카드를
+   * 잠근 뒤 원문을 다시 해석하고, 거래 생성·이벤트 갱신·자동 주체 감사를 함께 커밋한다.
+   * 차단은 무변경이며 저장 오류는 호출자에게 전파한다. LLM과 알림은 호출하지 않는다.
+   */
+  async promoteAutomatic(
+    eventId: string,
+    expectedEventUpdatedAt: Date,
+    expectedPolicyUpdatedAt: Date,
+  ): Promise<AutomaticPromotionOutcome> {
+    try {
+      const applied = await this.db.transaction(async (tx) => {
+        const prepared = await this.prepareAutomatic(tx, eventId, expectedEventUpdatedAt, expectedPolicyUpdatedAt, true);
+        const { event, policy, result, card, merchantNormalized, categoryId } = prepared;
+        this.assertAutomaticRuntime();
+        const command = await this.moneyWrite.commands.createApproval({
+          metadata: {
+            householdId: event.householdId, memberId: event.memberId, cardId: card.cardId,
+            sourceEventId: event.id, merchantRaw: result.merchantRaw, merchantNormalized,
+            categoryId, authorizationCode: null, installmentMonths: result.installmentMonths ?? null,
+            visibility: card.visibility, memo: null,
+          },
+          minorUnits: result.amount, currency: 'KRW', occurredAt: result.occurredAt,
+          receivedAt: event.receivedAt, reviewFlag: null,
+        }, { tx });
+        if (!command.ok) throw new AutomaticPromotionBlocked('money_command_rejected');
+        if (command.value.alreadyPromoted) throw new AutomaticPromotionBlocked('already_promoted');
+
+        const now = new Date();
+        await tx.update(schema.cardSmsEvents).set({
+          parseStatus: 'parsed', parseError: null, issuer: result.issuer,
+          transactionType: 'approval', declineReason: null, amount: result.amount, currency: 'KRW',
+          merchantRaw: result.merchantRaw, occurredAt: result.occurredAt,
+          maskedCardNumber: result.maskedCardNumber ?? null,
+          installmentMonths: result.installmentMonths ?? null, confidence: result.confidence,
+          parsedAt: now, updatedAt: now,
+        }).where(eq(schema.cardSmsEvents.id, event.id));
+        const [audit] = await tx.insert(schema.pipelineRuns).values({
+          pipelineName: 'card-sms-automatic-recovery', pipelineVersion: 'v1',
+          scopeType: 'card-sms-event', scopeId: event.id, trigger: 'scheduled',
+          status: 'succeeded', startedAt: now, finishedAt: now,
+        }).returning({ id: schema.pipelineRuns.id });
+        if (!audit) throw new Error('automatic_recovery_audit_missing');
+        await tx.insert(schema.pipelineStepRuns).values({
+          pipelineRunId: audit.id, stepName: 'approved-policy-promotion', stepVersion: 'v1',
+          status: 'succeeded', inputCount: 1, outputCount: 1, rejectedCount: 0,
+          metrics: { actor: 'automatic', policyId: policy.id }, startedAt: now, finishedAt: now,
+        });
+        await this.verifyAutomatic(tx, prepared, command.value.transactionId);
+        return { prepared, transactionId: command.value.transactionId };
+      }, { isolationLevel: 'serializable' });
+
+      // 같은 트랜잭션의 읽기 검증과 COMMIT 성공으로 완료를 판정한다.
+      // 커밋 이후의 정상 취소·사용자 수정은 이 승인 저장의 실패로 되돌려 해석하지 않는다.
+      return { status: 'applied', transactionId: applied.transactionId };
+    } catch (error: unknown) {
+      if (error instanceof AutomaticPromotionBlocked) return { status: 'blocked', reason: error.message };
+      throw error;
+    }
+  }
+
+  private assertAutomaticRuntime(): void {
+    if (!this.moneyWrite.enforced) throw new AutomaticPromotionBlocked('money_contract_not_enforced');
+    if (!this.moneyRuntime || this.moneyRuntime.isPromotionPaused) {
+      throw new AutomaticPromotionBlocked('promotion_paused');
+    }
+  }
+
+  private async prepareAutomatic(
+    tx: DbExecutor, eventId: string, expectedEventUpdatedAt: Date,
+    expectedPolicyUpdatedAt: Date, lock: boolean,
+  ): Promise<AutomaticPreparation> {
+    this.assertAutomaticRuntime();
+    const eventQuery = tx.select().from(schema.cardSmsEvents).where(eq(schema.cardSmsEvents.id, eventId)).limit(1);
+    const [event] = await (lock ? eventQuery.for('update') : eventQuery);
+    if (!event || !['parse_failed', 'quarantined'].includes(event.parseStatus)) {
+      throw new AutomaticPromotionBlocked('event_not_eligible');
+    }
+    if (event.updatedAt.getTime() !== expectedEventUpdatedAt.getTime()) {
+      throw new AutomaticPromotionBlocked('event_changed');
+    }
+    const [existing] = await tx.select({ id: schema.cardTransactions.id }).from(schema.cardTransactions)
+      .where(eq(schema.cardTransactions.sourceEventId, event.id)).limit(1);
+    if (existing) throw new AutomaticPromotionBlocked('already_promoted');
+
+    const fingerprint = scopedTemplateFingerprint(event.householdId, event.memberId, event.sender, event.rawContent);
+    const policyQuery = tx.select().from(schema.cardSmsTemplates)
+      .where(eq(schema.cardSmsTemplates.fingerprint, fingerprint)).limit(1);
+    const [policy] = await (lock ? policyQuery.for('update') : policyQuery);
+    if (!policy || !isApprovedRecipe(policy.recipe) || !policy.sourceEventId || !policy.confirmedBy) {
+      throw new AutomaticPromotionBlocked('policy_not_approved');
+    }
+    if (policy.updatedAt.getTime() !== expectedPolicyUpdatedAt.getTime()) {
+      throw new AutomaticPromotionBlocked('policy_changed');
+    }
+    if (policy.recipe.householdId !== event.householdId || policy.recipe.memberId !== event.memberId
+      || policy.recipe.fingerprint !== templateFingerprint(event.sender, event.rawContent)) {
+      throw new AutomaticPromotionBlocked('policy_scope_mismatch');
+    }
+    const sourceQuery = tx.select().from(schema.cardSmsEvents)
+      .where(eq(schema.cardSmsEvents.id, policy.sourceEventId)).limit(1);
+    const [source] = await (lock ? sourceQuery.for('share') : sourceQuery);
+    if (!source || source.householdId !== event.householdId || source.memberId !== event.memberId
+      || source.parseStatus !== 'parsed'
+      || scopedTemplateFingerprint(source.householdId, source.memberId, source.sender, source.rawContent) !== fingerprint) {
+      throw new AutomaticPromotionBlocked('policy_source_invalid');
+    }
+    const memberQuery = tx.select({ id: schema.householdMembers.id }).from(schema.householdMembers)
+      .innerJoin(schema.users, eq(schema.users.id, schema.householdMembers.userId))
+      .innerJoin(schema.households, eq(schema.households.id, schema.householdMembers.householdId))
+      .where(and(eq(schema.householdMembers.id, event.memberId),
+        eq(schema.householdMembers.householdId, event.householdId),
+        eq(schema.householdMembers.userId, policy.confirmedBy), eq(schema.householdMembers.status, 'active'),
+        isNull(schema.users.deletedAt), isNull(schema.households.deletedAt))).limit(1);
+    const [member] = await (lock ? memberQuery.for('share') : memberQuery);
+    if (!member) throw new AutomaticPromotionBlocked('member_not_active');
+    const sourceIds = [...new Set([source.sourceItemId, event.sourceItemId])].sort();
+    const itemsQuery = tx.select({ id: schema.sourceItems.id }).from(schema.sourceItems)
+      .where(and(inArray(schema.sourceItems.id, sourceIds), isNull(schema.sourceItems.deletedAt)))
+      .orderBy(schema.sourceItems.id);
+    const items = await (lock ? itemsQuery.for('share') : itemsQuery);
+    if (items.length !== sourceIds.length) throw new AutomaticPromotionBlocked('source_deleted');
+
+    const input = { sender: event.sender, content: event.rawContent, receivedAt: event.receivedAt };
+    const extraction = applyRecipe(input, policy.recipe);
+    const rejection = automaticApprovalRejection(input, extraction.result, extraction.rejected);
+    if (rejection !== null) throw new AutomaticPromotionBlocked(rejection);
+    const result = extraction.result;
+    if (result.amount === undefined || !result.merchantRaw || !result.occurredAt) {
+      throw new AutomaticPromotionBlocked('incomplete_fields');
+    }
+    const cardsQuery = tx.select({ id: schema.paymentCards.id, maskedNumber: schema.paymentCards.maskedNumber,
+      issuer: schema.paymentCards.issuer, visibility: schema.paymentCards.visibility,
+      ownerMemberId: schema.paymentCards.ownerMemberId, isShared: schema.paymentCards.isShared,
+    }).from(schema.paymentCards).where(and(eq(schema.paymentCards.householdId, event.householdId),
+      eq(schema.paymentCards.status, 'active'))).orderBy(schema.paymentCards.id);
+    // 같은 카드의 자동 복구끼리 중복 검사와 삽입이 동시에 통과하지 않게 직렬화한다.
+    const cards = await (lock ? cardsQuery.for('update') : cardsQuery);
+    const approvedCard = cards.find(card => card.id === policy.recipe.approvedCardId);
+    const card = resolvePaymentCardLink({ memberId: event.memberId,
+      maskedCardNumber: result.maskedCardNumber ?? null, issuer: result.issuer ?? null }, cards);
+    if (!approvedCard || (approvedCard.ownerMemberId !== event.memberId && !approvedCard.isShared)
+      || card.ambiguous || card.cardId !== approvedCard.id) {
+      throw new AutomaticPromotionBlocked('card_not_unique_owner');
+    }
+    const merchantNormalized = await this.resolveMerchantAlias(event.householdId, normalizeMerchant(result.merchantRaw), tx);
+    if (await this.isDuplicateApproval(event.householdId, event.memberId, approvedCard.id,
+      result.amount, 'KRW', merchantNormalized, result.occurredAt, tx)) {
+      throw new AutomaticPromotionBlocked('duplicate_suspected');
+    }
+    const categoryId = await this.resolveCategoryId(event.householdId, result.merchantRaw, merchantNormalized, tx);
+    return { event, policy, result: { ...result, amount: result.amount,
+      merchantRaw: result.merchantRaw, occurredAt: result.occurredAt },
+      card: { ...card, cardId: approvedCard.id }, merchantNormalized, categoryId };
+  }
+
+  private async verifyAutomatic(tx: DbExecutor, prepared: AutomaticPreparation, transactionId: string): Promise<void> {
+    const [row] = await tx.select({ transaction: schema.cardTransactions, event: schema.cardSmsEvents })
+      .from(schema.cardTransactions).innerJoin(schema.cardSmsEvents,
+        eq(schema.cardSmsEvents.id, schema.cardTransactions.sourceEventId))
+      .where(eq(schema.cardTransactions.id, transactionId)).limit(1);
+    const { event, result, card } = prepared;
+    if (!row || row.transaction.sourceEventId !== event.id || row.transaction.householdId !== event.householdId
+      || row.transaction.memberId !== event.memberId || row.transaction.cardId !== card.cardId
+      || row.transaction.transactionType !== 'approval' || row.transaction.currency !== 'KRW'
+      || row.transaction.amount !== result.amount || row.transaction.netAmount !== result.amount
+      || row.transaction.status !== 'approved' || row.transaction.merchantRaw !== result.merchantRaw
+      || row.transaction.approvedAt?.getTime() !== result.occurredAt.getTime()
+      || row.event.parseStatus !== 'parsed' || row.event.amount !== result.amount) {
+      throw new Error('automatic_recovery_verification_failed');
+    }
+  }
+
+  /**
    * 파싱 이벤트를 거래로 승격한다(스펙 §6 절차). 승격 대상이 아니거나 이미 승격된
    * 경우 조용히 skip한다(멱등). 예외는 상위(잡)로 전파해 재시도되게 둔다.
    */
-  async promote(cardSmsEventId: string): Promise<void> {
+  async promote(cardSmsEventId: string, options: { repair?: boolean } = {}): Promise<void> {
     if (!cardSmsEventId) {
       throw new Error('promote() called without cardSmsEventId');
     }
@@ -213,9 +447,24 @@ export class TransactionPromotionService {
       return;
     }
 
+    // 파싱 후 승격이 중단되어 스케줄러가 다시 호출해도 무과금·무알림 정책을 보존한다.
+    // 재처리 잡의 기존 pipeline 감사 이력이 원본 이벤트에 결박된 영속 근거다.
+    let repair = options.repair === true;
+    if (!repair) {
+      const [repairRun] = await this.db.select({ id: schema.pipelineRuns.id }).from(schema.pipelineRuns)
+        .where(and(
+          eq(schema.pipelineRuns.pipelineName, 'card-sms-parse'),
+          eq(schema.pipelineRuns.scopeType, 'card-sms-event'),
+          eq(schema.pipelineRuns.scopeId, event.id),
+          sql`starts_with(${schema.pipelineRuns.externalRunId}, ${`smsrepair_${event.id}_`})`,
+        )).limit(1);
+      repair = repairRun !== undefined;
+    }
+
     // 3. 카드 자동연결(뒤 4자리 → 없으면 발급사 폴백) → cardId, visibility 상속.
     const link = await this.resolveCard(
       event.householdId,
+      event.memberId,
       event.maskedCardNumber,
       event.issuer,
     );
@@ -255,11 +504,11 @@ export class TransactionPromotionService {
       // 승격 트랜잭션이 끝난 뒤 새 금액 계약과 대조한다(ADR-0027 3단계, 기록만).
       await this.moneyShadow.observe(transactionId, 'worker_promotion_approval');
       // 새로 승격됐고 미분류면 LLM 카테고리 제안을 enqueue(가맹점 단위 dedupe).
-      if (status !== 'already_promoted' && categoryId === null) {
+      if (!repair && status !== 'already_promoted' && categoryId === null) {
         await this.enqueueCategorySuggestion(event, merchantNormalized);
       }
       // 새로 승격된 거래는 푸시 알림을 enqueue(수신자/마스킹은 소비자가 결정).
-      if (status !== 'already_promoted' && transactionId) {
+      if (!repair && status !== 'already_promoted' && transactionId) {
         await this.enqueueNotification(event.householdId, transactionId);
         // 이 지출이 예산 임계(80/100%)를 새로 넘겼으면 예산 알림도 enqueue.
         await this.checkBudgetAlerts({
@@ -291,10 +540,10 @@ export class TransactionPromotionService {
     // 취소는 연결 대상까지 대조한다 — 새 후보 규칙(원통화 잔액·증거 필수)이 같은
     // 승인을 고르는지가 이 단계에서 재야 할 값이다.
     await this.moneyShadow.observe(outcome.transactionId, 'worker_promotion_cancellation');
-    if (!outcome.skipped && categoryId === null) {
+    if (!repair && !outcome.skipped && categoryId === null) {
       await this.enqueueCategorySuggestion(event, merchantNormalized);
     }
-    if (!outcome.skipped && outcome.transactionId) {
+    if (!repair && !outcome.skipped && outcome.transactionId) {
       await this.enqueueNotification(event.householdId, outcome.transactionId);
     }
   }
@@ -304,10 +553,9 @@ export class TransactionPromotionService {
   /* ---------------------------------------------------------------------- */
 
   /**
-   * 외화 거래를 승인 시점 환율로 KRW로 환산한다. KRW 거래는 그대로 통과(fx=null).
-   * 외화는 major = amount/10^exp 로 되돌린 뒤 환율을 곱해 KRW minor units(=원)로
-   * 반올림하고, 원통화 원본(originalAmount/Currency)과 환율을 병기 보존한다. 이렇게
-   * 저장된 거래는 currency='KRW'라 기존 KRW 지출/예산/집계에 자연히 합산된다.
+   * v2는 서울 거래일의 불변 스냅샷과 도메인 정수 산술로 환산한다. 중복 비교와
+   * 실제 저장의 금액이 일치해야 한다. KRW는 그대로, legacy/shadow 모드만 기존
+   * 최신 환율 경로를 유지한다. 원통화 원본과 호환 표시 환율은 함께 보존한다.
    */
   private async convertToKrw(
     event: schema.CardSmsEvent,
@@ -321,6 +569,34 @@ export class TransactionPromotionService {
         originalAmount: null,
         originalCurrency: null,
         exchangeRate: null,
+      };
+    }
+
+    if (this.moneyWrite.enforced) {
+      // Acquire before the approval/card lock. The same immutable snapshot and
+      // integer math feed both duplicate comparison and the domain write.
+      const snapshot = await this.moneyWrite.fxSnapshots.find({
+        baseCurrency: rawCurrency,
+        asOfDate: fxBaseDate(event.occurredAt, event.receivedAt),
+        moneyContractVersion: MONEY_CONTRACT_VERSION_V2,
+      });
+      if (!snapshot) {
+        throw new Error(`money contract rejected ${event.transactionType}: fx_snapshot_missing`);
+      }
+      const converted = convertMoneyToKrw(amount, rawCurrency, snapshot.rate);
+      if (!converted.ok) {
+        throw new Error(`money contract rejected ${event.transactionType}: ${converted.failure}`);
+      }
+      this.logger.info(
+        { cardSmsEventId: event.id, originalCurrency: rawCurrency },
+        'foreign amount converted using transaction-date snapshot',
+      );
+      return {
+        amount: converted.krw,
+        currency: 'KRW',
+        originalAmount: amount,
+        originalCurrency: rawCurrency,
+        exchangeRate: fxRateDisplayValue(snapshot.rate),
       };
     }
 
@@ -373,6 +649,7 @@ export class TransactionPromotionService {
       // 외화도 승격 시 KRW로 환산돼 저장되므로 중복 비교 통화는 항상 KRW.
       const isDuplicate = await this.isDuplicateApproval(
         event.householdId,
+        event.memberId,
         link.cardId,
         amount,
         converted.currency,
@@ -400,23 +677,34 @@ export class TransactionPromotionService {
     /**
      * ADR-0027 5단계 — **D-1이 여기서 닫힌다.**
      *
-     * 위 `convertToKrw`는 `getRateToKrw(currency)`로 **오늘** 환율을 받는다(거래일이
-     * 아니다). 그래서 같은 이벤트를 언제 재시도하느냐가 KRW 금액을 바꿨고, 승인과
-     * 취소가 서로 다른 날 환율로 환산돼 전액취소에도 잔액이 남았다.
+     * legacy의 `getRateToKrw(currency)`는 오늘 환율을 받았고 재시도 시 금액이 바뀌었다.
+     * v2 앞단의 중복 비교도 이제 거래일 스냅샷과 정수 산술을 사용한다.
      *
      * enforce가 켜지면 원통화 금액을 그대로 넘기고 **거래일 스냅샷**으로 환산한다.
      * 스냅샷이 없으면 승격하지 않는다 — 오늘 환율로 대체하는 것이 D-1이었다.
      * 중복 판정에는 여전히 `converted`를 쓴다(비교 기준 통화를 KRW로 유지).
      */
     if (this.moneyWrite.enforced) {
-      const result = await this.moneyWrite.commands.createApproval({
-        metadata,
-        minorUnits: converted.originalAmount ?? amount,
-        currency: converted.originalCurrency ?? converted.currency,
-        occurredAt: event.occurredAt ?? null,
-        receivedAt: event.receivedAt,
-        reviewFlag: status === 'approved' ? null : status,
-      });
+      const result = await this.db.transaction(async (tx) => {
+        if (link.cardId) {
+          // 자동 복구와 일반 수신이 같은 카드를 잠그고 중복을 다시 확인한다.
+          await tx.select({ id: schema.paymentCards.id }).from(schema.paymentCards)
+            .where(eq(schema.paymentCards.id, link.cardId)).for('update');
+        }
+        if (!link.ambiguous) {
+          status = await this.isDuplicateApproval(event.householdId, event.memberId, link.cardId,
+            amount, converted.currency, merchantNormalized, event.occurredAt, tx)
+            ? 'duplicate_suspected' : 'approved';
+        }
+        return this.moneyWrite.commands.createApproval({
+          metadata,
+          minorUnits: converted.originalAmount ?? amount,
+          currency: converted.originalCurrency ?? converted.currency,
+          occurredAt: event.occurredAt ?? null,
+          receivedAt: event.receivedAt,
+          reviewFlag: status === 'duplicate_suspected' || status === 'pending_review' ? status : null,
+        }, { tx });
+      }, { isolationLevel: 'serializable' });
       if (!result.ok) {
         // 승격 실패는 잡 재시도로 이어진다 — 조용히 틀린 금액을 확정하는 것보다
         // 반영이 늦는 편이 안전하다는 것이 ADR의 판단이다.
@@ -431,29 +719,18 @@ export class TransactionPromotionService {
         : { status, transactionId: result.value.transactionId };
     }
 
-    const [inserted] = await this.db
-      .insert(schema.cardTransactions)
-      .values({
-        ...metadata,
-        transactionType: 'approval',
-        status,
-        amount,
-        cancelledAmount: 0,
-        netAmount: amount,
-        currency: converted.currency,
-        originalAmount: converted.originalAmount,
-        originalCurrency: converted.originalCurrency,
-        exchangeRate: converted.exchangeRate,
-        approvedAt: event.occurredAt ?? null,
-        cancelledAt: null,
-        parentTransactionId: null,
-      })
-      .onConflictDoNothing({ target: schema.cardTransactions.sourceEventId })
-      .returning({ id: schema.cardTransactions.id });
-
-    return inserted
-      ? { status, transactionId: inserted.id }
-      : { status: 'already_promoted', transactionId: null };
+    const result = await this.moneyWrite.legacy.createApproval({
+      metadata,
+      money: converted,
+      occurredAt: event.occurredAt ?? null,
+      status,
+    });
+    if (!result.ok) {
+      throw new Error(`legacy money rejected approval: ${result.reason}`);
+    }
+    return result.value.alreadyPromoted
+      ? { status: 'already_promoted', transactionId: null }
+      : { status, transactionId: result.value.transactionId };
   }
 
   /**
@@ -463,11 +740,13 @@ export class TransactionPromotionService {
    */
   private async isDuplicateApproval(
     householdId: string,
+    memberId: string,
     cardId: string | null,
     amount: number,
     currency: string,
     merchantNormalized: string | null,
     occurredAt: Date | null,
+    executor: DbExecutor = this.db,
   ): Promise<boolean> {
     if (!occurredAt) {
       return false;
@@ -486,16 +765,19 @@ export class TransactionPromotionService {
       gte(schema.cardTransactions.approvedAt, lower),
       lte(schema.cardTransactions.approvedAt, upper),
     ];
-    conditions.push(
-      cardId
-        ? eq(schema.cardTransactions.cardId, cardId)
-        : isNull(schema.cardTransactions.cardId),
-    );
+    if (cardId) {
+      conditions.push(eq(schema.cardTransactions.cardId, cardId));
+    } else {
+      conditions.push(
+        isNull(schema.cardTransactions.cardId),
+        eq(schema.cardTransactions.memberId, memberId),
+      );
+    }
     if (merchantNormalized) {
       conditions.push(eq(schema.cardTransactions.merchantNormalized, merchantNormalized));
     }
 
-    const [row] = await this.db
+    const [row] = await executor
       .select({ id: schema.cardTransactions.id })
       .from(schema.cardTransactions)
       .where(and(...conditions))
@@ -576,171 +858,34 @@ export class TransactionPromotionService {
       };
     }
 
-    return this.db.transaction(async (tx): Promise<CancellationOutcome> => {
-      // 취소 레코드 삽입(멱등). 경합/재승격은 onConflictDoNothing으로 흡수한다.
-      const [inserted] = await tx
-        .insert(schema.cardTransactions)
-        .values({
-          householdId: event.householdId,
-          memberId: event.memberId,
-          cardId: link.cardId,
-          sourceEventId: event.id,
-          transactionType: 'cancellation',
-          status: 'pending_review',
-          amount,
-          cancelledAmount: 0,
-          netAmount: 0,
-          currency: converted.currency,
-          originalAmount: converted.originalAmount,
-          originalCurrency: converted.originalCurrency,
-          exchangeRate: converted.exchangeRate,
-          merchantRaw: event.merchantRaw ?? null,
-          merchantNormalized,
-          categoryId,
-          approvedAt: null,
-          cancelledAt,
-          authorizationCode: null,
-          installmentMonths: event.installmentMonths ?? null,
-          parentTransactionId: null,
-          visibility: link.visibility,
-          memo: null,
-        })
-        .onConflictDoNothing({ target: schema.cardTransactions.sourceEventId })
-        .returning({ id: schema.cardTransactions.id });
-
-      if (!inserted) {
-        // 이미 승격됨 → 승인 잔액을 건드리지 않는다(멱등).
-        return {
-          status: 'pending_review',
-          linked: false,
-          skipped: true,
-          transactionId: null,
-        };
-      }
-
-      // 대응 승인 탐색: 같은 household/card, 승인, 미완료(approved|partially_cancelled),
-      // (가맹점 일치 시) 동일 merchant, 승인이 취소보다 앞섬. 잔액 조건은 JS에서 판정.
-      // 취소↔승인 잔액 비교(467)·netAmount 재계산(482)이 minor units 뺄셈이므로
-      // 반드시 동일 통화 승인만 후보로 남긴다. 외화도 승격 시 KRW로 환산 저장되므로
-      // 후보 통화는 항상 converted.currency(=KRW).
-      const candidateConditions: SQL[] = [
-        eq(schema.cardTransactions.householdId, event.householdId),
-        eq(schema.cardTransactions.transactionType, 'approval'),
-        eq(schema.cardTransactions.currency, converted.currency),
-        inArray(schema.cardTransactions.status, ['approved', 'partially_cancelled']),
-      ];
-      candidateConditions.push(
-        link.cardId
-          ? eq(schema.cardTransactions.cardId, link.cardId)
-          : isNull(schema.cardTransactions.cardId),
-      );
-      if (merchantNormalized) {
-        candidateConditions.push(
-          eq(schema.cardTransactions.merchantNormalized, merchantNormalized),
-        );
-      }
-      if (cancelledAt) {
-        candidateConditions.push(lt(schema.cardTransactions.approvedAt, cancelledAt));
-      }
-
-      const candidates = await tx
-        .select()
-        .from(schema.cardTransactions)
-        .where(and(...candidateConditions))
-        .orderBy(desc(schema.cardTransactions.approvedAt));
-
-      // 잔액(amount - cancelledAmount)이 취소액 이상인 승인만 후보로 남긴다.
-      const matches = candidates.filter(
-        (approval) => approval.amount - approval.cancelledAmount >= amount,
-      );
-
-      // 유일 매칭만 연결한다. 0개/2개 이상은 애매 → 취소 거래를 pending_review로 유지.
-      if (matches.length !== 1) {
-        return {
-          status: 'pending_review',
-          linked: false,
-          skipped: false,
-          transactionId: inserted.id,
-        };
-      }
-
-      // 후보 탐색은 잠금 없이 했다(후보가 많을 수 있어 전부 잠그면 승격이 서로 막힌다).
-      // 확정된 승인 **하나만** FOR UPDATE로 잠그고, 잠근 뒤 값으로 잔액을 다시 판정한다.
-      // 잠그기 전 값으로 누적하면 두 취소가 같은 초기 cancelledAmount를 읽어 마지막
-      // update만 남고 취소액이 유실된다(순지출·예산 사용률이 실제보다 크게 나온다).
-      const [approval] = await tx
-        .select()
-        .from(schema.cardTransactions)
-        .where(eq(schema.cardTransactions.id, matches[0].id))
-        .for('update')
-        .limit(1);
-
-      // 잠금을 기다리는 사이 다른 승격이 같은 승인에 붙어 잔액이 모자라졌거나 후보
-      // 조건에서 벗어났으면 연결하지 않는다 — 잘못 연결해 음수 잔액을 만드는 것보다
-      // pending_review가 낫다. 후보 탐색과 **같은 술어**로 다시 판정한다.
-      if (
-        !approval ||
-        !['approved', 'partially_cancelled'].includes(approval.status) ||
-        approval.amount - approval.cancelledAmount < amount
-      ) {
-        return {
-          status: 'pending_review',
-          linked: false,
-          skipped: false,
-          transactionId: inserted.id,
-        };
-      }
-
-      const newCancelledAmount = approval.cancelledAmount + amount;
-      const newNetAmount = approval.amount - newCancelledAmount;
-      assertKrwInteger(newNetAmount);
-      const approvalStatus: TransactionStatus =
-        newCancelledAmount >= approval.amount ? 'cancelled' : 'partially_cancelled';
-      const now = new Date();
-
-      // 취소 행 연결을 먼저 claim한다(`parent_transaction_id IS NULL` 조건 + RETURNING).
-      // 방금 삽입한 행이라 이 트랜잭션 밖에서는 보이지 않지만, 승인 누적을 claim 성공
-      // 뒤로 두면 "연결되지 않았는데 잔액만 깎이는" 상태가 어떤 경로로도 생기지 않는다.
-      const [linked] = await tx
-        .update(schema.cardTransactions)
-        .set({
-          parentTransactionId: approval.id,
-          status: 'approved',
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(schema.cardTransactions.id, inserted.id),
-            isNull(schema.cardTransactions.parentTransactionId),
-          ),
-        )
-        .returning({ id: schema.cardTransactions.id });
-      if (!linked) {
-        return {
-          status: 'pending_review',
-          linked: false,
-          skipped: false,
-          transactionId: inserted.id,
-        };
-      }
-
-      await tx
-        .update(schema.cardTransactions)
-        .set({
-          cancelledAmount: newCancelledAmount,
-          netAmount: newNetAmount,
-          status: approvalStatus,
-          updatedAt: now,
-        })
-        .where(eq(schema.cardTransactions.id, approval.id));
-
-      return {
-        status: approvalStatus,
-        linked: true,
-        skipped: false,
-        transactionId: inserted.id,
-      };
+    // The legacy domain owns insertion, unique-parent selection, row locking,
+    // cancellation claim and parent cumulative amounts in one transaction.
+    const result = await this.moneyWrite.legacy.createCancellation({
+      metadata: {
+        householdId: event.householdId,
+        memberId: event.memberId,
+        cardId: link.cardId,
+        sourceEventId: event.id,
+        merchantRaw: event.merchantRaw ?? null,
+        merchantNormalized,
+        categoryId,
+        authorizationCode: null,
+        installmentMonths: event.installmentMonths ?? null,
+        visibility: link.visibility,
+        memo: null,
+      },
+      money: converted,
+      occurredAt: cancelledAt,
     });
+    if (!result.ok) {
+      throw new Error(`legacy money rejected cancellation: ${result.reason}`);
+    }
+    return {
+      status: result.value.status,
+      linked: result.value.linked,
+      skipped: result.value.alreadyPromoted,
+      transactionId: result.value.alreadyPromoted ? null : result.value.transactionId,
+    };
   }
 
   /* ---------------------------------------------------------------------- */
@@ -748,19 +893,12 @@ export class TransactionPromotionService {
   /* ---------------------------------------------------------------------- */
 
   /**
-   * 파서 maskedCardNumber 뒤 4자리로 같은 household의 활성 카드를 찾아 연결한다
-   * (스펙 §1.5). 저장 포맷 차이('1234' vs '****1234')를 흡수하려 양쪽에서 숫자만
-   * 추출해 뒤 4자리를 비교한다.
-   *
-   * - 매칭 0건: cardId=null, visibility='household'.
-   * - 매칭 1건: 그 카드에 연결하고 카드 visibility를 상속.
-   * - 매칭 2건 이상(뒤 4자리 중복): 어느 카드인지 확정 불가. 임의 카드에 붙이면
-   *   비결정적이고 private↔household 오상속(누출) 위험이 있으므로, 연결하지 않고
-   *   (cardId=null) 후보 중 가장 제한적인 visibility를 상속해 프라이버시 하향을
-   *   막는다. ambiguous=true로 표시해 승인 승격이 pending_review로 남긴다.
+   * 원본 구성원과 카드 식별 정보를 공통 규칙으로 판정한다. 카드 등록 시의
+   * 과거 거래 연결도 같은 함수를 사용해 서로 다른 소유자 판단을 하지 않는다.
    */
   private async resolveCard(
     householdId: string,
+    memberId: string,
     maskedCardNumber: string | null,
     issuer: string | null,
   ): Promise<CardLink> {
@@ -770,6 +908,8 @@ export class TransactionPromotionService {
         maskedNumber: schema.paymentCards.maskedNumber,
         issuer: schema.paymentCards.issuer,
         visibility: schema.paymentCards.visibility,
+        ownerMemberId: schema.paymentCards.ownerMemberId,
+        isShared: schema.paymentCards.isShared,
       })
       .from(schema.paymentCards)
       .where(
@@ -779,54 +919,14 @@ export class TransactionPromotionService {
         ),
       );
 
-    const tail = lastFourDigits(maskedCardNumber);
-    if (!tail) {
-      // 카드번호가 없는 문자(네이버 현대카드·모바일 결제 등) → 발급사 기준 폴백.
-      // 같은 발급사 활성 카드가 정확히 1장일 때만 연결(모호하면 종전대로 미연결
-      // approved). 발급사가 일반 '카드'(정규화 시 null)면 매칭하지 않는다.
-      const issuerKey = normalizeIssuer(issuer);
-      if (!issuerKey) {
-        return { cardId: null, visibility: 'household', ambiguous: false };
-      }
-      const issuerMatches = cards.filter(
-        (card) => normalizeIssuer(card.issuer) === issuerKey,
+    const result = resolvePaymentCardLink({ memberId, maskedCardNumber, issuer }, cards);
+    if (result.ambiguous) {
+      this.logger.warn(
+        { householdId },
+        'card auto-link unresolved: ownership or card identity requires review',
       );
-      if (issuerMatches.length === 1) {
-        return {
-          cardId: issuerMatches[0].id,
-          visibility: issuerMatches[0].visibility,
-          ambiguous: false,
-        };
-      }
-      // 0장 또는 2장 이상(어느 카드인지 모호) → 종전 동작(미연결, approved).
-      return { cardId: null, visibility: 'household', ambiguous: false };
     }
-
-    const matches = cards.filter(
-      (card) => lastFourDigits(card.maskedNumber) === tail,
-    );
-
-    if (matches.length === 0) {
-      return { cardId: null, visibility: 'household', ambiguous: false };
-    }
-    if (matches.length === 1) {
-      return {
-        cardId: matches[0].id,
-        visibility: matches[0].visibility,
-        ambiguous: false,
-      };
-    }
-
-    // 뒤 4자리 중복 → 확정 불가. 로그는 식별자/건수만(카드번호·PII 미기록).
-    this.logger.warn(
-      { householdId, matchCount: matches.length },
-      'card auto-link ambiguous: multiple active cards share the last 4 digits; left unlinked for review',
-    );
-    return {
-      cardId: null,
-      visibility: mostRestrictiveVisibility(matches.map((c) => c.visibility)),
-      ambiguous: true,
-    };
+    return result;
   }
 
   /**
@@ -845,11 +945,12 @@ export class TransactionPromotionService {
   private async resolveMerchantAlias(
     householdId: string,
     merchantNormalized: string | null,
+    executor: DbExecutor = this.db,
   ): Promise<string | null> {
     if (merchantNormalized === null || merchantNormalized.length === 0) {
       return merchantNormalized;
     }
-    const [row] = await this.db
+    const [row] = await executor
       .select({ canonical: schema.merchantAliases.canonical })
       .from(schema.merchantAliases)
       .where(
@@ -866,9 +967,10 @@ export class TransactionPromotionService {
     householdId: string,
     merchantRaw: string | null,
     merchantNormalized: string | null,
+    executor: DbExecutor = this.db,
   ): Promise<string | null> {
     if (merchantNormalized) {
-      const [rule] = await this.db
+      const [rule] = await executor
         .select({ categoryId: schema.merchantCategoryRules.categoryId })
         .from(schema.merchantCategoryRules)
         .where(
@@ -887,7 +989,7 @@ export class TransactionPromotionService {
     if (keywordSource) {
       const slug = categorizeByKeyword(keywordSource);
       if (slug) {
-        const [category] = await this.db
+        const [category] = await executor
           .select({ id: schema.expenseCategories.id })
           .from(schema.expenseCategories)
           .where(
@@ -1015,6 +1117,10 @@ export class TransactionPromotionService {
             eq(schema.budgets.scopeType, 'card'),
             eq(schema.budgets.scopeRefId, cardId),
           ),
+          and(
+            eq(schema.budgets.scopeType, 'card_group'),
+            sql`${cardId}::uuid = any(${schema.budgets.cardIds})`,
+          ),
         );
       }
 
@@ -1074,7 +1180,8 @@ export class TransactionPromotionService {
       }
     } catch (error) {
       this.logger.warn(
-        { err: error instanceof Error ? error.message : 'unknown' },
+        // DB 오류 메시지에는 카드 식별자·쿼리 인자가 포함될 수 있다.
+        { errorType: error instanceof Error ? error.name : 'unknown' },
         'budget alert check failed; skipped (best-effort)',
       );
     }
@@ -1109,6 +1216,10 @@ export class TransactionPromotionService {
       conditions.push(eq(schema.cardTransactions.categoryId, budget.scopeRefId));
     } else if (budget.scopeType === 'card' && budget.scopeRefId) {
       conditions.push(eq(schema.cardTransactions.cardId, budget.scopeRefId));
+    } else if (budget.scopeType === 'card_group') {
+      // 월별 계획에 저장한 카드 집합을 유지한다. 현재 카드 상태로 과거 범위를 바꾸지 않는다.
+      const cardIds = budget.cardIds ?? [];
+      conditions.push(cardIds.length > 0 ? inArray(schema.cardTransactions.cardId, cardIds) : sql`false`);
     }
     const [agg] = await this.db
       .select({
@@ -1118,46 +1229,4 @@ export class TransactionPromotionService {
       .where(and(...conditions));
     return Number(agg?.spent ?? 0) || 0;
   }
-}
-
-/**
- * 후보 카드 visibility 중 가장 제한적인 값을 고른다(private > summary_only >
- * household). 뒤 4자리 모호 매칭 시 프라이버시 하향(예: private 지출이 household로
- * 노출)을 막기 위한 보수적 상속. `visibilities`는 비어 있지 않다고 가정한다.
- */
-function mostRestrictiveVisibility(
-  visibilities: readonly CardVisibility[],
-): CardVisibility {
-  return visibilities.reduce((acc, v) =>
-    VISIBILITY_RANK[v] > VISIBILITY_RANK[acc] ? v : acc,
-  );
-}
-
-/**
- * 마스킹 카드번호에서 숫자만 추출해 뒤 4자리를 반환한다. 4자리 미만이면 null
- * (신뢰할 수 없는 매칭 방지). 예: '****1234' → '1234', '1234' → '1234'.
- */
-function lastFourDigits(value: string | null): string | null {
-  if (!value) {
-    return null;
-  }
-  const digits = value.replace(/\D/g, '');
-  if (digits.length < CARD_TAIL_LENGTH) {
-    return null;
-  }
-  return digits.slice(-CARD_TAIL_LENGTH);
-}
-
-/**
- * 발급사 비교용 정규화 키. 파서/이벤트는 `현대카드`, 등록 카드는 `현대`처럼 '카드'
- * 접미사 유무가 달라 직접 비교가 안 되므로 공백·접미사를 제거해 맞춘다.
- * 파서가 발급사를 특정하지 못한 일반 `카드`는 정규화 시 빈 문자열이 되어(→ null)
- * 임의 카드에 잘못 붙지 않도록 매칭에서 제외된다.
- */
-function normalizeIssuer(value: string | null): string | null {
-  if (!value) {
-    return null;
-  }
-  const key = value.replace(/\s+/g, '').replace(/카드$/, '');
-  return key.length > 0 ? key : null;
 }

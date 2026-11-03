@@ -166,32 +166,37 @@ export class BudgetService {
     assertKrwInteger(input.amount);
     const period = this.resolvePeriod(input.effectiveMonth);
     this.assertEditableMonth(period.month);
-    const scopeRefId = await this.resolveScopeRef(
-      input.householdId,
-      input.scopeType,
-      input.scopeRefId,
-    );
-    await this.assertNoDuplicate(
-      input.householdId,
-      period.effectiveMonth,
-      input.scopeType,
-      scopeRefId,
-    );
+    if (input.scopeType !== 'card_group' && input.cardIds !== undefined) {
+      throw new BadRequestException('카드 묶음 예산에서만 cardIds를 사용할 수 있습니다.');
+    }
+    const scopeRefId = input.scopeType === 'card_group'
+      ? null
+      : await this.resolveScopeRef(input.householdId, input.scopeType, input.scopeRefId);
+    if (input.scopeType === 'card_group' && input.scopeRefId !== undefined) {
+      throw new BadRequestException('카드 묶음 예산은 scopeRefId를 사용하지 않습니다.');
+    }
+    if (input.scopeType !== 'card_group') {
+      await this.assertNoDuplicate(input.householdId, period.effectiveMonth, input.scopeType, scopeRefId);
+    }
 
     let created: schema.Budget | undefined;
     try {
-      [created] = await this.db
-        .insert(schema.budgets)
-        .values({
+      created = await this.db.transaction(async (tx) => {
+        const cardIds = input.scopeType === 'card_group'
+          ? await this.validateCardGroup(input.householdId, input.cardIds ?? [], tx)
+          : [];
+        const [row] = await tx.insert(schema.budgets).values({
           householdId: input.householdId,
           name: input.name ?? null,
           scopeType: input.scopeType,
           scopeRefId,
+          cardIds,
           amount: input.amount,
           effectiveMonth: period.effectiveMonth,
           createdBy: userId,
-        })
-        .returning();
+        }).returning();
+        return row;
+      });
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new ConflictException('a budget for this scope already exists');
@@ -206,8 +211,8 @@ export class BudgetService {
   }
 
   /**
-   * Updates a budget's `name` / `amount` (owner/admin only). Scope is immutable
-   * (delete and recreate to change scope). Returns the refreshed summary.
+   * 이름·한도는 현재/미래월에만 수정한다. 카드 범위 정정은 과거월도 허용하되
+   * 기존 범위를 비교하고 예산 ID·월·한도를 보존하며 같은 트랜잭션에 이력을 남긴다.
    */
   async update(
     userId: string,
@@ -215,31 +220,55 @@ export class BudgetService {
     input: BudgetUpdateRequest,
   ): Promise<BudgetSummary> {
     const budget = await this.loadBudget(id);
-    const actor = await this.requireMembership(
-      budget.householdId,
-      userId,
-      PRIVILEGED_ROLES,
-    );
-    this.assertEditableMonth(fromEffectiveMonth(budget.effectiveMonth));
-
-    const updates: Partial<schema.NewBudget> = { updatedAt: new Date() };
-    if (input.name !== undefined) {
-      updates.name = input.name;
+    const actor = await this.requireMembership(budget.householdId, userId, PRIVILEGED_ROLES);
+    const changesScope = input.scopeType !== undefined || input.cardIds !== undefined || input.expectedCardIds !== undefined;
+    if (changesScope && (input.scopeType !== 'card_group' || !input.cardIds || !input.expectedCardIds)) {
+      throw new BadRequestException('범위 정정에는 scopeType, cardIds, expectedCardIds가 모두 필요합니다.');
     }
-    if (input.amount !== undefined) {
-      assertKrwInteger(input.amount);
-      updates.amount = input.amount;
+    if (!changesScope || input.name !== undefined || input.amount !== undefined) {
+      this.assertEditableMonth(fromEffectiveMonth(budget.effectiveMonth));
     }
+    if (input.amount !== undefined) assertKrwInteger(input.amount);
 
-    const [updated] = await this.db
-      .update(schema.budgets)
-      .set(updates)
-      .where(eq(schema.budgets.id, id))
-      .returning();
-    if (!updated) {
-      throw new NotFoundException('budget not found');
+    let updated: schema.Budget | undefined;
+    try {
+      updated = await this.db.transaction(async (tx) => {
+        const [current] = await tx.select().from(schema.budgets)
+          .where(eq(schema.budgets.id, id)).for('update');
+        if (!current) throw new NotFoundException('budget not found');
+        const updates: Partial<schema.NewBudget> = { updatedAt: new Date() };
+        if (input.name !== undefined) updates.name = input.name;
+        if (input.amount !== undefined) updates.amount = input.amount;
+        if (changesScope) {
+          if (current.scopeType !== 'card' && current.scopeType !== 'card_group') {
+            throw new BadRequestException('카드 예산만 카드 묶음으로 정정할 수 있습니다.');
+          }
+          const previousCardIds = current.scopeType === 'card' && current.scopeRefId
+            ? [current.scopeRefId]
+            : current.cardIds;
+          const expected = (input.expectedCardIds ?? []).map((value) => value.toLowerCase()).sort();
+          if (JSON.stringify([...previousCardIds].sort()) !== JSON.stringify(expected)) {
+            throw new ConflictException('예산 카드 범위가 변경됐습니다. 다시 조회해 주세요.');
+          }
+          const cardIds = await this.validateCardGroup(current.householdId, input.cardIds ?? [], tx);
+          updates.scopeType = 'card_group';
+          updates.scopeRefId = null;
+          updates.cardIds = cardIds;
+          if (JSON.stringify([...previousCardIds].sort()) !== JSON.stringify(cardIds)) {
+            await tx.insert(schema.budgetScopeCorrections).values({
+              budgetId: current.id, previousCardIds, cardIds, actorUserId: userId,
+            });
+          }
+        }
+        const [row] = await tx.update(schema.budgets).set(updates)
+          .where(eq(schema.budgets.id, id)).returning();
+        return row;
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) throw new ConflictException('같은 카드 묶음의 월 예산이 이미 있습니다.');
+      throw error;
     }
-
+    if (!updated) throw new NotFoundException('budget not found');
     return this.summarize(updated, actor.id);
   }
 
@@ -311,6 +340,12 @@ export class BudgetService {
           throw new NotFoundException('source month has no budgets');
         }
 
+        // 새 달의 선택 범위는 현재도 유효해야 한다. 과거 월의 집계 범위는 바꾸지 않는다.
+        for (const budget of sourceRows) {
+          if (budget.scopeType === 'card_group') {
+            await this.validateCardGroup(input.householdId, budget.cardIds, tx);
+          }
+        }
         const copiedBudgetIds = sourceRows.map(() => randomUUID());
         await tx.insert(schema.budgetCopyOperations).values({
           householdId: input.householdId,
@@ -328,6 +363,7 @@ export class BudgetService {
             name: budget.name,
             scopeType: budget.scopeType,
             scopeRefId: budget.scopeRefId,
+            cardIds: budget.cardIds,
             amount: budget.amount,
             effectiveMonth: target.effectiveMonth,
             period: budget.period,
@@ -425,6 +461,11 @@ export class BudgetService {
           );
         }
         break;
+      case 'card_group':
+        conditions.push(budget.cardIds.length > 0
+          ? inArray(schema.cardTransactions.cardId, budget.cardIds)
+          : sql`false`);
+        break;
       case 'household':
       default:
         break;
@@ -458,6 +499,7 @@ export class BudgetService {
     const categoryIds = new Set<string>();
     const cardIds = new Set<string>();
     for (const budget of budgets) {
+      if (budget.scopeType === 'card_group') budget.cardIds.forEach((id) => cardIds.add(id));
       if (!budget.scopeRefId) {
         continue;
       }
@@ -548,6 +590,8 @@ export class BudgetService {
           (budget.scopeRefId && cardAliases.get(budget.scopeRefId)) ||
           '알 수 없는 카드'
         );
+      case 'card_group':
+        return budget.cardIds.map((id) => cardAliases.get(id) ?? '알 수 없는 카드').join(' + ');
       case 'household':
       default:
         return '가족 전체';
@@ -698,6 +742,32 @@ export class BudgetService {
     }
   }
 
+  /**
+   * 같은 가구·소유자의 활성 개인 카드만 묶는다. 카드를 공유 잠금해 검증 중 상태
+   * 변경을 막으며, 정렬한 UUID 배열로 순서가 다른 중복 범위도 동일하게 취급한다.
+   */
+  private async validateCardGroup(
+    householdId: string,
+    input: readonly string[],
+    db: Pick<Db, 'select'>,
+  ): Promise<string[]> {
+    const cardIds = input.map((id) => id.toLowerCase()).sort();
+    if (cardIds.length < 2 || cardIds.length > 20 || new Set(cardIds).size !== cardIds.length) {
+      throw new BadRequestException('서로 다른 개인 카드를 2개 이상 선택해 주세요.');
+    }
+    const rows = await db.select({ id: schema.paymentCards.id, ownerMemberId: schema.paymentCards.ownerMemberId })
+      .from(schema.paymentCards).where(and(
+        eq(schema.paymentCards.householdId, householdId),
+        inArray(schema.paymentCards.id, cardIds),
+        eq(schema.paymentCards.status, 'active'),
+        eq(schema.paymentCards.isShared, false),
+      )).orderBy(asc(schema.paymentCards.id)).for('share');
+    if (rows.length !== cardIds.length || new Set(rows.map((row) => row.ownerMemberId)).size !== 1) {
+      throw new BadRequestException('같은 가족 구성원의 활성 개인 카드만 묶을 수 있습니다.');
+    }
+    return cardIds;
+  }
+
   /** Validates a card belongs to the household. */
   private async assertCardInHousehold(
     cardId: string,
@@ -769,6 +839,7 @@ export class BudgetService {
       name: budget.name,
       scopeType: budget.scopeType,
       scopeRefId: budget.scopeRefId,
+      cardIds: budget.cardIds,
       scopeLabel,
       effectiveMonth: fromEffectiveMonth(budget.effectiveMonth),
       amount: budget.amount,
@@ -806,7 +877,7 @@ export class BudgetService {
     }
   }
 
-  /** 과거월 계획은 월 원장의 감사 기록이므로 어떤 mutation도 허용하지 않는다. */
+  /** 과거월 한도·이름·생성·삭제는 금지한다. 명시적 카드 범위 정정만 별도 경로다. */
   private assertEditableMonth(month: string): void {
     if (isPastBudgetMonth(month)) {
       throw new BadRequestException('past month budgets are read-only');

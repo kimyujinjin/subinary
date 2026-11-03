@@ -7,10 +7,12 @@ import { cn } from "@/lib/utils";
 interface ListRowProps {
   /** 좌측 원형 아이콘 내용(lucide 아이콘/이모지). 원형 배경은 자동. */
   icon?: ReactNode;
-  /** 아이콘 원형 배경 클래스 오버라이드(기본 파랑 틴트). */
+  /** 아이콘 원형 배경 클래스. */
   iconClassName?: string;
   title: ReactNode;
   subtitle?: ReactNode;
+  /** 카드 식별 정보처럼 말줄임 대신 여러 줄을 써야 하는 부제의 스타일. */
+  subtitleClassName?: string;
   /** 우측 주 값(보통 금액). */
   value?: ReactNode;
   /** 우측 보조(상태 배지/시각 등). */
@@ -22,7 +24,7 @@ interface ListRowProps {
    * `onClick`과 동시에 주지 않는다 — 링크가 우선한다.
    */
   href?: string;
-  /** 링크일 때 스크린리더에 읽힐 설명(라벨이 값·아이콘뿐일 때 유용). */
+  /** 클릭 가능한 행의 스크린리더 설명. */
   ariaLabel?: string;
   /** 우측 끝 chevron 표시. */
   chevron?: boolean;
@@ -30,16 +32,17 @@ interface ListRowProps {
 }
 
 /**
- * 리스트 행(오늘의집 톤). 표 대신 쓰는 기본 단위 —
+ * 아이콘, 제목, 보조 정보와 값을 나란히 보여주는 목록 행.
  * [원형 아이콘] 제목/부제 ······ 값/보조 [›]
  *
- * 세로 크기는 아이콘(40px) + py-3 = 64px이라 링크·버튼일 때도 터치 타깃 44px을 넘는다.
+ * 좁은 화면에서는 아이콘과 간격을 줄여 금액이 들어갈 자리를 확보한다.
  */
 export function ListRow({
   icon,
   iconClassName,
   title,
   subtitle,
+  subtitleClassName,
   value,
   valueSub,
   onClick,
@@ -50,9 +53,9 @@ export function ListRow({
 }: ListRowProps) {
   const interactive = href != null || onClick != null;
   const rowClass = cn(
-    "flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left",
+    "flex min-h-16 w-full min-w-0 items-center gap-2.5 rounded-xl px-1 py-3.5 text-left sm:gap-3 sm:px-2",
     interactive &&
-      "hover:bg-muted/70 cursor-pointer transition-[background-color,transform] active:scale-[0.99]",
+      "hover:bg-muted/70 focus-visible:ring-ring cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
     className,
   );
 
@@ -61,7 +64,7 @@ export function ListRow({
       {icon ? (
         <span
           className={cn(
-            "bg-accent text-accent-foreground flex size-10 shrink-0 items-center justify-center rounded-full text-lg [&_svg]:size-5",
+            "bg-accent text-accent-foreground flex size-9 shrink-0 items-center justify-center rounded-full text-lg sm:size-10 [&_svg]:size-[18px] sm:[&_svg]:size-5",
             iconClassName,
           )}
         >
@@ -69,29 +72,29 @@ export function ListRow({
         </span>
       ) : null}
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-[15px] font-medium">{title}</span>
+        <span className="truncate text-[15px] font-semibold" title={typeof title === "string" ? title : undefined}>{title}</span>
         {subtitle ? (
-          <span className="text-muted-foreground truncate text-[13px]">
+          <span className={cn("text-muted-foreground truncate text-xs leading-5", subtitleClassName)} title={typeof subtitle === "string" ? subtitle : undefined}>
             {subtitle}
           </span>
         ) : null}
       </span>
       {value != null || valueSub != null ? (
-        <span className="flex shrink-0 flex-col items-end gap-0.5">
+        <span className="flex min-w-0 max-w-[58%] shrink-0 flex-col items-end gap-1 text-right [overflow-wrap:anywhere]">
           {value != null ? (
-            <span className="text-[15px] font-semibold tabular-nums">
+            <span className="max-w-full text-[14px] font-semibold tabular-nums sm:text-[15px]">
               {value}
             </span>
           ) : null}
           {valueSub != null ? (
-            <span className="text-muted-foreground text-[13px]">
+            <span className="text-muted-foreground max-w-full text-xs">
               {valueSub}
             </span>
           ) : null}
         </span>
       ) : null}
       {chevron ? (
-        <ChevronRight className="text-muted-foreground/50 size-4 shrink-0" />
+        <ChevronRight className="text-muted-foreground/50 hidden size-4 shrink-0 sm:block" aria-hidden="true" />
       ) : null}
     </>
   );
@@ -105,7 +108,7 @@ export function ListRow({
   }
   if (onClick) {
     return (
-      <button type="button" onClick={onClick} className={rowClass}>
+      <button type="button" onClick={onClick} aria-label={ariaLabel} className={rowClass}>
         {body}
       </button>
     );

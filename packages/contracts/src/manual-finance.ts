@@ -1,0 +1,149 @@
+import { z } from 'zod';
+
+/** 수동 기록 전용 계약. 카드 거래·자동 수집·법적 소유권을 나타내지 않는다. */
+export const manualFinanceScopeSchema = z.enum(['household', 'private']);
+export type ManualFinanceScope = z.infer<typeof manualFinanceScopeSchema>;
+export const manualFinanceVisibilitySchema = z.enum(['private', 'household']);
+export type ManualFinanceVisibility = z.infer<typeof manualFinanceVisibilitySchema>;
+export const manualFinanceListQuerySchema = z.object({ householdId: z.string().uuid(), scope: manualFinanceScopeSchema.default('household') }).strict();
+export type ManualFinanceListQuery = z.infer<typeof manualFinanceListQuerySchema>;
+export const manualAssetKindSchema = z.enum(['account', 'saving', 'stock', 'loan']);
+export type ManualAssetKind = z.infer<typeof manualAssetKindSchema>;
+
+/** numeric(20,0)와 일치한다. JSON number/지수/부호/소수/선행 0을 받지 않는다. */
+export const manualKrwAmountSchema = z.string().regex(/^(0|[1-9]\d{0,19})$/, '금액은 20자리 이하의 0 이상 정수 원으로 입력해 주세요.');
+
+function calendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  return day <= [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]!;
+}
+
+function seoulToday(): string {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  return ['year', 'month', 'day'].map((type) => parts.find((part) => part.type === type)!.value).join('-');
+}
+
+export const manualFinanceDateSchema = z.string().refine(calendarDate, '실제 날짜를 YYYY-MM-DD 형식으로 입력해 주세요.');
+const recordedDateSchema = manualFinanceDateSchema.refine((value) => value <= seoulToday(), '기준일·지급일은 서울 기준 오늘 이후일 수 없습니다.');
+const nullableNote = z.string().trim().min(1).max(1000).nullable();
+const labelSchema = z.string().trim().min(1).max(100);
+const versionSchema = z.number().int().positive().max(2147483647);
+const assetFields = {
+  kind: manualAssetKindSchema,
+  label: labelSchema,
+  visibility: manualFinanceVisibilitySchema,
+  amount: manualKrwAmountSchema.nullable(),
+  asOfDate: recordedDateSchema.nullable(),
+  source: z.literal('manual').nullable(),
+  /** 직접 적은 명의 표시일 뿐 검증된 법적 소유·지분 정보가 아니다. */
+  legalOwnerLabel: z.string().trim().min(1).max(100).nullable(),
+  note: nullableNote,
+};
+
+function checkAsset(input: { amount: string | null; asOfDate: string | null; source: 'manual' | null }, ctx: z.RefinementCtx): void {
+  if (input.amount === null) {
+    if (input.asOfDate !== null || input.source !== null) ctx.addIssue({ code: 'custom', path: ['amount'], message: '금액 미입력 시 기준일과 출처도 미입력으로 남겨 주세요.' });
+  } else if (input.asOfDate === null || input.source !== 'manual') {
+    ctx.addIssue({ code: 'custom', path: ['asOfDate'], message: '금액에는 기준일과 직접 입력 출처가 필요합니다.' });
+  }
+}
+
+export const manualAssetCreateRequestSchema = z.object({
+  /** 한 번의 작성 동작에 고정한 UUID. 재시도에도 같은 ID와 원래 입력을 보낸다. */
+  id: z.string().uuid(),
+  householdId: z.string().uuid(),
+  ...assetFields,
+  visibility: manualFinanceVisibilitySchema.default('private'),
+}).strict().superRefine(checkAsset);
+export type ManualAssetCreateRequest = z.infer<typeof manualAssetCreateRequestSchema>;
+export const manualAssetUpdateRequestSchema = z.object({
+  expectedVersion: versionSchema,
+  ...assetFields,
+}).strict().superRefine(checkAsset);
+export type ManualAssetUpdateRequest = z.infer<typeof manualAssetUpdateRequestSchema>;
+
+const recordFields = {
+  id: z.string().uuid(), householdId: z.string().uuid(), ownerUserId: z.string().uuid(),
+  version: versionSchema, createdAt: z.string(), updatedAt: z.string(), canEdit: z.boolean(),
+};
+export const manualAssetSchema = z.object({ ...recordFields, ...assetFields, currency: z.literal('KRW') }).strict().superRefine(checkAsset);
+export type ManualAsset = z.infer<typeof manualAssetSchema>;
+const completenessSchema = z.enum(['empty', 'partial', 'complete']);
+const aggregateAmountSchema = z.string().regex(/^(0|[1-9]\d*)$/);
+export const manualAssetSummarySchema = z.object({
+  currency: z.literal('KRW'),
+  /** partial이면 알려진 항목의 부분합이다. 항목이 없거나 모두 미입력이면 null. */
+  grossAssets: aggregateAmountSchema.nullable(),
+  debt: aggregateAmountSchema.nullable(),
+  /** 양쪽 집합이 모두 complete일 때만 산출한다. 음수도 가능하다. */
+  netAssets: z.string().regex(/^(0|-?[1-9]\d*)$/).nullable(),
+  assetsCompleteness: completenessSchema, debtCompleteness: completenessSchema, completeness: completenessSchema,
+  asOfDate: manualFinanceDateSchema.nullable(), oldestAsOfDate: manualFinanceDateSchema.nullable(), newestAsOfDate: manualFinanceDateSchema.nullable(),
+  mixedAsOfDates: z.boolean(),
+}).strict();
+export type ManualAssetSummary = z.infer<typeof manualAssetSummarySchema>;
+export const manualAssetResponseSchema = z.object({ item: manualAssetSchema }).strict();
+export type ManualAssetResponse = z.infer<typeof manualAssetResponseSchema>;
+export const manualAssetListResponseSchema = z.object({ items: z.array(manualAssetSchema), summary: manualAssetSummarySchema }).strict();
+export type ManualAssetListResponse = z.infer<typeof manualAssetListResponseSchema>;
+
+export const manualHousingPaymentKindSchema = z.enum(['contract', 'interim', 'balance', 'option']);
+export type ManualHousingPaymentKind = z.infer<typeof manualHousingPaymentKindSchema>;
+export const manualHousingPaymentInputSchema = z.object({
+  id: z.string().uuid(), kind: manualHousingPaymentKindSchema,
+  installment: z.number().int().positive().max(1000).nullable(),
+  dueDate: manualFinanceDateSchema.nullable(), amount: manualKrwAmountSchema.nullable(),
+  paidAmount: manualKrwAmountSchema.nullable(), paidDate: recordedDateSchema.nullable(),
+}).strict().superRefine((input, ctx) => {
+  // 형식 오류는 기본 스키마가 보고한다. 잘못된 문자열을 BigInt에 넘겨 예외로 바꾸지 않는다.
+  if ((input.amount !== null && !manualKrwAmountSchema.safeParse(input.amount).success)
+    || (input.paidAmount !== null && !manualKrwAmountSchema.safeParse(input.paidAmount).success)) return;
+  if (input.paidAmount !== null && (input.amount === null || BigInt(input.paidAmount) > BigInt(input.amount))) {
+    ctx.addIssue({ code: 'custom', path: ['paidAmount'], message: '지급액에는 예정 금액이 필요하며 예정 금액을 초과할 수 없습니다.' });
+  }
+  if (input.paidAmount !== null && BigInt(input.paidAmount) > 0n) {
+    if (input.paidDate === null) ctx.addIssue({ code: 'custom', path: ['paidDate'], message: '지급액이 있으면 실제 지급일을 입력해 주세요.' });
+  } else if (input.paidDate !== null) {
+    ctx.addIssue({ code: 'custom', path: ['paidDate'], message: '지급일에는 0보다 큰 지급액이 필요합니다.' });
+  }
+});
+export type ManualHousingPaymentInput = z.infer<typeof manualHousingPaymentInputSchema>;
+export const manualHousingPaymentSchema = manualHousingPaymentInputSchema.safeExtend({ planId: z.string().uuid() });
+export type ManualHousingPayment = z.infer<typeof manualHousingPaymentSchema>;
+const housingFields = {
+  label: labelSchema, visibility: manualFinanceVisibilitySchema,
+  occupancyYear: z.number().int().min(1).max(9999).nullable(),
+  contractStage: z.string().trim().min(1).max(100).nullable(),
+  /** 용도 메모만 저장한다. 자산 연결·재원 예약·전망 계산은 하지 않는다. */
+  fundingNote: z.string().trim().min(1).max(2000).nullable(),
+};
+const paymentsSchema = z.array(manualHousingPaymentInputSchema).max(100).refine((items) => new Set(items.map((item) => item.id.toLowerCase())).size === items.length, '지급 기록 ID를 중복할 수 없습니다.');
+export const manualHousingPlanCreateRequestSchema = z.object({ id: z.string().uuid(), householdId: z.string().uuid(), ...housingFields, visibility: manualFinanceVisibilitySchema.default('private'), payments: paymentsSchema }).strict();
+export type ManualHousingPlanCreateRequest = z.infer<typeof manualHousingPlanCreateRequestSchema>;
+export const manualHousingPlanUpdateRequestSchema = z.object({ expectedVersion: versionSchema, ...housingFields, payments: paymentsSchema }).strict();
+export type ManualHousingPlanUpdateRequest = z.infer<typeof manualHousingPlanUpdateRequestSchema>;
+export const manualHousingPlanSchema = z.object({ ...recordFields, ...housingFields }).strict();
+export type ManualHousingPlan = z.infer<typeof manualHousingPlanSchema>;
+export const manualHousingPlanResponseSchema = z.object({ item: manualHousingPlanSchema, payments: z.array(manualHousingPaymentSchema) }).strict();
+export type ManualHousingPlanResponse = z.infer<typeof manualHousingPlanResponseSchema>;
+export const manualHousingSummarySchema = z.object({
+  /** 입력된 미지급 일정 중 가장 이른 행. 현금 전망이나 전체 일정의 확정값이 아니다. */
+  nextPayment: z.object({
+    planId: z.string().uuid(), paymentId: z.string().uuid(), label: labelSchema,
+    kind: manualHousingPaymentKindSchema, installment: z.number().int().positive().max(1000).nullable(),
+    dueDate: manualFinanceDateSchema, remainingAmountKrw: manualKrwAmountSchema,
+  }).strict().nullable(),
+  hasIncompletePayments: z.boolean(),
+}).strict();
+export type ManualHousingSummary = z.infer<typeof manualHousingSummarySchema>;
+export const manualHousingPlanListResponseSchema = z.object({ items: z.array(manualHousingPlanSchema), summary: manualHousingSummarySchema }).strict();
+export type ManualHousingPlanListResponse = z.infer<typeof manualHousingPlanListResponseSchema>;
+export const manualFinanceDeleteRequestSchema = z.object({ expectedVersion: versionSchema }).strict();
+export type ManualFinanceDeleteRequest = z.infer<typeof manualFinanceDeleteRequestSchema>;
+export const manualFinanceDeleteResponseSchema = z.object({ deleted: z.boolean() }).strict();
+export type ManualFinanceDeleteResponse = z.infer<typeof manualFinanceDeleteResponseSchema>;

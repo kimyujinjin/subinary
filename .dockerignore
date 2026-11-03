@@ -18,6 +18,9 @@ out
 apps/mobile/ios
 apps/mobile/android
 
+# Godot 게임 (apps/shmup) — 서버 이미지와 무관하고 export 산출물이 크다
+apps/shmup
+
 # VCS
 .git
 

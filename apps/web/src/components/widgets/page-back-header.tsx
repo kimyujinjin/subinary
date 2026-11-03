@@ -1,9 +1,10 @@
 "use client";
 import { ArrowLeft } from "lucide-react";
-import { useRouter } from "next/navigation";
-import type { ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import React, { type ReactNode } from "react";
 
-import { canGoBackInApp } from "@/lib/nav-history";
+import { canGoBackInApp, prepareColdEntryReplacement } from "@/lib/nav-history";
+import { parentTabHref } from "@/lib/nav-tabs";
 
 /**
  * 하위 페이지 공통 헤더 — 좌측 뒤로가기(←) + 제목(+선택 부제/우측 액션).
@@ -11,9 +12,9 @@ import { canGoBackInApp } from "@/lib/nav-history";
  * **뒤로가기는 사용자가 온 길로 간다.** 예전에는 `backHref` 기본값이 `/more` 고정이라
  * `/todo`에서 `/declines`로 들어간 사람이 `/more`로 튀었다 — 가본 적 없는 화면이다.
  * 지금은 앱 안에서 이동해 온 경우 브라우저 뒤로가기를 쓰고, 딥링크·새로고침으로 이
- * 화면을 처음 연 경우에만 `backHref`(기본 `/more`)로 밀어 준다(lib/nav-history.ts).
+ * 화면을 처음 연 경우에만 `backHref` 또는 현재 화면의 상위 탭으로 복귀한다.
  *
- * 진입 경로가 **하나뿐인 화면**은 `backHref`를 명시해도 좋다 — 그때는 항상 그 경로다.
+ * 정해진 초기 복귀 지점이 필요한 화면은 `backHref`를 명시할 수 있다.
  *
  * 뒤로가기 버튼은 44×44 — 터치 타깃 최소치다(그 아래로 줄이면 모바일에서 헛손질이
  * 늘고, 이 버튼은 화면당 유일한 탈출구다).
@@ -22,7 +23,7 @@ export function PageBackHeader({
   title,
   subtitle,
   action,
-  backHref = "/more",
+  backHref,
 }: {
   title: string;
   subtitle?: ReactNode;
@@ -31,6 +32,7 @@ export function PageBackHeader({
   backHref?: string;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
 
   return (
     <div className="flex items-start gap-2">
@@ -41,7 +43,10 @@ export function PageBackHeader({
         aria-label="뒤로"
         onClick={() => {
           if (canGoBackInApp()) router.back();
-          else router.push(backHref);
+          else {
+            prepareColdEntryReplacement();
+            router.replace(backHref ?? parentTabHref(pathname));
+          }
         }}
         className="hover:bg-muted -ml-2.5 flex size-11 shrink-0 items-center justify-center rounded-full transition-colors"
       >

@@ -34,6 +34,19 @@ export const DECLINE_NOTICE_RE =
   /(승인\s*거[절부]|승인\s*불가|승인불가|결제\s*실패|승인\s*실패)/;
 
 /**
+ * 모임금고 저금은 통장 내부 이동 안내다. 카드 승인과 섞인 본문은 자동 제외하지 않는다.
+ * 폭넓은 은행 키워드 배제와 달리 실제 확인한 발급처·문구를 모두 요구한다.
+ */
+export function isSavingsTransferNotice(content: string): boolean {
+  if (/승인|결제|취소|환불|거절/.test(content)) return false;
+  return (
+    content.includes('토스뱅크') &&
+    content.includes('모임통장') &&
+    /모임금고[^\r\n]*[\d,]+원이\s*저금(?:됐|되었)어요/.test(content)
+  );
+}
+
+/**
  * 발급사 전용 파서(신한/KB)의 배제 판정 — 발급사 키워드가 있어도 카드 결제가
  * 아닌 문자면 `true`.
  *

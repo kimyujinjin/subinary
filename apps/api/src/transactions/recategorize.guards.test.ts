@@ -107,18 +107,16 @@ describe('사용자가 동의한 숫자로만 적용한다', () => {
   });
 });
 
-describe('학습 계보를 짝으로 남긴다', () => {
-  it('규칙 upsert와 feedback_events insert가 함께 있다', () => {
-    // 규칙만 쓰면 데이터셋 빌드가 'lineage is incomplete or stale'로 죽는다.
-    expect(source).toContain('schema.merchantCategoryRules');
-    expect(source).toContain('schema.feedbackEvents');
-    expect(source).toContain('createMerchantCategoryTargetId');
-  });
-
-  it('revoke 연쇄를 복사하지 않고 공용 함수를 부른다', () => {
-    expect(source).toContain('revokeMerchantRuleLineage');
-    // 세 번째 사본이 생기면 다섯 테이블 중 하나를 빠뜨린 사본이 조용히 남는다.
-    expect(source).not.toContain('schema.datasetSnapshots');
-    expect(source).not.toContain('schema.modelAliases');
+describe('과거 분류의 승인 범위를 유지한다', () => {
+  it.each([
+    ['적용', 'async apply(', 'async listRules('],
+    ['되돌리기', 'async revert(', 'private async requireMembership('],
+  ])('%s는 향후 규칙·학습 라벨·계보를 변경하지 않는다', (_name, from, to) => {
+    const operation = source.slice(source.indexOf(from), source.indexOf(to));
+    expect(operation).not.toContain('schema.merchantCategoryRules');
+    expect(operation).not.toContain('schema.feedbackEvents');
+    expect(operation).not.toContain('revokeMerchantRuleLineage');
+    expect(operation).not.toContain('schema.datasetSnapshots');
+    expect(operation).not.toContain('schema.modelAliases');
   });
 });

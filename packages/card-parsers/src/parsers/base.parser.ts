@@ -28,8 +28,8 @@ const FUTURE_TOLERANCE_MS = 24 * 60 * 60 * 1000;
 
 /** First `12,500원` style token. Card number in parens has no `원`, so it is ignored. */
 const AMOUNT_RE = /([\d,]+)\s*원/;
-/** 외화 통화 코드(KRW 제외) — '원' 대신 코드로 표기되는 해외승인/해외이용 문자용. */
-const FX_CODES = KNOWN_CURRENCY_CODES.filter((code) => code !== 'KRW');
+/** 해외 원화 결제도 `KRW 29,000.00`처럼 ISO 코드로 오므로 KRW를 포함한다. */
+const FX_CODES = KNOWN_CURRENCY_CODES;
 const FX_CODE_ALT = FX_CODES.join('|');
 /**
  * 외화 금액 — **선행 형식(`USD 22.00`) 우선**. 한국 해외승인 문자는 통화 코드가
@@ -145,8 +145,8 @@ export function detectDeclineReason(content: string): CardSmsDeclineReason {
 /**
  * 금액을 해당 통화의 minor units 정수로 추출한다.
  *
- * 원화(`N원`)를 **우선** 시도해 기존 KRW 문자의 동작을 100% 보존하고(KRW 지수 0이라
- * minor==major), 원화 토큰이 없으면 외화(`USD 22.00` / `22.00 USD`)로 폴백해
+ * 원화(`N원`)를 **우선** 시도해 기존 KRW 문자의 동작을 보존하고(KRW 지수 0이라
+ * minor==major), 원화 토큰이 없으면 ISO 표기(`KRW 29,000.00` / `22.00 USD`)로 폴백해
  * ISO4217 지수만큼 스케일한 minor units + 통화 코드를 돌려준다. 부동소수는 저장하지
  * 않는다({@link toMinorUnits}가 반올림해 정수로 확정).
  */

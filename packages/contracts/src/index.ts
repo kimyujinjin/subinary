@@ -263,6 +263,8 @@ export {
   cardSmsTransactionTypeSchema,
   cardSmsIngestRequestSchema,
   cardSmsIngestResponseSchema,
+  cardSmsPostingSchema,
+  cardSmsPostingStatusResponseSchema,
   cardSmsEventSummarySchema,
   cardSmsEventDetailSchema,
   mobileEventStatusResponseSchema,
@@ -272,6 +274,9 @@ export {
   manualTextEntryResponseSchema,
   manualFieldsEntryRequestSchema,
   cardSmsReviewRequestSchema,
+  cardSmsReviewGroupSchema,
+  cardSmsReviewPolicySchema,
+  cardSmsReviewGroupsResponseSchema,
   cardSmsReviewResponseSchema,
   cardSmsDeclineReasonSchema,
   cardSmsDeclineGroupSchema,
@@ -285,6 +290,8 @@ export type {
   CardSmsTransactionType,
   CardSmsIngestRequest,
   CardSmsIngestResponse,
+  CardSmsPosting,
+  CardSmsPostingStatusResponse,
   CardSmsEventSummary,
   CardSmsEventDetail,
   MobileEventStatusResponse,
@@ -294,6 +301,9 @@ export type {
   ManualTextEntryResponse,
   ManualFieldsEntryRequest,
   CardSmsReviewRequest,
+  CardSmsReviewGroup,
+  CardSmsReviewPolicy,
+  CardSmsReviewGroupsResponse,
   CardSmsReviewResponse,
   CardSmsDeclineReason,
   CardSmsDeclineGroup,
@@ -307,12 +317,14 @@ export {
   cardVisibilitySchema,
   cardCreateRequestSchema,
   cardUpdateRequestSchema,
+  cardLast4CorrectionRequestSchema,
   cardSummarySchema,
 } from './card.js';
 export type {
   CardVisibility,
   CardCreateRequest,
   CardUpdateRequest,
+  CardLast4CorrectionRequest,
   CardSummary,
 } from './card.js';
 
@@ -334,6 +346,7 @@ export {
   transactionDeleteResponseSchema,
   linkCancellationRequestSchema,
   transactionSummarySchema,
+  transactionFxSchema,
   transactionListResponseSchema,
   merchantLabelCandidateSourceSchema,
   merchantLabelCandidateSchema,
@@ -348,6 +361,7 @@ export type {
   TransactionDeleteResponse,
   LinkCancellationRequest,
   TransactionSummary,
+  TransactionFx,
   TransactionListResponse,
   MerchantLabelCandidateSource,
   MerchantLabelCandidate,
@@ -416,6 +430,9 @@ export type {
   MerchantBreakdown,
   AnalyticsMonths,
 } from './analytics.js';
+
+export { financeQualityQuerySchema, financeQualitySchema } from './finance-quality.js';
+export type { FinanceQuality } from './finance-quality.js';
 
 export {
   budgetScopeTypeSchema,
@@ -613,3 +630,8 @@ export type {
   CategoryRule,
   CategoryRuleList,
 } from './recategorize.js';
+
+export * from './manual-finance.js';
+
+export * from './loan-import.js';
+export * from './finance-connections.js';

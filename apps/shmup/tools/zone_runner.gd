@@ -1,0 +1,260 @@
+extends Node
+## 6구역 타임라인 자가 검증 — "각 구역을 무피격으로 통과할 수 있는가".
+##
+## 게이트 질문이 "5분을 무피격으로" 가 아니라 "구역별로" 인 이유: 구역은 무피격 보너스
+## 단위이자 연습 모드 진입 단위다(설계서 §7). 그래서 Reach1D 를 **구역 경계에서 리셋**한다 —
+## 그 구역만 연습하는 플레이어는 경계에서 자유로운 위치로 들어온다.
+## 탄은 리셋하지 않는다. 앞 구역의 탄이 넘어오는 것은 실제 게임에서 일어나는 일이다.
+##
+## 판정은 fairness_runner 와 **같은 정의**를 쓴다(도달 불가 / 도달폭 < 52 / 절대벽).
+## 다른 정의를 쓰면 두 도구가 같은 구간을 두고 엇갈리고, 그때 어느 쪽이 맞는지 알 수 없다.
+##
+## 구역 6(해구저)은 보스다 — tools/boss_runner.gd 의 페이즈별 측정이 담당한다.
+## 여기서 보스를 또 돌리면 같은 것을 두 정의로 재게 된다.
+
+const BANDS := [640.0, 860.0, 1040.0]
+const V_BUDGET := 5
+## 두 번째 예산. 300 u/s 하나로만 재면 "살 수 있는가" 만 보이고 "얼마나 움직여야 하는가" 가
+## 안 보인다 — 실제로 Hard 가 구역 1·5 에서 **더 넓게** 나왔다(조류가 빨라 탄이 밴드를 빨리
+## 빠져나간다). 난이도는 폭이 아니라 요구 이동량으로도 올라가므로 낮은 예산을 같이 잰다.
+const V_TIGHT := 3
+const COMP_MIN := 52
+
+var _fair: Fairness = null
+var _fail := 0
+
+func _ready() -> void:
+	# **실제 세이브를 건드리지 않는다.** 러너는 패턴을 직접 호출하므로 mark() 가
+	# _dirty 를 켜고, Main 을 띄우는 러너는 free() 때 save_now() 가 돌아
+	# 최고점수·해금·무피격 기록을 0 으로 덮어쓴다(실측). 경고도 실패도 없이 사라진다.
+	SaveData.reset_for_test("user://save-test-zone_runner.json")
+	Difficulty.apply_from_cmdline()
+	_fair = Fairness.new()
+	for a in OS.get_cmdline_user_args():
+		if a == "--zone5-sweep":
+			_sweep5()
+			return
+		if a == "--axes":
+			_axes()
+			return
+		if a == "--z5-parts":
+			_z5_parts()
+			return
+	print("== 6구역 무피격 가능성 (횡속 예산 %d u/s · 자탄 없음 = 최악) ==" % (V_BUDGET * 60))
+	print("  구역                 구간      | 최장min 도달폭@%d 도달폭@%d peak  적수 | 판정" % [V_BUDGET * 60, V_TIGHT * 60])
+	var rows := _scan(Stage.STAGE_WAVES)
+	for z in rows.size():
+		var r: Array = rows[z]
+		var flags := PackedStringArray()
+		if int(r[3]) == 0:
+			flags.append("FAIL:도달불가@t%d" % int(r[4]))
+			_fail += 1
+		elif int(r[2]) < COMP_MIN:
+			flags.append("FAIL:정밀%d" % int(r[2]))
+			_fail += 1
+		if int(r[0]) < Tune.FREE_FLOOR:
+			flags.append("FAIL:절대벽")
+			_fail += 1
+		elif int(r[0]) < Difficulty.free_floor():
+			flags.append("WARN:F<%d" % Difficulty.free_floor())
+		if int(r[6]) == 0:
+			flags.append("신규 적 0 — 휴식 구역")
+		if flags.is_empty():
+			flags.append("OK")
+		print("  %d %-10s %s | %6d %8d %8d %4d %6d | %s" % [
+			z + 1, Stage.ZONE_NAMES[z], _span(z), r[0], r[2], int(r[7]), int(r[1]), int(r[6]),
+			" ".join(flags)])
+	print("\n  가르치는 것")
+	for z in Stage.ZONES.size():
+		print("    %d %-10s %s" % [z + 1, Stage.ZONE_NAMES[z], Stage.ZONES[z][1]])
+	print("\n== 실패 %d ==" % _fail)
+	get_tree().quit(1 if _fail > 0 else 0)
+
+func _span(z: int) -> String:
+	var a := int(Stage.ZONES[z][0])
+	var b: int = int(Stage.ZONES[z + 1][0]) if z + 1 < Stage.ZONES.size() else Stage.STAGE_TICKS
+	return "%d:%02d–%d:%02d" % [a / 3600, a / 60 % 60, b / 3600, b / 60 % 60]
+
+## 구역 수 × [최장min, peak, 도달폭min, 생존, 사망틱, 탄있는틱, 등장 적 수]
+func _scan(waves: Array) -> Array:
+	var nz := Stage.ZONES.size() - 1        # 마지막 구역은 보스 — 여기서 안 본다
+	var out: Array = []
+	for z in nz:
+		out.append([Tune.SCAN_CELLS, 0, Tune.SCAN_CELLS, 1, -1, 0, 0, Tune.SCAN_CELLS])
+	var ef := EnemyField.new()
+	for band in BANDS:
+		BulletField.clear()
+		BulletField.reset_flow()
+		ef.clear()
+		var cursor := 0
+		var p := Vector2(Tune.PF_W * 0.5, band)
+		var rch := Reach1D.new()
+		var rch_t := Reach1D.new()
+		var zone := 0
+		var spawned := 0
+		var mb: MidBoss = null
+		for t in Stage.BOSS_AT:
+			var z := Stage.zone_of(t)
+			if z != zone:
+				# 구역 경계 — 연습 모드 진입점이다. 도달 집합만 자유로 되돌린다.
+				rch.reset()
+				rch_t.reset()
+				zone = z
+			while cursor < waves.size():
+				var w: Array = waves[cursor]
+				if int(w[0]) > t:
+					break
+				cursor += 1
+				spawned += 1
+				# 밴드 루프 안이므로 첫 밴드에서만 센다. 안 그러면 정확히 밴드 수만큼 부풀려진다.
+				if band == BANDS[0]:
+					out[Stage.zone_of(int(w[0]))][6] = int(out[Stage.zone_of(int(w[0]))][6]) + 1
+				if int(w[1]) == Stage.KIND_MIDBOSS:
+					mb = MidBoss.new()
+					mb.reset(t)
+					continue
+				ef.spawn_wave(t, w)
+			if mb != null:
+				# 자탄이 없으니 HP 로는 안 끝난다 — 시간 상한으로 3페이즈를 전부 지나간다.
+				mb.step(t, p)
+				if mb.done:
+					mb = null
+					BulletField.vortex_w = 0.0
+			ef.step(t, p)
+			ef.kills.clear()       # 자탄이 없으니 격파도 없다. 쌓이면 메모리만 먹는다
+			BulletField.step_and_collide(t, p, p, true)
+			_fair.scan(BulletField, p.x, p.y)
+			var row: Array = out[z]
+			if _fair.in_band > 0:
+				row[0] = mini(int(row[0]), _fair.gap_w)
+				row[5] = int(row[5]) + 1
+			row[1] = maxi(int(row[1]), BulletField.n)
+			var free_mask := rch.from_fairness(_fair)
+			rch.step_mask(free_mask, V_BUDGET, t)
+			if rch.alive:
+				row[2] = mini(int(row[2]), rch.min_comp)
+			elif int(row[3]) == 1:
+				row[3] = 0
+				row[4] = t
+			rch_t.step_mask(free_mask, V_TIGHT, t)
+			if rch_t.alive:
+				row[7] = mini(int(row[7]), rch_t.min_comp)
+			else:
+				row[7] = 0
+	BulletField.reset_flow()
+	BulletField.clear()
+	# 탄이 한 발도 안 온 구역은 최장폭이 초기값 그대로다 — 720 으로 보고하면 오해를 부른다.
+	for r in out:
+		if int(r[5]) == 0:
+			r[0] = Tune.SCAN_CELLS
+	return out
+
+
+## 구역 5 손잡이 실측. 발광관 2기의 격자가 겹쳐 통로가 절반이 되는 구간을 넓힌다.
+## 손잡이는 둘 뿐이다 — 두 기체의 시차와 x 분리. hold 를 줄이면 격자 자체가 짧아져
+## "조류를 타면 통로가 유지된다" 를 가르칠 시간이 없어지므로 손잡이로 쓰지 않는다.
+func _sweep5() -> void:
+	print("== 구역 5 손잡이 스윕 (발광관 2기) ==")
+	print("  시차  x분리 | 최장min 도달폭min peak | 판정")
+	var base: Array = Stage.STAGE_WAVES
+	for lag in [180, 300, 420]:
+		for sep in [240, 320, 400]:
+			var waves: Array = []
+			for w in base:
+				var row: Array = w.duplicate()
+				if int(row[0]) == 7800:
+					row[2] = 360.0 - float(sep) * 0.5
+				elif int(row[0]) == 7980:
+					row[0] = 7800 + lag
+					row[2] = 360.0 + float(sep) * 0.5
+				waves.append(row)
+			waves.sort_custom(func(a: Array, b: Array) -> bool: return int(a[0]) < int(b[0]))
+			var r: Array = _scan(waves)[4]
+			var verdict := "OK"
+			if int(r[3]) == 0:
+				verdict = "FAIL:도달불가"
+			elif int(r[2]) < COMP_MIN:
+				verdict = "FAIL:정밀"
+			elif int(r[0]) < Difficulty.free_floor():
+				verdict = "WARN:F<%d" % Difficulty.free_floor()
+			print("  %4d  %5d | %6d %8d %4d | %s" % [lag, sep, r[0], r[2], int(r[1]), verdict])
+	get_tree().quit(0)
+
+
+## 난이도 축 분해. Hard 가 Normal 보다 **측정 가능하게 어려운가** 를 축별로 가른다.
+##
+## 첫 측정에서 Hard 전체가 구역 5 도달폭 60 → 59(사실상 동일), 구역 3 은 @180 에서
+## 66 → 73 으로 **넓어졌다.** peak 도 209 → 204 로 줄었다. 설계서 표를 그대로 넣었는데
+## 게임이 안 어려워진 것이다 — 축이 서로 상쇄되고 있다는 뜻이고, 그렇다면 표가 아니라
+## 이 게임의 기하에 맞는 값을 찾아야 한다. 어느 축이 무엇을 하는지부터 안다.
+func _axes() -> void:
+	print("== 난이도 축 분해 (구역 3·5 · 축을 하나씩만 Hard 로) ==")
+	print("  축                | Z3 @300 @180 peak | Z5 @300 @180 peak")
+	var H := Difficulty.Level.HARD
+	var N := Difficulty.Level.NORMAL
+	var cases: Array = [
+		["Normal (기준)", N, false, false, false, false],
+		["조류만 Hard", N, true, false, false, false],
+		["탄 수만 Hard", N, false, true, false, false],
+		["탄속만 1.10", N, false, false, true, false],
+		["발사간격만 Hard", N, false, false, false, true],
+		["Hard 전체", H, false, false, false, false],
+		["Hard + 탄속 1.05", H, false, false, false, false],
+	]
+	# SPEED_M 이 전 난이도 1.0 으로 꺼져 있으므로 "탄속만 Hard" 를 SPEED_M[H] 로 켜면
+	# 아무것도 안 움직인다 — 그 행이 'Normal (기준)' 의 조용한 복제본이 된다.
+	# 표에 기록된 1.1·1.05 를 재현하려면 **명시적으로** 넣어야 한다.
+	var speed_override := [0.0, 0.0, 0.0, 1.10, 0.0, 0.0, 1.05]
+	# 인덱스로 돈다. cases.find(c) 같은 값 비교는 두 행의 내용이 같아지는 순간
+	# 조용히 같은 인덱스를 집는다 — 라벨만 다른 행이 실제로 있었다.
+	for ci in cases.size():
+		var c: Array = cases[ci]
+		Difficulty.apply(int(c[1]))
+		if bool(c[2]):
+			Difficulty.u_max = Difficulty.U_MAX[H]
+			Difficulty.ramp = Difficulty.RAMP[H]
+			Difficulty.segs = PackedInt32Array(Difficulty.SEGS[H])
+			Difficulty.period = 0
+			for q in Difficulty.segs:
+				Difficulty.period += q
+		if bool(c[3]):
+			Difficulty.count_m = Difficulty.COUNT_M[H]
+		if bool(c[4]):
+			pass    # 탄속 축은 아래 speed_override 로만 켠다(SPEED_M 은 1.0 으로 꺼져 있다)
+		if bool(c[5]):
+			Difficulty.rate_m = Difficulty.RATE_M[H]
+		var so: float = speed_override[ci]
+		if so > 0.0:
+			Difficulty.speed_m = so
+		var rows := _scan(Stage.STAGE_WAVES)
+		var z3: Array = rows[2]
+		var z5: Array = rows[4]
+		print("  %-17s | %4d %4d %4d | %4d %4d %4d" % [c[0],
+			int(z3[2]), int(z3[7]), int(z3[1]), int(z5[2]), int(z5[7]), int(z5[1])])
+	Difficulty.apply(N)
+	get_tree().quit(0)
+
+
+## 구역 5 성분 분해. 진입 y 규칙을 고치자 군체와 뱀장어가 **처음으로 실제 발사**를 시작했고
+## 도달폭이 66 → 14 로 무너졌다(하한 52). 전에 통과하던 게이트는 적 두 종이 벙어리였던 것이다.
+## 어느 성분이 통로를 막는지 웨이브를 하나씩 빼서 본다.
+func _z5_parts() -> void:
+	print("== 구역 5 성분 분해 (해당 웨이브만 제거) ==")
+	print("  제거한 것        | 최장min 도달폭@300 @180 peak")
+	var labels := {
+		-1: "없음(현재)", 7800: "발광관 2기", 9000: "군체", 10200: "뱀장어 2기",
+	}
+	for drop in [-1, 7800, 9000, 10200]:
+		var waves: Array = []
+		for w in Stage.STAGE_WAVES:
+			var t := int(w[0])
+			if drop == 7800 and (t == 7800 or t == 7980):
+				continue
+			if drop == 9000 and t == 9000:
+				continue
+			if drop == 10200 and (t == 10200 or t == 10440):
+				continue
+			waves.append(w)
+		var r: Array = _scan(waves)[4]
+		print("  %-16s | %6d %10d %4d %4d" % [labels[drop], int(r[0]), int(r[2]), int(r[7]), int(r[1])])
+	get_tree().quit(0)

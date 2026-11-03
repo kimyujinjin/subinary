@@ -1,0 +1,88 @@
+; Engine configuration file.
+; LUMEN DRIFT — 표류광
+; 설정값의 근거는 CLAUDE.md 와 설계서 §8 에 있다. 기본값으로 두면 안 되는 것만 명시한다.
+
+config_version=5
+
+[application]
+
+config/name="LumenDrift"
+config/description="LUMEN DRIFT — 표류광. 심해 생물발광 세로 탄막 (게이트 1 재미 검증 슬라이스)."
+run/main_scene="res://scenes/stage_full.tscn"
+config/features=PackedStringArray("4.7", "Mobile")
+; 기본값 0 이면 120Hz 패널에서 120 을 목표로 잡아 발열·스로틀링으로 60 도 못 지킨다.
+; Android Swappy 를 16.67ms 에 고정시키는 유일한 레버다.
+run/max_fps=60
+; 기본값 true 면 Android 백 버튼이 경고 없이 앱을 종료해 진행 중인 런이 사라진다.
+config/quit_on_go_back=false
+; 아이콘은 tools/make_icon.gd 가 생성한다 — 손으로 그린 이미지 애셋이 아니다.
+config/icon="res://icon.png"
+
+[autoload]
+
+; 상한 4개. 이 이상 늘리지 않는다.
+SimClock="*res://src/core/sim_clock.gd"
+TouchRouter="*res://src/input/touch_router.gd"
+BulletField="*res://src/bullets/bullet_field.gd"
+RunLog="*res://src/core/run_log.gd"
+
+[display]
+
+; 폭은 모든 폰에서 정확히 720유닛이고 높이만 1280(16:9)~1680(21:9)로 변한다.
+; 그 남는 하단 여백이 곧 손가락 영역이다.
+window/size/viewport_width=720
+window/size/viewport_height=1280
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+; 이 값은 **int enum** 이다 (0 Landscape / 1 Portrait / 2 ReverseLandscape / ...).
+; 문자열 "portrait" 를 넣으면 main.cpp 의 int(GLOBAL_DEF_BASIC(...)) 캐스팅에서 0 이 되어
+; 조용히 가로로 뜬다 — 실기에서 가시영역이 2773x1280 이 되고 플레이필드 720 이
+; 화면 중앙에 좁게 서는 것으로 실측 확인했다.
+; 그리고 orientation 은 해상도를 자동으로 뒤집지 않으므로 viewport_width/height 도 세로비로 둔다.
+window/handheld/orientation=1
+; 기본 auto_fps_auto_pipeline(2) 은 40~60 구간에서 흔들리면 최대 FPS 를 30 으로 내려
+; 고정한다 — 탄 1,000개 구간에서 정확히 발생할 상황이다. 0 = off.
+window/frame_pacing/android/swappy_mode=0
+
+[input_devices]
+
+; 터치 입력을 틱 경계에 정렬 (기본 false)
+buffering/agile_event_flushing=true
+; 맥 에디터 검증용. 합성 터치는 index 0 하나뿐이고 device = DEVICE_ID_EMULATION 이므로
+; "드래그 + 두 번째 손가락" 은 원리적으로 재현 불가 — 실기 전용 검증 항목이다.
+pointing/emulate_touch_from_mouse=true
+
+[physics]
+
+; 기본 8 은 히치 한 번에 물리 8틱이 한 프레임에 몰려 탄이 플레이어 위로 순간이동한다
+; = 피할 수 없는 죽음.
+common/max_physics_steps_per_frame=2
+; 60:60 1:1 이므로 이득 0. 게다가 swap-remove 로 인스턴스 인덱스가 재배정되므로
+; 켜면 탄이 화면을 가로질러 늘어나는 글리치가 난다.
+common/physics_interpolation=false
+; 동시 픽 대상 64개 제한 + 비결정적 순서
+common/enable_object_picking=false
+
+[rendering]
+
+; 기본값은 데스크톱 forward_plus / 모바일 오버라이드 mobile 로 갈려 있다 —
+; 아무것도 안 하면 맥 에디터와 폰이 다른 렌더러로 돌아 가독성 수치가 무의미해진다.
+renderer/rendering_method="mobile"
+renderer/rendering_method.mobile="mobile"
+; OFF. blend_premul_alpha 가 코어+림+헤일로를 한 패스에 내므로 포스트프로세스가 필요 없고,
+; 전역 블룸은 탄 엣지를 뭉개서 가독성을 직접 해친다. 성능이 아니라 가독성 근거로 기각.
+viewport/hdr_2d=false
+textures/canvas_textures/default_texture_filter=1
+; iOS/Android export 의 필수 조건이다. 끄면 export 가 실패하는데
+; Godot 이 메시지를 하나도 내지 않는다 — editor/export/editor_export_platform_apple_embedded.cpp
+; 의 has_valid_project_configuration 이 should_import_etc2_astc() 실패 시 valid=false 만 하고
+; r_error 에 아무것도 넣지 않는다. 그래서 doctor.sh 의 대조 목록에 넣어 다시 꺼지지 않게 한다.
+textures/vram_compression/import_etc2_astc=true
+
+[gui]
+
+; 한글 폰트. Godot 기본 폰트는 CJK 를 포함하지 않아 대사·이름이 빈 칸으로 나온다.
+; Pretendard(SIL OFL 1.1)를 **화면에 실제로 나오는 글자만** 서브셋했다(1.5MB → 114KB).
+; 이 프로젝트의 "이미지 애셋 0개" 는 여기서 끝난다 — 폰트도 초상화도 애셋이다.
+; 라이선스 고지는 ATTRIBUTIONS.md 에 있고, OFL 은 배포 시 고지를 함께 싣도록 요구한다.
+theme/custom_font="res://assets/fonts/Pretendard-subset.ttf"

@@ -1,11 +1,8 @@
 /**
  * `TransactionMoneyService` — 금액 쓰기의 유일한 초크포인트 (ADR-0027 결정 §1·§2).
  *
- * ⚠️ **롤아웃 3단계(shadow)인 지금, 이 실행기를 호출하는 운영 경로는 없다.**
- * 기존 승격·수동 입력·사람 검토·거래 수정은 그대로 자기 쓰기를 하고, 새 계약은
- * {@link TransactionMoneyShadowObserver}가 계획만 세워 대조한다. 이 파일은 enforce
- * 전환(5단계)에서 그 경로들이 옮겨 탈 자리이고, 지금은 계약을 코드로 확정해 두는
- * 것이 목적이다 — 계약이 문서에만 있으면 전환 때 또 각자 해석한다.
+ * API·worker의 v2 생성·수정·연결·검토·삭제가 이 명령을 공유한다. legacy/shadow
+ * 호환 쓰기는 LegacyTransactionMoneyService가 소유하고, 그림자 관찰은 읽기만 한다.
  *
  * ## 왜 앱이 아니라 공유 패키지인가
  *
@@ -58,7 +55,24 @@ export type MoneyCommandRejection =
   /** 이미 다른 승인에 연결된 취소다. */
   | 'cancellation_already_linked'
   /** 승인과 취소가 다른 가구다. */
-  | 'household_mismatch';
+  | 'household_mismatch'
+  /** 자식 취소를 먼저 처리해야 하는 승인이다. */
+  | 'transaction_has_cancellations'
+  /** 잠금을 기다리는 동안 대상의 연결이나 종류가 바뀌었다. */
+  | 'transaction_changed'
+  /** 검토 상태가 아닌 거래의 검토 해제를 요청했다. */
+  | 'transaction_not_pending_review'
+  /** v2 전용 명령에 다른 버전의 거래를 전달했다. */
+  | 'money_contract_version_mismatch';
+
+type CommandRejection = Extract<MoneyCommandResult<unknown>, { ok: false }>;
+
+/** A returned rejection must roll back a transaction owned by this service. */
+class MoneyCommandRollback extends Error {
+  constructor(readonly rejection: CommandRejection) {
+    super('money_command_rejected');
+  }
+}
 
 export interface MoneyCommandOptions {
   /**
@@ -122,6 +136,7 @@ export interface ChainOutcome {
 export interface MoneyRow {
   id: string;
   householdId: string;
+  memberId: string;
   cardId: string | null;
   transactionType: string;
   status: string;
@@ -146,6 +161,7 @@ export interface MoneyRow {
 export const MONEY_ROW_COLUMNS = {
   id: schema.cardTransactions.id,
   householdId: schema.cardTransactions.householdId,
+  memberId: schema.cardTransactions.memberId,
   cardId: schema.cardTransactions.cardId,
   transactionType: schema.cardTransactions.transactionType,
   status: schema.cardTransactions.status,
@@ -289,6 +305,7 @@ export class TransactionMoneyService {
       }
 
       const evidence: CancellationEvidence = {
+        memberId: command.metadata.memberId,
         cardId: command.metadata.cardId,
         currency: command.currency.toUpperCase(),
         minorUnits: command.minorUnits,
@@ -363,12 +380,22 @@ export class TransactionMoneyService {
       const previousParentId = cancellation.parentTransactionId;
       await this.lockInOrder(tx, orderedLockIds([previousParentId, input.approvalId]));
 
+      // A relink/delete may have won while the parent locks were pending. Lock
+      // the child only after every parent, then use its current facts.
+      await this.lockInOrder(tx, [cancellation.id]);
+      const lockedCancellation = await this.loadRow(tx, cancellation.id);
+      if (!lockedCancellation) return { ok: false as const, reason: 'transaction_not_found' as const };
+      if (lockedCancellation.transactionType !== 'cancellation'
+        || lockedCancellation.parentTransactionId !== previousParentId) {
+        return { ok: false as const, reason: 'transaction_changed' as const };
+      }
+
       const approval = await this.loadRow(tx, input.approvalId);
       if (!approval) return { ok: false as const, reason: 'transaction_not_found' as const };
       if (approval.transactionType !== 'approval') {
         return { ok: false as const, reason: 'transaction_type_mismatch' as const };
       }
-      if (approval.householdId !== cancellation.householdId) {
+      if (approval.householdId !== lockedCancellation.householdId) {
         return { ok: false as const, reason: 'household_mismatch' as const };
       }
 
@@ -377,7 +404,7 @@ export class TransactionMoneyService {
         .set({ parentTransactionId: approval.id, updatedAt: new Date() })
         .where(
           and(
-            eq(schema.cardTransactions.id, cancellation.id),
+            eq(schema.cardTransactions.id, lockedCancellation.id),
             previousParentId
               ? eq(schema.cardTransactions.parentTransactionId, previousParentId)
               : isNull(schema.cardTransactions.parentTransactionId),
@@ -418,9 +445,10 @@ export class TransactionMoneyService {
         return { ok: false as const, reason: 'transaction_type_mismatch' as const };
       }
       const parentId = cancellation.parentTransactionId;
+      const locked = await this.lockCancellationForMutation(tx, cancellation);
+      if (!locked.ok) return locked;
+      if (!locked.value) return { ok: false as const, reason: 'transaction_not_found' as const };
       if (!parentId) return { ok: true as const, value: null };
-
-      await this.lockInOrder(tx, orderedLockIds([parentId]));
       const detached = await tx
         .update(schema.cardTransactions)
         .set({
@@ -436,7 +464,7 @@ export class TransactionMoneyService {
         )
         .returning({ id: schema.cardTransactions.id });
       // 그 사이 다른 요청이 부모를 바꿨다 — 남의 결과 위에 역산하지 않는다.
-      if (detached.length === 0) return { ok: true as const, value: null };
+      if (detached.length === 0) return { ok: false as const, reason: 'transaction_changed' as const };
 
       return this.recalculateLocked(tx, parentId);
     });
@@ -456,14 +484,100 @@ export class TransactionMoneyService {
       if (cancellation.transactionType !== 'cancellation') {
         return { ok: false as const, reason: 'transaction_type_mismatch' as const };
       }
-      const parentId = cancellation.parentTransactionId;
-      if (parentId) await this.lockInOrder(tx, orderedLockIds([parentId]));
+      const removed = await this.removeCancellationRow(tx, cancellation, false);
+      return removed.ok ? { ok: true as const, value: removed.value.chain } : removed;
+    });
+  }
 
-      await tx
-        .delete(schema.cardTransactions)
-        .where(eq(schema.cardTransactions.id, cancellation.id));
+  /* ---------------------------------------------------------------------- */
+  /* 검토 상태 / 삭제                                                        */
+  /* ---------------------------------------------------------------------- */
 
-      return parentId ? this.recalculateLocked(tx, parentId) : { ok: true as const, value: null };
+  /**
+   * v2 review changes keep original money facts and the approval snapshot.
+   * Approval amount-derived states outrank review flags. A cancellation always
+   * has zero net; clearing an unlinked one leaves it pending for parent review.
+   */
+  async setReviewFlag(
+    input: { transactionId: string; flag: 'duplicate_suspected' | null },
+    options?: MoneyCommandOptions,
+  ): Promise<MoneyCommandResult<{ transactionId: string }>> {
+    return this.run(options, async (tx) => {
+      const observed = await this.loadRow(tx, input.transactionId);
+      if (!observed) return { ok: false as const, reason: 'transaction_not_found' as const };
+      let current: MoneyRow;
+      if (observed.transactionType === 'approval') {
+        await this.lockInOrder(tx, [observed.id]);
+        const locked = await this.loadRow(tx, observed.id);
+        if (!locked) return { ok: false as const, reason: 'transaction_not_found' as const };
+        if (locked.transactionType !== 'approval') {
+          return { ok: false as const, reason: 'transaction_changed' as const };
+        }
+        current = locked;
+      } else if (observed.transactionType === 'cancellation') {
+        const locked = await this.lockCancellationForMutation(tx, observed);
+        if (!locked.ok) return locked;
+        if (!locked.value) return { ok: false as const, reason: 'transaction_not_found' as const };
+        current = locked.value;
+      } else return { ok: false as const, reason: 'transaction_type_mismatch' as const };
+
+      if (current.moneyContractVersion !== MONEY_CONTRACT_VERSION_V2) {
+        return { ok: false as const, reason: 'money_contract_version_mismatch' as const };
+      }
+      if (input.flag === null && current.status !== 'duplicate_suspected' && current.status !== 'pending_review') {
+        return { ok: false as const, reason: 'transaction_not_pending_review' as const };
+      }
+      if (current.transactionType === 'approval') {
+        // A parent review request must not clear a child's independent review flag.
+        const result = await this.recalculateLocked(tx, current.id, input.flag, false);
+        if (!result.ok) return result;
+      } else {
+        const status = input.flag ?? (current.parentTransactionId ? 'approved' : 'pending_review');
+        await tx.update(schema.cardTransactions)
+          .set({ status, netAmount: 0, updatedAt: new Date() })
+          .where(eq(schema.cardTransactions.id, current.id));
+      }
+      return { ok: true as const, value: { transactionId: current.id } };
+    });
+  }
+
+  /**
+   * Deletes only v2 rows. Linked cancellation removal recomputes the remaining
+   * chain in original units, rather than reversing separately-rounded KRW.
+   * Repeated deletion is a successful no-op and cannot restore a parent twice.
+   */
+  async removeTransaction(
+    input: { transactionId: string },
+    options?: MoneyCommandOptions,
+  ): Promise<MoneyCommandResult<{ deleted: boolean }>> {
+    return this.run(options, async (tx) => {
+      const observed = await this.loadRow(tx, input.transactionId);
+      if (!observed) return { ok: true as const, value: { deleted: false } };
+      if (observed.moneyContractVersion !== MONEY_CONTRACT_VERSION_V2) {
+        return { ok: false as const, reason: 'money_contract_version_mismatch' as const };
+      }
+      if (observed.transactionType === 'cancellation') {
+        const removed = await this.removeCancellationRow(tx, observed, true);
+        return removed.ok ? { ok: true as const, value: { deleted: removed.value.deleted } } : removed;
+      }
+      if (observed.transactionType !== 'approval') {
+        return { ok: false as const, reason: 'transaction_type_mismatch' as const };
+      }
+      await this.lockInOrder(tx, [observed.id]);
+      const current = await this.loadRow(tx, observed.id);
+      if (!current) return { ok: true as const, value: { deleted: false } };
+      if (current.transactionType !== 'approval') {
+        return { ok: false as const, reason: 'transaction_changed' as const };
+      }
+      if (current.moneyContractVersion !== MONEY_CONTRACT_VERSION_V2) {
+        return { ok: false as const, reason: 'money_contract_version_mismatch' as const };
+      }
+      const [child] = await tx.select({ id: schema.cardTransactions.id }).from(schema.cardTransactions)
+        .where(eq(schema.cardTransactions.parentTransactionId, current.id)).limit(1);
+      if (child) return { ok: false as const, reason: 'transaction_has_cancellations' as const };
+      const deleted = await tx.delete(schema.cardTransactions)
+        .where(eq(schema.cardTransactions.id, current.id)).returning({ id: schema.cardTransactions.id });
+      return { ok: true as const, value: { deleted: deleted.length !== 0 } };
     });
   }
 
@@ -545,6 +659,8 @@ export class TransactionMoneyService {
   private async recalculateLocked(
     tx: DbExecutor,
     approvalId: string,
+    reviewFlagOverride?: MoneyReviewFlag | null,
+    writeChildren = true,
   ): Promise<MoneyCommandResult<ChainOutcome>> {
     const approval = await this.loadRow(tx, approvalId);
     if (!approval) return { ok: false, reason: 'transaction_not_found' };
@@ -565,8 +681,8 @@ export class TransactionMoneyService {
       minorUnits,
       currency,
       snapshot,
-      reviewFlag: reviewFlagOf(approval.status),
-    });
+      reviewFlag: reviewFlagOverride === undefined ? reviewFlagOf(approval.status) : reviewFlagOverride,
+    }, writeChildren);
   }
 
   /** 체인을 계획하고 승인·취소 행에 반영한다. 거부되면 아무것도 쓰지 않는다. */
@@ -579,6 +695,7 @@ export class TransactionMoneyService {
       snapshot: FxSnapshotRef | null;
       reviewFlag: MoneyReviewFlag | null;
     },
+    writeChildren = true,
   ): Promise<MoneyCommandResult<ChainOutcome>> {
     const children = await this.loadLinkedCancellations(tx, approvalId);
     const inputs: ChainCancellationInput[] = children.map((child) => ({
@@ -596,7 +713,16 @@ export class TransactionMoneyService {
       .set({ ...plan.value.approval, parentTransactionId: null, updatedAt: now })
       .where(eq(schema.cardTransactions.id, approvalId));
 
-    for (const planned of plan.value.cancellations) {
+    const childStatuses = new Map(children.map((child) => [child.id, child.status]));
+    const appliedCancellations = plan.value.cancellations.map((planned) => ({
+      ...planned,
+      columns: {
+        ...planned.columns,
+        status: childStatuses.get(planned.id) === 'duplicate_suspected'
+          ? 'duplicate_suspected' as const : planned.columns.status,
+      },
+    }));
+    for (const planned of writeChildren ? appliedCancellations : []) {
       await tx
         .update(schema.cardTransactions)
         .set({ ...planned.columns, parentTransactionId: approvalId, updatedAt: now })
@@ -608,7 +734,7 @@ export class TransactionMoneyService {
       value: {
         approvalId,
         approval: plan.value.approval,
-        cancellations: plan.value.cancellations,
+        cancellations: appliedCancellations,
       },
     };
   }
@@ -620,6 +746,15 @@ export class TransactionMoneyService {
     cancellationId: string,
   ): Promise<MoneyCommandResult<ChainOutcome>> {
     await this.lockInOrder(tx, orderedLockIds([approvalId]));
+    await this.lockInOrder(tx, [cancellationId]);
+    const approval = await this.loadRow(tx, approvalId);
+    const cancellation = await this.loadRow(tx, cancellationId);
+    if (!approval || !cancellation) return { ok: false, reason: 'transaction_not_found' };
+    if (approval.transactionType !== 'approval' || cancellation.transactionType !== 'cancellation') {
+      return { ok: false, reason: 'transaction_type_mismatch' };
+    }
+    if (approval.householdId !== cancellation.householdId) return { ok: false, reason: 'household_mismatch' };
+    if (cancellation.parentTransactionId !== null) return { ok: false, reason: 'cancellation_already_linked' };
     const claimed = await tx
       .update(schema.cardTransactions)
       .set({ parentTransactionId: approvalId, updatedAt: new Date() })
@@ -634,6 +769,52 @@ export class TransactionMoneyService {
       return { ok: false, reason: 'cancellation_already_linked' };
     }
     return this.recalculateLocked(tx, approvalId);
+  }
+
+  /** Parent locks precede the child, then stale parent pointers are rejected. */
+  private async lockCancellationForMutation(
+    tx: DbExecutor,
+    observed: MoneyRow,
+  ): Promise<MoneyCommandResult<MoneyRow | null>> {
+    await this.lockInOrder(tx, orderedLockIds([observed.parentTransactionId]));
+    await this.lockInOrder(tx, [observed.id]);
+    const current = await this.loadRow(tx, observed.id);
+    if (!current) return { ok: true, value: null };
+    if (current.transactionType !== 'cancellation'
+      || current.parentTransactionId !== observed.parentTransactionId) {
+      return { ok: false, reason: 'transaction_changed' };
+    }
+    return { ok: true, value: current };
+  }
+
+  private async removeCancellationRow(
+    tx: DbExecutor,
+    observed: MoneyRow,
+    requireV2: boolean,
+  ): Promise<MoneyCommandResult<{ deleted: boolean; chain: ChainOutcome | null }>> {
+    const locked = await this.lockCancellationForMutation(tx, observed);
+    if (!locked.ok) return locked;
+    const current = locked.value;
+    if (!current) return { ok: true, value: { deleted: false, chain: null } };
+    if (requireV2 && current.moneyContractVersion !== MONEY_CONTRACT_VERSION_V2) {
+      return { ok: false, reason: 'money_contract_version_mismatch' };
+    }
+    const parentId = current.parentTransactionId;
+    if (parentId) {
+      const parent = await this.loadRow(tx, parentId);
+      if (!parent) return { ok: false, reason: 'transaction_not_found' };
+      if (parent.transactionType !== 'approval') return { ok: false, reason: 'transaction_type_mismatch' };
+      if (parent.householdId !== current.householdId) return { ok: false, reason: 'household_mismatch' };
+      if (requireV2 && parent.moneyContractVersion !== MONEY_CONTRACT_VERSION_V2) {
+        return { ok: false, reason: 'money_contract_version_mismatch' };
+      }
+    }
+    const deleted = await tx.delete(schema.cardTransactions)
+      .where(eq(schema.cardTransactions.id, current.id)).returning({ id: schema.cardTransactions.id });
+    if (deleted.length === 0) return { ok: true, value: { deleted: false, chain: null } };
+    if (!parentId) return { ok: true, value: { deleted: true, chain: null } };
+    const chain = await this.recalculateLocked(tx, parentId);
+    return chain.ok ? { ok: true, value: { deleted: true, chain: chain.value } } : chain;
   }
 
   /**
@@ -725,8 +906,25 @@ export class TransactionMoneyService {
     options: MoneyCommandOptions | undefined,
     fn: (tx: DbExecutor) => Promise<T>,
   ): Promise<T> {
-    return options?.tx ? fn(options.tx) : this.db.transaction((tx) => fn(tx));
+    // Caller-owned transactions keep the existing contract: callers must throw
+    // on !ok so associated event/label writes roll back with the money command.
+    if (options?.tx) return fn(options.tx);
+    try {
+      return await this.db.transaction(async (tx) => {
+        const result = await fn(tx);
+        if (isCommandRejection(result)) throw new MoneyCommandRollback(result);
+        return result;
+      });
+    } catch (error) {
+      if (error instanceof MoneyCommandRollback) return error.rejection as T;
+      throw error;
+    }
   }
+}
+
+function isCommandRejection(value: unknown): value is CommandRejection {
+  return typeof value === 'object' && value !== null && 'ok' in value
+    && value.ok === false && 'reason' in value && typeof value.reason === 'string';
 }
 
 function metadataValues(metadata: TransactionMetadata) {
@@ -748,6 +946,7 @@ function metadataValues(metadata: TransactionMetadata) {
 export function toCandidate(row: MoneyRow): CancellationCandidate {
   return {
     id: row.id,
+    memberId: row.memberId,
     cardId: row.cardId,
     currency: row.currency,
     originalCurrency: row.originalCurrency,

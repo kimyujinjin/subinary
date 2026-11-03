@@ -1,0 +1,17 @@
+# 기존 Cloudflare 터널의 도메인에서 금융 MCP와 OAuth 연결을 제공한다.
+# API·웹·데이터베이스를 교체하지 않고 프록시 설정과 독립 MCP만 추가한다.
+:80 {
+    @finance_mcp path /mcp /mcp/* /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/mcp /.well-known/oauth-authorization-server
+    handle @finance_mcp {
+        reverse_proxy finance-mcp:3002 {
+            # 외부 요청에서 직접 보낸 동일 이름 헤더를 제거하고 Cloudflare IP로 덮어쓴다.
+            header_up X-Family-Mcp-Client-IP {http.request.header.CF-Connecting-IP}
+        }
+    }
+    handle /v1/* {
+        reverse_proxy api:3001
+    }
+    handle {
+        reverse_proxy web:3000
+    }
+}

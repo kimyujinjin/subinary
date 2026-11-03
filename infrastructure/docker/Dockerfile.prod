@@ -88,6 +88,8 @@ RUN pnpm --filter @family/mcp build
 FROM base AS runtime
 
 COPY --from=builder /app /app
+# 시작 시 Corepack이 pnpm을 다시 내려받지 않도록 빌드에서 검증한 캐시를 함께 보관한다.
+COPY --from=builder /root/.cache/node/corepack /root/.cache/node/corepack
 
 EXPOSE 3000 3001 3002
 # 실제 실행 커맨드는 compose 서비스별 command로 지정된다.

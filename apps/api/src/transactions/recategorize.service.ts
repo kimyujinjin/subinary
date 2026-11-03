@@ -23,6 +23,7 @@
  * 3. **읽기보다 좁게 쓴다**({@link mutableByActor}). 가맹점 이름을 키로 남의 행을
  *    UPDATE하면 `summary_only`가 감추던 이름-존재 결합이 되살아난다.
  * 4. **되돌릴 수 있다.** 적용 단위를 batch로 남기고 행별 이전 값을 보존한다.
+ * 5. **과거 거래만 변경한다.** 향후 분류 규칙과 학습 라벨은 별도 명시적 변경 경로에서 다룬다.
  */
 import {
   BadRequestException,
@@ -45,14 +46,12 @@ import type {
 } from '@family/contracts';
 import {
   mutableByActor,
-  revokeMerchantRuleLineage,
   schema,
   visibilityScope,
   type Db,
 } from '@family/database';
 import {
   buildMerchantAliasIndex,
-  createMerchantCategoryTargetId,
   normalizeMerchant,
   resolveCanonicalMerchant,
 } from '@family/shared';
@@ -302,6 +301,7 @@ export class RecategorizeService {
   /* 적용                                                                    */
   /* ---------------------------------------------------------------------- */
 
+  /** 확인한 과거 거래의 분류와 되돌리기 이력만 저장하며 향후 규칙·학습 라벨을 유지한다. */
   async apply(userId: string, input: RecategorizeRequest): Promise<RecategorizeResponse> {
     const actor = await this.requireMembership(input.householdId, userId);
     const toCategory = await this.requireCategory(input.categoryId, input.householdId);
@@ -371,68 +371,6 @@ export class RecategorizeService {
           ),
         );
 
-      // 사람이 확정한 라벨이므로 계보를 남긴다. 규칙만 쓰고 feedback을 빠뜨리면
-      // 학습 데이터셋 빌드가 'lineage is incomplete or stale'로 실패한다.
-      const targetId = createMerchantCategoryTargetId(input.householdId, canonical);
-      const [previousRule] = await tx
-        .select({
-          id: schema.merchantCategoryRules.id,
-          categoryId: schema.merchantCategoryRules.categoryId,
-        })
-        .from(schema.merchantCategoryRules)
-        .where(
-          and(
-            eq(schema.merchantCategoryRules.householdId, input.householdId),
-            eq(schema.merchantCategoryRules.merchantPattern, canonical),
-          ),
-        )
-        .limit(1);
-
-      await tx
-        .insert(schema.merchantCategoryRules)
-        .values({
-          householdId: input.householdId,
-          merchantPattern: canonical,
-          categoryId: toCategory.id,
-          source: 'human_confirmed',
-          confirmedAt: now,
-          createdBy: userId,
-        })
-        .onConflictDoUpdate({
-          target: [
-            schema.merchantCategoryRules.householdId,
-            schema.merchantCategoryRules.merchantPattern,
-          ],
-          set: {
-            categoryId: toCategory.id,
-            source: 'human_confirmed',
-            predictionTraceId: null,
-            confirmedAt: now,
-            createdBy: userId,
-            updatedAt: now,
-          },
-        });
-
-      await tx.insert(schema.feedbackEvents).values({
-        householdId: input.householdId,
-        targetType: 'merchant-category',
-        targetId,
-        labelSchemaVersion: 'merchant-category-v1',
-        label: { categoryId: toCategory.id },
-        source: 'human_confirmed',
-        actorUserId: userId,
-        occurredAt: now,
-      });
-
-      // 규칙 label이 실제로 바뀐 경우에만, **한 번만** 연쇄를 돈다.
-      if (previousRule && previousRule.categoryId !== toCategory.id) {
-        await revokeMerchantRuleLineage(
-          tx,
-          [previousRule.id],
-          'merchant_category_rule_changed',
-          now,
-        );
-      }
       return batch.id;
     });
 

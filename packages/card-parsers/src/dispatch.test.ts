@@ -257,11 +257,16 @@ describe('비카드 문자 배제 (유령 거래 방지)', () => {
 
   it.each(TOSS_BANK_WITHDRAWALS)(
     '토스뱅크 은행 거래를 승격하지 않는다: %s',
-    (_label, content) => {
+    (label, content) => {
       const result = parseCardSms({ sender: '16617654', content, receivedAt });
 
       expect(result.transactionType).toBe('unknown');
-      expect(result.warnings).toContain('no matching parser');
+      if (label === '모임금고 저금') {
+        // 명시적으로 식별한 안내는 실패 목록에서 분리하되 지출을 만들지 않는다.
+        expect(result.nonTransactionReason).toBe('savings_transfer');
+      } else {
+        expect(result.warnings).toContain('no matching parser');
+      }
       // 금액이 잡히면 워커가 승격할 여지가 생긴다 — 금액도 없어야 한다.
       expect(result.amount).toBeUndefined();
     },

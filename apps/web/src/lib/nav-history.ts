@@ -37,8 +37,17 @@ export function canGoBackInApp(): boolean {
   return inAppNavigations > 1;
 }
 
-/** 테스트 전용 — 카운터를 초기화한다. */
-export function resetInAppNavigations(): void {
+/**
+ * A cold-entry parent fallback replaces the current entry; it does not create
+ * an earlier in-app screen. The next route must still count as the first entry.
+ * Call only after canGoBackInApp() returned false.
+ */
+export function prepareColdEntryReplacement(): void {
   inAppNavigations = 0;
   previousPath = undefined;
+}
+
+/** 테스트 전용 — 카운터를 초기화한다. */
+export function resetInAppNavigations(): void {
+  prepareColdEntryReplacement();
 }

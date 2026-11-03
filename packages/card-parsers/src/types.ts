@@ -49,6 +49,8 @@ export type CardSmsDeclineReason =
   | 'unknown';
 
 export interface CardSmsParseResult {
+  /** 카드 결제가 아닌 것으로 명시적으로 식별한 안내. 금액을 만들거나 승격하지 않는다. */
+  nonTransactionReason?: 'savings_transfer';
   /** Card issuer label, e.g. `신한카드` / `KB국민카드`. */
   issuer?: string;
   /**

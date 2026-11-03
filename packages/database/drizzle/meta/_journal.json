@@ -435,6 +435,48 @@
       "when": 1788645600000,
       "tag": "0061_play_states",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1793109600000,
+      "tag": "0062_card_sms_ignored_notice",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1793113200000,
+      "tag": "0063_recurring_recompute_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1793116800000,
+      "tag": "0064_budget_card_group",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1793404800000,
+      "tag": "0065_manual_finance",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1793491200000,
+      "tag": "0066_loan_import",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1793577600000,
+      "tag": "0067_finance_connections",
+      "breakpoints": true
     }
   ]
 }

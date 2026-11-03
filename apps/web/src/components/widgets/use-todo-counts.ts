@@ -2,8 +2,8 @@
 /* ---------------------------------------------------------------------------
  * 할 일(Inbox) 건수 훅 — C-8
  *
- * 세 소스(결제 실패 / 확인 필요 거래 / 읽지 못한 문자)를 한 번에 읽어 홈 '할 일'
- * 카드, `/todo`, 그리고 **다음 웨이브의 하단 탭 배지**가 같은 숫자를 쓰게 한다.
+ * 결제 실패 / 확인 필요 거래 / 판단 필요 문자를 같은 기준으로 센다.
+ * 자동 처리·환율 대기는 별도 상태이며 사용자 할일 합계에 더하지 않는다.
  * 새 백엔드는 없다 — 전부 홈이 이미 호출하던 쿼리이고, 같은 queryKey를 공유하므로
  * 화면을 오가도 요청이 늘지 않는다.
  *
@@ -23,11 +23,13 @@ import {
   useCardSmsReviewInbox,
   useDeclineList,
   useTransactions,
+  useUnpostedSms,
   type QueryOpts,
 } from "@/lib/queries";
 
 import {
   partitionSmsByWindow,
+  partitionTodoSms,
   pendingReviewTransactions,
   todoTotal,
   unresolvedDeclines,
@@ -44,6 +46,19 @@ export interface TodoCounts {
   smsRecent: CardSmsEventSummary[];
   /** 홈 창 밖(= 홈에서는 "지난 문자 N건 더 보기"로만 보이는 것). */
   smsOlder: CardSmsEventSummary[];
+  /** Original read projection retained for compatibility; never use its length as task count. */
+  unposted: CardSmsEventSummary[];
+  unpostedLoading: boolean;
+  unpostedError: boolean;
+  unpostedTruncated: boolean;
+  /** Automatic parsing/posting/FX waits: status only, excluded from total. */
+  processing: CardSmsEventSummary[];
+  processingLoading: boolean;
+  processingError: boolean;
+  processingTruncated: boolean;
+  unpostedNeedsReview: CardSmsEventSummary[];
+  /** No authoritative posting status: preserve visibility without promising automatic work. */
+  unpostedUnknown: CardSmsEventSummary[];
   /** 배지 합계. */
   total: number;
   /** 소스별 로딩/에러 — 못 읽은 축을 0건으로 표기하지 않기 위해 나눠 준다. */
@@ -66,15 +81,12 @@ export interface TodoCounts {
  */
 export function useTodoCounts(opts?: QueryOpts): TodoCounts {
   const declineQuery = useDeclineList();
-  const pendingQuery = useTransactions(
-    { status: "pending_review", limit: REVIEW_SCAN_LIMIT },
-    opts,
-  );
-  const duplicateQuery = useTransactions(
-    { status: "duplicate_suspected", limit: REVIEW_SCAN_LIMIT },
+  const reviewQuery = useTransactions(
+    { review: "1", limit: REVIEW_SCAN_LIMIT },
     opts,
   );
   const smsQuery = useCardSmsReviewInbox(opts);
+  const unpostedQuery = useUnpostedSms();
 
   const declines = useMemo(
     () => unresolvedDeclines(declineQuery.data?.items),
@@ -82,18 +94,18 @@ export function useTodoCounts(opts?: QueryOpts): TodoCounts {
   );
   const reviews = useMemo(
     () =>
-      pendingReviewTransactions(
-        pendingQuery.data?.items,
-        duplicateQuery.data?.items,
-      ),
-    [pendingQuery.data, duplicateQuery.data],
+      pendingReviewTransactions(reviewQuery.data?.items),
+    [reviewQuery.data],
   );
   // 3일 창 분할은 렌더 시각에 의존한다 — 목록이 갱신될 때만 다시 가른다. 창 경계를
   // 1분 단위로 정확히 밀어 줄 이유는 없다(폴링/포커스 리페치가 곧 다시 계산한다).
-  const sms = smsQuery.data ?? [];
+  const { sms, unpostedNeedsReview, processing, unpostedUnknown } = useMemo(
+    () => partitionTodoSms(smsQuery.data, unpostedQuery.data),
+    [smsQuery.data, unpostedQuery.data],
+  );
   const { recent: smsRecent, older: smsOlder } = useMemo(
-    () => partitionSmsByWindow(smsQuery.data, Date.now()),
-    [smsQuery.data],
+    () => partitionSmsByWindow(sms, Date.now()),
+    [sms],
   );
 
   return {
@@ -102,20 +114,30 @@ export function useTodoCounts(opts?: QueryOpts): TodoCounts {
     sms,
     smsRecent,
     smsOlder,
+    unposted: unpostedQuery.data ?? [],
+    unpostedLoading: unpostedQuery.isLoading,
+    unpostedError: unpostedQuery.isError,
+    unpostedTruncated: (unpostedQuery.data?.length ?? 0) >= REVIEW_SCAN_LIMIT,
+    processing,
+    processingLoading: unpostedQuery.isLoading || smsQuery.isLoading,
+    processingError: unpostedQuery.isError || smsQuery.isError,
+    processingTruncated: (unpostedQuery.data?.length ?? 0) >= REVIEW_SCAN_LIMIT || (smsQuery.data?.length ?? 0) >= REVIEW_SCAN_LIMIT,
+    unpostedNeedsReview,
+    unpostedUnknown,
     total: todoTotal({
       declines: declines.length,
       reviews: reviews.length,
       sms: sms.length,
+      unpostedNeedsReview: unpostedNeedsReview.length,
     }),
     declinesLoading: declineQuery.isLoading,
     declinesError: declineQuery.isError,
-    reviewsLoading: pendingQuery.isLoading || duplicateQuery.isLoading,
-    reviewsError: pendingQuery.isError || duplicateQuery.isError,
+    reviewsLoading: reviewQuery.isLoading,
+    reviewsError: reviewQuery.isError,
     smsLoading: smsQuery.isLoading,
     smsError: smsQuery.isError,
     reviewsTruncated:
-      Boolean(pendingQuery.data?.nextCursor) ||
-      Boolean(duplicateQuery.data?.nextCursor),
+      Boolean(reviewQuery.data?.nextCursor),
     smsTruncated: sms.length >= REVIEW_SCAN_LIMIT,
   };
 }

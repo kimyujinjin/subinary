@@ -33,6 +33,10 @@ const MESSAGES: Record<string, string> = {
   transaction_type_mismatch: '이 거래에는 적용할 수 없는 요청이에요.',
   cancellation_already_linked: '이미 다른 승인에 연결된 취소예요.',
   household_mismatch: '다른 가족의 거래는 연결할 수 없어요.',
+  transaction_has_cancellations: '연결된 취소 거래가 있어 삭제할 수 없어요. 취소 거래를 먼저 삭제하세요',
+  transaction_not_pending_review: '검토 대기 중인 거래가 아니에요.',
+  transaction_changed: '거래가 변경됐어요. 최신 거래를 확인한 뒤 다시 시도해 주세요.',
+  money_contract_version_mismatch: '거래의 금액 계약 버전이 현재 처리 방식과 달라요.',
 };
 
 /**
@@ -50,6 +54,9 @@ export function moneyRejectionToHttp(reason: string): Error {
     case 'cancellation_already_linked':
     case 'household_mismatch':
     case 'transaction_type_mismatch':
+    case 'transaction_has_cancellations':
+    case 'transaction_changed':
+    case 'money_contract_version_mismatch':
       return new ConflictException(message);
     case 'fx_snapshot_missing':
       // 입력이 틀린 게 아니라 **아직** 계산할 수 없다. 나중에 같은 요청이 성공한다.

@@ -39,6 +39,31 @@ function optionalEnvValue(value: string | undefined): string | undefined {
   return value === undefined || value.trim().length === 0 ? undefined : value;
 }
 
+/** Dedicated finance keys only. A malformed JSON value must never reach an error message. */
+const financeVaultKeyring = z.preprocess((value) => {
+  if (typeof value !== 'string') return value;
+  if (value.length > 4096) return null;
+  try { return JSON.parse(value) as unknown; }
+  catch { return null; }
+}, z.custom<Record<string, string>>((value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  return entries.length >= 1 && entries.length <= 8 && entries.every(([version, key]) =>
+    /^[1-9]\d{0,9}$/.test(version) && String(Number(version)) === version && Number(version) <= 2_147_483_647
+    && typeof key === 'string' && key.length === 64 && /^[0-9a-fA-F]{64}$/.test(key));
+}, { message: 'Invalid finance vault keyring' }));
+
+const financeConnectionsConfig = z.object({
+  enabled: booleanFromEnv.default(false),
+  activeKeyVersion: z.coerce.number().int().positive().max(2_147_483_647).optional(),
+  keyring: financeVaultKeyring.optional(),
+}).superRefine((value, ctx) => {
+  if (value.enabled && (!value.activeKeyVersion || !value.keyring
+    || !Object.hasOwn(value.keyring, String(value.activeKeyVersion)))) {
+    ctx.addIssue({ code: 'custom', message: 'Enabled finance connections require a dedicated active vault key' });
+  }
+});
+
 /**
  * Application configuration schema (grouped).
  *
@@ -207,6 +232,8 @@ export const configSchema = z.object({
     nonceTtlSec: z.coerce.number().int().positive().default(600),
     maxBodyBytes: z.coerce.number().int().positive().default(16384),
   }),
+  /** Inert unless explicitly enabled with a separate, versioned keyring. Never falls back to device keys. */
+  financeConnections: financeConnectionsConfig.default({ enabled: false }),
   web: z.object({
     corsOrigin: z.string().min(1).default('http://localhost:3000'),
   }),
@@ -330,6 +357,11 @@ export function validateEnv(env: NodeJS.ProcessEnv): AppConfig {
       hmacTimestampToleranceSec: env.HMAC_TIMESTAMP_TOLERANCE_SEC,
       nonceTtlSec: env.DEVICE_NONCE_TTL_SEC,
       maxBodyBytes: env.MOBILE_MAX_BODY_BYTES,
+    },
+    financeConnections: {
+      enabled: optionalEnvValue(env.FINANCE_CONNECTIONS_ENABLED),
+      activeKeyVersion: optionalEnvValue(env.FINANCE_CONNECTION_VAULT_ACTIVE_VERSION),
+      keyring: optionalEnvValue(env.FINANCE_CONNECTION_VAULT_KEYS_JSON),
     },
     web: {
       corsOrigin: env.CORS_ORIGIN,

@@ -67,9 +67,13 @@ export function registerFinanceSummary(
           `- 거래 건수: ${res.transactionCount}건`,
           `- 전월(직전 동일기간) 순지출: ${formatKrw(res.previousNet)}`,
           `- 증감: ${deltaSign}${formatKrw(res.deltaNet)} (전월 대비 ${rate})`,
+          `- 수동 제외: ${res.meta.excludedManual.count}건 · ${formatKrw(res.meta.excludedManual.net)}`,
+          `- 자산 이동 제외: ${res.meta.excludedTransfer.count}건 · ${formatKrw(res.meta.excludedTransfer.net)}`,
+          `- 공개범위 제외: ${res.meta.excludedByPermission}건`,
+          '- 카드 문자 기반 순지출이며 청구 확정액·통장 잔액은 아닙니다.',
         ].join('\n');
 
-        return textResult(body);
+        return { ...textResult(body), structuredContent: { fetchedAt: new Date().toISOString(), spending: res } };
       } catch (err) {
         return textResult(`금융 요약 실패: ${describeError(err)}`, true);
       }

@@ -15,11 +15,14 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query";
+import { useSyncExternalStore } from "react";
 
 import type {
   CardSmsDeclineDismissResponse,
   CardSmsDeclineListResponse,
   CardSmsEventSummary,
+  CardSmsReviewGroupsResponse,
+  CardSmsReviewPolicy,
   CardBreakdown,
   CardSummary,
   CategoryBreakdown,
@@ -51,6 +54,8 @@ import {
 import { useAuth } from "./auth-context";
 import { useHousehold } from "./household-context";
 import { TRANSACTION_SCOPE_KEYS } from "./invalidation-scope";
+import { pollAcceptedPosting, shouldKeepUnpostedSummary } from "./sms-posting";
+import { beginCardCorrectionRead, cardCorrectionIsPending, cardCorrectionRequiresRead, cardCorrectionStateVersion, cardLast4MutationOptions, subscribeCardCorrectionState, writeCorrectedCard } from "./card-last4-correction";
 
 export { TRANSACTION_SCOPE_KEYS };
 
@@ -318,12 +323,44 @@ export function useDevices(
 
 export function useCardList(): UseQueryResult<CardSummary[]> {
   const { householdId, authedFetch, enabled } = useHouseholdScope();
+  const qc = useQueryClient();
   return useQuery({
     queryKey: queryKeys.cards(householdId),
     enabled,
-    queryFn: () =>
-      authedFetch((token) => api.cards.list(token, householdId as string)),
+    queryFn: async ({ signal }) => {
+      const confirm = beginCardCorrectionRead(qc, householdId as string, signal);
+      const result = await authedFetch((token) => api.cards.list(token, householdId as string, signal));
+      confirm(result);
+      return result;
+    },
   });
+}
+
+/** Dedicated correction: never combine owner/alias/visibility edits with last4. */
+export function useCardLast4Correction() {
+  const { authedFetch } = useHouseholdScope();
+  const qc = useQueryClient();
+  useSyncExternalStore((notify) => subscribeCardCorrectionState(qc, notify),
+    () => cardCorrectionStateVersion(qc), () => 0);
+  const mutation = useMutation(cardLast4MutationOptions(qc, (input, guard) =>
+    authedFetch((token) => {
+      guard();
+      return api.cards.correctLast4(token, input.id, input.body);
+    })));
+  const refresh = async (id: string, householdId: string, signal?: AbortSignal) => {
+    await qc.cancelQueries({ queryKey: queryKeys.cards(householdId) });
+    const confirm = beginCardCorrectionRead(qc, householdId, signal);
+    const result = await authedFetch((token) => api.cards.get(token, id, signal));
+    if (signal?.aborted) throw new Error("card_current_read_cancelled");
+    if (result.id !== id || result.householdId !== householdId) throw new Error("card_response_scope_mismatch");
+    confirm([result]);
+    writeCorrectedCard(qc, result);
+    return result;
+  };
+  return { ...mutation, refresh,
+    requiresRead: (id: string, householdId: string) => cardCorrectionRequiresRead(qc, householdId, id),
+    cardPending: (id: string, householdId: string) => cardCorrectionIsPending(qc, householdId, id),
+  };
 }
 
 export function useCategoryList(): UseQueryResult<CategorySummary[]> {
@@ -385,6 +422,52 @@ export function useCardSmsReviewInbox(
           { accessToken: token },
         ),
       ),
+  });
+}
+
+/** Unposted messages use a separate query; successful parsing is not posting. */
+export function useUnpostedSms(): UseQueryResult<CardSmsEventSummary[]> {
+  const { householdId, authedFetch, enabled } = useHouseholdScope();
+  return useQuery({
+    queryKey: ["card-sms-events", householdId, "unposted"],
+    enabled,
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const items = await authedFetch((token) => apiFetch<CardSmsEventSummary[]>(
+        `/v1/card-sms-events?householdId=${encodeURIComponent(householdId as string)}&posting=unposted&limit=${REVIEW_SCAN_LIMIT}`,
+        { accessToken: token },
+      ));
+      // Retain explicit legacy review states, but never infer that parsed rows
+      // with missing posting metadata are unposted or require a second ingestion.
+      return items.filter(shouldKeepUnpostedSummary);
+    },
+  });
+}
+
+/** 본인 문자만 양식별로 모은다. 확정 후 기존 문자 캐시와 함께 갱신한다. */
+export function useCardSmsReviewGroups(): UseQueryResult<CardSmsReviewGroupsResponse> {
+  const { householdId, authedFetch, enabled } = useHouseholdScope();
+  return useQuery({
+    queryKey: ["card-sms-events", householdId, "review-groups"],
+    enabled,
+    // 자동 정리 중인 미처리 문자가 있을 때만 화면을 따라 갱신한다.
+    refetchInterval: (query) => query.state.data?.scannedCount && query.state.data.policies.some((policy) => policy.enabled) ? 30_000 : false,
+    queryFn: () => authedFetch((token) => apiFetch<CardSmsReviewGroupsResponse>(
+      `/v1/card-sms-events/review-groups?householdId=${encodeURIComponent(householdId as string)}`, { accessToken: token },
+    )),
+  });
+}
+
+/** 본인 자동 정리 설정을 중지하고 묶음·설정 목록을 다시 읽는다. */
+export function useDisableSmsReviewPolicy(): UseMutationResult<CardSmsReviewPolicy, Error, string> {
+  const { householdId, authedFetch } = useHouseholdScope();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => authedFetch((token) => apiFetch<CardSmsReviewPolicy>(
+      `/v1/card-sms-events/review-policies/${encodeURIComponent(id)}/disable?householdId=${encodeURIComponent(householdId as string)}`,
+      { accessToken: token, method: "POST" },
+    )),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["card-sms-events"] }); },
   });
 }
 
@@ -829,16 +912,11 @@ export function useManualTextEntry() {
           ...input,
         }),
       );
-      let detail = await authedFetch((token) =>
-        api.cardSms.eventStatus(token, res.cardSmsEventId),
+      const status = await pollAcceptedPosting(
+        () => authedFetch((token) => api.cardSms.postingStatus(token, res.cardSmsEventId)),
+        () => new Promise((resolve) => setTimeout(resolve, 900)),
       );
-      for (let i = 0; i < 15 && detail.parseStatus === "pending"; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 900));
-        detail = await authedFetch((token) =>
-          api.cardSms.eventStatus(token, res.cardSmsEventId),
-        );
-      }
-      return { ...res, detail };
+      return { ...res, ...status };
     },
     onSuccess: () => invalidateTransactionScope(qc),
   });

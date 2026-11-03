@@ -18,18 +18,18 @@
  */
 import { KNOWN_CURRENCY_CODES } from '../currency.js';
 
-import { buildResult } from './base.parser.js';
+import { buildResult, computeConfidence } from './base.parser.js';
 import { DECLINE_NOTICE_RE } from './non-card.js';
 
 import type { CardSmsInput, CardSmsParseResult, CardSmsParser } from '../types.js';
 
 /**
  * 결제성 문자의 최소 조건: 금액 토큰 + 액션 키워드.
- * 금액 토큰은 원화(`N원`)뿐 아니라 외화(`USD 22.00` / `22.00 USD`, 해외승인)도
+ * 금액 토큰은 원화(`N원`)뿐 아니라 ISO 통화 표기(`USD 22.00`, `KRW 29,000.00`)도
  * 인정한다 — 이 게이트가 원화만 요구하면 외화 문자가 어떤 파서에도 안 걸려
  * dispatch가 'no matching parser'로 떨군다(해외승인 parse_failed의 근본 원인).
  */
-const FX_CODE_ALT = KNOWN_CURRENCY_CODES.filter((code) => code !== 'KRW').join('|');
+const FX_CODE_ALT = KNOWN_CURRENCY_CODES.join('|');
 const AMOUNT_TOKEN_RE = new RegExp(
   `[\\d,]+\\s*원|\\b(?:${FX_CODE_ALT})\\s*[\\d,]+(?:\\.\\d+)?|[\\d,]+(?:\\.\\d+)?\\s*(?:${FX_CODE_ALT})\\b`,
 );
@@ -103,16 +103,21 @@ export class GenericCardParser implements CardSmsParser {
 
   supports(input: CardSmsInput): boolean {
     const { content } = input;
-    if (!AMOUNT_TOKEN_RE.test(content)) return false;
     if (!ACTION_TOKEN_RE.test(content)) return false;
     if (!CARD_CONTEXT_RE.test(content)) return false;
     // 거절 통지는 사유로 비카드 단어(잔액·한도)를 싣기 때문에 NON_CARD_RE를 우회한다.
     // declined는 거래로 승격되지 않으므로 오탐이 유령 지출을 만들지 않는다.
     if (DECLINE_NOTICE_RE.test(content)) return true;
+    if (!AMOUNT_TOKEN_RE.test(content)) return false;
     return !NON_CARD_RE.test(content);
   }
 
   parse(input: CardSmsInput): CardSmsParseResult {
-    return buildResult(detectIssuer(input.content), input);
+    const result = buildResult(detectIssuer(input.content), input);
+    if (result.transactionType !== 'declined' || result.amount !== undefined) return result;
+
+    // 금액 없는 차단 안내에는 설명 문장과 URL만 있을 수 있다. 이를 가맹점으로 쓰지 않는다.
+    const notice = { ...result, merchantRaw: undefined };
+    return { ...notice, confidence: computeConfidence(notice) };
   }
 }

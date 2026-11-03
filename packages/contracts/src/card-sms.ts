@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { transactionStatusSchema } from './transaction.js';
 
 /**
  * Card-SMS parsing lifecycle (PRD §31 Phase 3; mirrors DB `cardSmsParseStatus`).
@@ -12,6 +13,7 @@ export const cardSmsParseStatusSchema = z.enum([
   'parse_failed',
   'pending_review',
   'quarantined',
+  'ignored',
 ]);
 export type CardSmsParseStatus = z.infer<typeof cardSmsParseStatusSchema>;
 
@@ -112,6 +114,27 @@ export const cardSmsIngestResponseSchema = z.object({
 });
 export type CardSmsIngestResponse = z.infer<typeof cardSmsIngestResponseSchema>;
 
+/** Parsing and creation of a ledger transaction are separate lifecycle stages. */
+export const cardSmsPostingSchema = z.object({
+  status: z.enum(['posted', 'pending', 'needs_review', 'not_applicable']),
+  /** Null when no transaction exists or its current visibility forbids linking to it. */
+  transactionId: z.string().nullable(),
+  transactionStatus: transactionStatusSchema.nullable(),
+  /** Current observable condition, never a reconstructed historical failure reason. */
+  reason: z.enum(['parsing', 'parse_failed', 'quarantined', 'fx_snapshot_missing',
+    'processing', 'ignored', 'declined', 'unsupported_message']).nullable(),
+});
+export type CardSmsPosting = z.infer<typeof cardSmsPostingSchema>;
+
+/** Status polling needs neither a message body nor its parsed financial details. */
+export const cardSmsPostingStatusResponseSchema = z.object({
+  id: z.string(),
+  parseStatus: cardSmsParseStatusSchema,
+  transactionType: cardSmsTransactionTypeSchema.nullable(),
+  posting: cardSmsPostingSchema,
+});
+export type CardSmsPostingStatusResponse = z.infer<typeof cardSmsPostingStatusResponseSchema>;
+
 /**
  * List projection for `GET /v1/card-sms-events`. Excludes the raw content —
  * that is only surfaced in the detail view. `amount` is in `currency`'s minor
@@ -124,6 +147,8 @@ export const cardSmsEventSummarySchema = z.object({
   sender: z.string(),
   receivedAt: z.string(),
   parseStatus: cardSmsParseStatusSchema,
+  /** Optional for clients receiving an older server response; new APIs always emit it. */
+  posting: cardSmsPostingSchema.optional(),
   issuer: z.string().nullable(),
   transactionType: cardSmsTransactionTypeSchema.nullable(),
   amount: z.number().int().nullable(),
@@ -236,6 +261,8 @@ export type ManualFieldsEntryRequest = z.infer<typeof manualFieldsEntryRequestSc
  * 기록되고, 템플릿 지문과 함께 저장되어 이후 같은 레이아웃의 추출 레시피가 된다.
  */
 export const cardSmsReviewRequestSchema = z.object({
+  /** 명시적으로 선택한 본인 카드의 같은 양식에만 재사용한다. 기본은 현재 한 건이다. */
+  reuseForSimilar: z.boolean().default(false),
   /** 승인/취소/거절. `declined`는 거래를 만들지 않는다(실제 체결이 아님). */
   transactionType: z.enum(['approval', 'cancellation', 'declined']),
   /** 통화의 minor units 정수(KRW는 원 그대로). declined면 생략 가능. */
@@ -248,7 +275,40 @@ export const cardSmsReviewRequestSchema = z.object({
   cardId: z.string().uuid().optional(),
   categoryId: z.string().uuid().optional(),
 });
-export type CardSmsReviewRequest = z.infer<typeof cardSmsReviewRequestSchema>;
+export type CardSmsReviewRequest = z.input<typeof cardSmsReviewRequestSchema>;
+
+/** 본인에게 수신된 동일 양식의 검토 대기 묶음. 원문과 추출 금액은 노출하지 않는다. */
+export const cardSmsReviewGroupSchema = z.object({
+  groupId: z.string(),
+  sender: z.string(),
+  count: z.number().int().positive(),
+  parseFailed: z.number().int().nonnegative(),
+  quarantined: z.number().int().nonnegative(),
+  latestReceivedAt: z.string().datetime(),
+  representativeEventId: z.string().uuid(),
+  reviewPath: z.string().regex(/^\/todo\?reviewSms=[0-9a-f-]+$/i),
+});
+export type CardSmsReviewGroup = z.infer<typeof cardSmsReviewGroupSchema>;
+
+/** 상한에 도달하면 일부만 조회했다는 사실을 보존한다. */
+export const cardSmsReviewPolicySchema = z.object({
+  id: z.string().uuid(),
+  approvedCardId: z.string().uuid(),
+  enabled: z.boolean(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type CardSmsReviewPolicy = z.infer<typeof cardSmsReviewPolicySchema>;
+
+/** 본인 묶음과 중지 가능한 자동 정리 설정 목록이다. */
+export const cardSmsReviewGroupsResponseSchema = z.object({
+  scope: z.literal('own_member'),
+  items: z.array(cardSmsReviewGroupSchema),
+  scannedCount: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  policies: z.array(cardSmsReviewPolicySchema),
+});
+export type CardSmsReviewGroupsResponse = z.infer<typeof cardSmsReviewGroupsResponseSchema>;
 
 /** 검토 확정 결과. `transaction`은 declined일 때 null이다. */
 export const cardSmsReviewResponseSchema = z.object({

@@ -20,7 +20,8 @@ import { buildResultFromSpans } from './spans.js';
 import type { CardSmsInput, CardSmsParseResult } from './types.js';
 import type { CardSmsQuote, Span, SpanExtraction, SpanField } from './spans.js';
 
-const FX_CODE_ALT = KNOWN_CURRENCY_CODES.filter((code) => code !== 'KRW').join('|');
+// 규칙 파서·액션 게이트와 같은 ISO 금액 후보를 사용한다. 해외 원화 결제도 포함한다.
+const FX_CODE_ALT = KNOWN_CURRENCY_CODES.join('|');
 
 /**
  * 금액 후보 — 단위(`원`/ISO 코드)를 **포함**해야 한다. 통화를 확정할 수 없는 조각은

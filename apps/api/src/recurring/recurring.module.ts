@@ -11,10 +11,11 @@ import { Module } from '@nestjs/common';
 
 import { RecurringController } from './recurring.controller';
 import { RecurringService } from './recurring.service';
+import { RecurringRefreshService } from './recurring-refresh.service';
 
 @Module({
   controllers: [RecurringController],
-  providers: [RecurringService],
+  providers: [RecurringService, RecurringRefreshService],
   exports: [RecurringService],
 })
 export class RecurringModule {}

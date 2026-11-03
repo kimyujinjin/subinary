@@ -2,7 +2,7 @@
   "name": "@family/mcp",
   "version": "0.1.0",
   "private": true,
-  "description": "Family Memory AI — stdio MCP server (Phase 10). Exposes personal memory + finance tools over the existing HTTP API.",
+  "description": "기존 HTTP API를 사용하는 로컬 MCP와 OAuth 원격 금융 조회 MCP",
   "bin": {
     "family-memory-mcp": "dist/main.js"
   },
@@ -10,8 +10,10 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "lint": "echo noop",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "start:remote": "node dist/remote.js"
   },
   "dependencies": {
     "@family/contracts": "workspace:*",
@@ -22,6 +24,7 @@
   "devDependencies": {
     "@types/node": "^22.10.7",
     "tsup": "^8.3.5",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "4.1.10"
   }
 }

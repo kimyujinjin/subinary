@@ -20,6 +20,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -62,7 +63,7 @@ export class ManualEntryService {
     // 우회한다. 그 우회가 몇 건인지 여기서 세기 시작한다.
     private readonly moneyShadow: MoneyShadowService,
     // ADR-0027 5단계: enforce가 켜지면 금액 쓰기를 이쪽이 소유한다. 꺼져 있으면
-    // 아래 legacy 삽입이 그대로 돈다 — 한쪽만 켜진 중간 상태는 쓰기 펜스가 막는다.
+    // 공통 legacy 명령이 기존 계약을 보존한다 — 중간 상태는 쓰기 펜스가 막는다.
     private readonly moneyWrite: MoneyWriteService,
     configService: ConfigService,
   ) {
@@ -280,34 +281,42 @@ export class ManualEntryService {
           .where(eq(schema.cardTransactions.id, result.value.transactionId))
           .limit(1);
       } else {
-        [txn] = await tx
-          .insert(schema.cardTransactions)
-          .values({
-            householdId: input.householdId,
-            memberId,
-            cardId: input.cardId ?? null,
-            sourceEventId: event.id,
-            transactionType: 'approval',
+        const result = await this.moneyWrite.legacy.createApproval(
+          {
+            metadata: {
+              householdId: input.householdId,
+              memberId,
+              cardId: input.cardId ?? null,
+              sourceEventId: event.id,
+              merchantRaw: input.merchantRaw,
+              merchantNormalized,
+              categoryId: input.categoryId ?? null,
+              authorizationCode: null,
+              installmentMonths: input.installmentMonths ?? null,
+              visibility,
+              memo: null,
+            },
+            money: {
+              amount: input.amount,
+              currency,
+              originalAmount: null,
+              originalCurrency: null,
+              exchangeRate: null,
+            },
+            occurredAt,
             status: 'approved',
-            amount: input.amount,
-            cancelledAmount: 0,
-            netAmount: input.amount,
-            currency,
-            originalAmount: null,
-            originalCurrency: null,
-            exchangeRate: null,
-            merchantRaw: input.merchantRaw,
-            merchantNormalized,
-            categoryId: input.categoryId ?? null,
-            approvedAt: occurredAt,
-            cancelledAt: null,
-            authorizationCode: null,
-            installmentMonths: input.installmentMonths ?? null,
-            parentTransactionId: null,
-            visibility,
-            memo: null,
-          })
-          .returning();
+          },
+          { tx },
+        );
+        if (!result.ok) throw moneyRejectionToHttp(result.reason);
+        if (result.value.alreadyPromoted) {
+          throw new ConflictException('a transaction already exists for this card-sms event');
+        }
+        [txn] = await tx
+          .select()
+          .from(schema.cardTransactions)
+          .where(eq(schema.cardTransactions.id, result.value.transactionId))
+          .limit(1);
       }
       if (!txn) {
         throw new Error('failed to create manual transaction');
