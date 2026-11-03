@@ -91,7 +91,7 @@ export function LoanRecordEditor({ item, observedVersion, householdId, userId, o
     );
   };
   return (
-    <RecordDialog title="대출 기록 수정" description="이 앱에 저장한 이름·가족 공유·합계 반영 방법을 바꿔요. 원금과 만기일은 새 파일로 갱신할 수 있어요."
+    <RecordDialog title="대출 기록 수정" description="이전에 저장한 이름·가족 공유·합계 반영 방법을 바꿔요. 새 은행 자동 연결은 연결 관리에서 설정해 주세요."
       dirty={JSON.stringify(draft) !== JSON.stringify(loanReviewDraft(current))}
       busy={busy} pending={() => session.current.pending} readRequired={readRequired || changedElsewhere}
       invalidate={invalidate} onClose={onClose}

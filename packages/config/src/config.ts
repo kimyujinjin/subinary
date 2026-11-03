@@ -234,6 +234,12 @@ export const configSchema = z.object({
   }),
   /** Inert unless explicitly enabled with a separate, versioned keyring. Never falls back to device keys. */
   financeConnections: financeConnectionsConfig.default({ enabled: false }),
+  /** Bank passwords are inert until the reviewed browser runtime is explicitly installed/enabled. */
+  bankWebConnections: z.object({
+    enabled: booleanFromEnv.default(false),
+    runnerPath: z.string().min(1).max(1024).optional(),
+    browserExecutable: z.string().min(1).max(1024).optional(),
+  }).default({ enabled: false }),
   web: z.object({
     corsOrigin: z.string().min(1).default('http://localhost:3000'),
   }),
@@ -362,6 +368,11 @@ export function validateEnv(env: NodeJS.ProcessEnv): AppConfig {
       enabled: optionalEnvValue(env.FINANCE_CONNECTIONS_ENABLED),
       activeKeyVersion: optionalEnvValue(env.FINANCE_CONNECTION_VAULT_ACTIVE_VERSION),
       keyring: optionalEnvValue(env.FINANCE_CONNECTION_VAULT_KEYS_JSON),
+    },
+    bankWebConnections: {
+      enabled: optionalEnvValue(env.BANK_WEB_CONNECTIONS_ENABLED),
+      runnerPath: optionalEnvValue(env.BANK_WEB_RUNNER_PATH),
+      browserExecutable: optionalEnvValue(env.BANK_WEB_BROWSER_EXECUTABLE),
     },
     web: {
       corsOrigin: env.CORS_ORIGIN,

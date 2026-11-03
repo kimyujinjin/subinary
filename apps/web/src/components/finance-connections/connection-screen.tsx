@@ -14,7 +14,7 @@ import { AssetConnectionsSummary } from "./asset-connections-summary";
 import { canRefreshOnOpen, connectionFailureMessage, connectionFailureStatus, createConnectionSession, reconcileConnectionOperation, type ConnectionOperation } from "./model";
 
 export function ConnectionScreen({ householdId, userId, canManage, presentation = "full" }: {
-  householdId: string; userId: string; canManage: boolean; presentation?: "full" | "asset-summary";
+  householdId: string; userId: string; canManage: boolean; presentation?: "full" | "asset-summary" | "embedded";
 }) {
   const { authedFetch } = useAuth();
   const session = useRef(createConnectionSession()).current;
@@ -170,9 +170,9 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
     loading={!data && (busy || owned.isPending)} notice={notice} uncertainId={uncertain?.id ?? null} />;
   return (
     <div className="mx-auto flex w-full max-w-2xl min-w-0 flex-col gap-5 pb-8">
-      <header className="pl-2.5">
+      {presentation !== "embedded" ? <header className="pl-2.5">
         <PageBackHeader title="연결 관리" subtitle="내 토스증권 계좌의 보유 주식을 확인해요." backHref="/more" />
-      </header>
+      </header> : null}
       <section className="rounded-xl bg-muted/60 p-4 text-sm leading-relaxed text-muted-foreground" aria-label="연결 정보 공개 범위">
         연결한 계정에서만 볼 수 있어요. 가족에게 공유하거나 기존 자산 합계에 더하지 않아요.
       </section>

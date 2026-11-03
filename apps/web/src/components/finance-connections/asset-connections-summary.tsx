@@ -23,7 +23,7 @@ export function AssetConnectionsSummary({ data, busy, loading, notice, uncertain
           <p className="text-xs font-medium text-muted-foreground">가족 합계와 별도</p>
           <h2 className="mt-1 text-lg font-semibold">내 연결 계좌</h2>
         </div>
-        <Link href="/more/connections" className="inline-flex min-h-11 items-center gap-1 rounded-lg text-sm font-semibold text-primary focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">토스증권 연결 관리<ChevronRight className="size-4 shrink-0" aria-hidden="true" /></Link>
+        <Link href="/more/connections" className="inline-flex min-h-11 items-center gap-1 rounded-lg text-sm font-semibold text-primary focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">자동 연결 관리<ChevronRight className="size-4 shrink-0" aria-hidden="true" /></Link>
       </div>
       <p className="text-xs leading-relaxed text-muted-foreground">본인이 연결한 계좌만 보여요. 가족에게 공유하거나 가족 자산 합계에 더하지 않아요.</p>
       {notice ? <p role="alert" className="rounded-lg bg-muted/60 p-3 text-sm leading-relaxed">{notice}</p> : null}
