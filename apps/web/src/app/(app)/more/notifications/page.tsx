@@ -12,7 +12,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { PageBackHeader } from "@/components/widgets";
+import { ListLoading, PageBackHeader } from "@/components/widgets";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -104,7 +104,7 @@ export default function NotificationSettingsPage() {
       <PageBackHeader title="알림 설정" />
 
       {isLoading ? (
-        <p className="text-muted-foreground text-sm">불러오는 중…</p>
+        <ListLoading rows={2} label="알림 설정을 불러오는 중이에요." />
       ) : isError ? (
         <p className="text-destructive text-sm">
           설정을 불러오지 못했어요. 새로고침해 주세요.

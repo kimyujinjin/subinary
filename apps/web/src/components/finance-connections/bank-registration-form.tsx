@@ -8,7 +8,9 @@ export interface BankRegistrationInput { loginId: string; password: string; sele
 export function BankRegistrationForm({ busy, onSubmit, onClose }: {
   busy: boolean; onSubmit: (input: BankRegistrationInput) => Promise<void>; onClose: () => void;
 }) {
-  const form = useRef<HTMLFormElement>(null), login = useRef<HTMLInputElement>(null), password = useRef<HTMLInputElement>(null);
+  const form = useRef<HTMLFormElement>(null);
+  const login = useRef<HTMLInputElement>(null);
+  const password = useRef<HTMLInputElement>(null);
   const last4 = useRef<HTMLInputElement>(null), type = useRef<HTMLSelectElement>(null), claimed = useRef(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { const node = form.current; return () => node?.reset(); }, []);

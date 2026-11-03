@@ -16,9 +16,12 @@ export function BankConnectionScreen({ householdId, userId, canManage, summary =
 }) {
   const { authedFetch } = useAuth();
   const session = useRef(createConnectionSession()).current;
-  const [data, setData] = useState<BankConnectionList | null>(null), [busy, setBusy] = useState(false);
-  const [form, setForm] = useState(false), [notice, setNotice] = useState<string | null>(null);
-  const pending = useRef<PendingBankOperation | null>(null), active = useRef<PendingBankOperation | null>(null);
+  const [data, setData] = useState<BankConnectionList | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const pending = useRef<PendingBankOperation | null>(null);
+  const active = useRef<PendingBankOperation | null>(null);
   const [uncertain, setUncertain] = useState<PendingBankOperation | null>(null);
   const firstRead = useRef(true);
   const beforeRead = useCallback(() => {

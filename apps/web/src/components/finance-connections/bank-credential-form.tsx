@@ -17,9 +17,12 @@ interface BankCredentialFormProps {
 /** 평문을 브라우저 저장소에 쓰지 않고 제출 후 입력값을 즉시 지운다. */
 export function BankCredentialForm({ householdId, runnerId, credentials, storageAvailable, disabled, onChanged }: BankCredentialFormProps) {
   const { authedFetch } = useAuth();
-  const form = useRef<HTMLFormElement>(null), controller = useRef<AbortController | null>(null);
-  const mounted = useRef(false), submitting = useRef(false);
-  const [busy, setBusy] = useState(false), [notice, setNotice] = useState<string | null>(null);
+  const form = useRef<HTMLFormElement>(null);
+  const controller = useRef<AbortController | null>(null);
+  const mounted = useRef(false);
+  const submitting = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; controller.current?.abort(); form.current?.reset(); }; }, []);
   const stored = credentials?.stored === true && credentials.runnerId === runnerId;
   async function change(action: "save" | "delete", event?: FormEvent<HTMLFormElement>): Promise<void> {

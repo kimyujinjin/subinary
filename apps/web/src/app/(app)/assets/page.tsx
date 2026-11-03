@@ -80,9 +80,7 @@ function ScopedAssets({
       (read) => {
         setOpening(null);
         if (read.item.visibility !== scope) {
-          setNotice(
-            "공개 범위가 바뀌었어요. 목록을 다시 확인해 주세요."
-          );
+          setNotice("공개 범위가 바뀌었어요. 목록을 다시 확인해 주세요.");
           void records.refetch();
           return;
         }
@@ -90,9 +88,7 @@ function ScopedAssets({
       },
       () => {
         setOpening(null);
-        setNotice(
-          "자산 정보를 열지 못했어요. 목록에서 다시 선택해 주세요."
-        );
+        setNotice("자산 정보를 열지 못했어요. 목록에서 다시 선택해 주세요.");
         void records.refetch();
       }
     );
@@ -101,13 +97,17 @@ function ScopedAssets({
     overview.data?.manualItems.filter(
       (item) => kind === "all" || item.kind === kind
     ) ?? [];
-  const importedLoans = kind === "all" || kind === "loan"
-    ? overview.data?.loanItems ?? []
-    : [];
-  const hasRecords = Boolean(overview.data && (overview.data.manualItems.length || overview.data.loanItems.length));
+  const importedLoans =
+    kind === "all" || kind === "loan" ? overview.data?.loanItems ?? [] : [];
+  const hasRecords = Boolean(
+    overview.data &&
+      (overview.data.manualItems.length || overview.data.loanItems.length)
+  );
   const replacedManualIds = new Set(
     overview.data?.loanItems
-      .filter((item) => item.includedInTotals && item.totalMode === "replacement")
+      .filter(
+        (item) => item.includedInTotals && item.totalMode === "replacement"
+      )
       .map((item) => item.replacesManualAssetId) ?? []
   );
   const sharedCacheCleared = hideManualSharedEditor({
@@ -141,7 +141,9 @@ function ScopedAssets({
         <div className="min-w-0">
           <h1 className="text-[28px] font-bold tracking-tight">자산</h1>
           <p className="text-muted-foreground mt-1.5 text-sm leading-relaxed">
-            {scope === "household" ? "우리 가족이 함께 기록한 자산" : "이전에 비공개로 기록한 자산"}
+            {scope === "household"
+              ? "우리 가족이 함께 기록한 자산"
+              : "이전에 비공개로 기록한 자산"}
           </p>
         </div>
         {canCreate && (hasRecords || overview.isError) ? (
@@ -198,84 +200,133 @@ function ScopedAssets({
             <ManualAssetsSummary
               summary={overview.data.summary}
               scope={scope}
-              hasImportedBalance={overview.data.loanItems.some((item) => item.includedInTotals)}
-              sourceLabel={overview.data.loanItems.some((item) => item.includedInTotals) ? "직접 입력·이전 대출 기록" : "직접 입력"}
+              hasImportedBalance={overview.data.loanItems.some(
+                (item) => item.includedInTotals
+              )}
+              sourceLabel={
+                overview.data.loanItems.some((item) => item.includedInTotals)
+                  ? "직접 입력·이전 대출 기록"
+                  : "직접 입력"
+              }
             />
           ) : null}
           {overview.data.unresolvedLoans > 0 ? (
-            <p role="status" className="text-muted-foreground text-sm">확인이 필요한 대출 {overview.data.unresolvedLoans}건은 합계에서 제외했어요. 아래 대출의 반영 상태를 확인해 주세요.</p>
+            <p role="status" className="text-muted-foreground text-sm">
+              확인이 필요한 대출 {overview.data.unresolvedLoans}건은 합계에서
+              제외했어요. 아래 대출의 반영 상태를 확인해 주세요.
+            </p>
           ) : null}
-          {hasRecords ? <div className="space-y-3">
-            <h2 className="text-lg font-semibold">{scope === "household" ? "가족 자산 내역" : "등록한 자산 내역"}</h2>
-            <div role="group" aria-label="자산 종류 필터" className="flex flex-wrap gap-2">
-            {(
-              [["all", "전체"], ...Object.entries(ASSET_LABELS)] as Array<
-                [ManualAssetKind | "all", string]
+          {hasRecords ? (
+            <div className="space-y-3">
+              <h2 className="text-lg font-semibold">
+                {scope === "household" ? "가족 자산 내역" : "등록한 자산 내역"}
+              </h2>
+              <div
+                role="group"
+                aria-label="자산 종류 필터"
+                className="flex flex-wrap gap-2"
               >
-            ).map(([value, label]) => (
-              <Button
-                key={value}
-                variant="ghost"
-                className={`min-h-11 rounded-full border px-4 ${kind === value ? "border-primary/15 bg-primary/10 text-primary font-semibold" : "border-border/70 bg-card text-muted-foreground"}`}
-                aria-pressed={kind === value}
-                onClick={() => setKind(value)}
-              >
-                {label}
-              </Button>
-            ))}
+                {(
+                  [["all", "전체"], ...Object.entries(ASSET_LABELS)] as Array<
+                    [ManualAssetKind | "all", string]
+                  >
+                ).map(([value, label]) => (
+                  <Button
+                    key={value}
+                    variant="ghost"
+                    className={`min-h-11 rounded-full border px-4 ${
+                      kind === value
+                        ? "border-primary/15 bg-primary/10 text-primary font-semibold"
+                        : "border-border/70 bg-card text-muted-foreground"
+                    }`}
+                    aria-pressed={kind === value}
+                    onClick={() => setKind(value)}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
             </div>
-          </div> : null}
+          ) : null}
           <section
             className="finance-panel min-w-0 px-4 py-2 sm:px-5"
             aria-label="자산 목록"
           >
             {items.length || importedLoans.length ? (
               <>
-              {(Object.entries(ASSET_LABELS) as Array<[ManualAssetKind, string]>).map(([groupKind, groupLabel]) => {
-                const groupItems = items.filter((item) => item.kind === groupKind);
-                const groupLoans = groupKind === "loan" ? importedLoans : [];
-                if (!groupItems.length && !groupLoans.length) return null;
-                return <section key={groupKind} className="border-b border-border/70 last:border-0" aria-label={`${groupLabel} 내역`}>
-                  <div className="flex items-center gap-2 pt-4 pb-2">
-                    <h3 className="text-sm font-semibold">{groupLabel}</h3>
-                    <span className="text-muted-foreground rounded-full bg-muted px-2 py-0.5 text-[11px]">{groupItems.length + groupLoans.length}건</span>
-                  </div>
-              {groupItems.map((item) => (
-                <button
-                  type="button"
-                  key={item.id}
-                  disabled={opening !== null}
-                  className="hover:bg-muted/50 focus-visible:ring-ring flex min-h-20 w-full min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded-xl py-4 text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none disabled:opacity-60"
-                  onClick={() => void open(item.id)}
-                  aria-label={`${item.label} 상세`}
-                >
-                  <span className="min-w-0 flex-1 basis-24">
-                    <strong className="block break-words text-sm">
-                      {item.label}
-                    </strong>
-                    <span className="text-muted-foreground mt-1 block text-xs">{visibilityLabel(item.visibility)}</span>
-                    <span className="text-muted-foreground mt-1 block text-xs">
-                      기준일 {item.asOfDate ?? "미입력"} ·{" "}
-                      {item.source === "manual" ? "직접 입력" : "출처 미입력"}
-                    </span>
-                    {replacedManualIds.has(item.id) ? (
-                      <span className="text-muted-foreground mt-2 block text-xs">새로 가져온 대출로 대체 · 합계 제외</span>
-                    ) : null}
-                  </span>
-                  <span className="ml-auto min-w-0 max-w-full basis-32 text-right sm:basis-auto sm:max-w-[52%]">
-                    <strong className={`block break-all text-lg tracking-tight tabular-nums ${replacedManualIds.has(item.id) ? "text-muted-foreground font-medium" : ""}`}>
-                      {displayManualKrw(item.amount)}
-                    </strong>
-                    <small className="text-muted-foreground text-xs">
-                      {ASSET_VALUE_LABELS[item.kind]}
-                      {opening === item.id ? " · 확인 중" : ""}
-                    </small>
-                  </span>
-                </button>
-              ))}
-              {groupLoans.map((item) => <LoanOverviewRow key={item.id} item={item} />)}
-                </section>;
-              })}
+                {(
+                  Object.entries(ASSET_LABELS) as Array<
+                    [ManualAssetKind, string]
+                  >
+                ).map(([groupKind, groupLabel]) => {
+                  const groupItems = items.filter(
+                    (item) => item.kind === groupKind
+                  );
+                  const groupLoans = groupKind === "loan" ? importedLoans : [];
+                  if (!groupItems.length && !groupLoans.length) return null;
+                  return (
+                    <section
+                      key={groupKind}
+                      className="border-b border-border/70 last:border-0"
+                      aria-label={`${groupLabel} 내역`}
+                    >
+                      <div className="flex items-center gap-2 pt-4 pb-2">
+                        <h3 className="text-sm font-semibold">{groupLabel}</h3>
+                        <span className="text-muted-foreground rounded-full bg-muted px-2 py-0.5 text-[11px]">
+                          {groupItems.length + groupLoans.length}건
+                        </span>
+                      </div>
+                      {groupItems.map((item) => (
+                        <button
+                          type="button"
+                          key={item.id}
+                          disabled={opening !== null}
+                          className="hover:bg-muted/50 focus-visible:ring-ring flex min-h-20 w-full min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded-xl py-4 text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none disabled:opacity-60"
+                          onClick={() => void open(item.id)}
+                          aria-label={`${item.label} 상세`}
+                        >
+                          <span className="min-w-0 flex-1 basis-24">
+                            <strong className="block break-words text-sm">
+                              {item.label}
+                            </strong>
+                            <span className="text-muted-foreground mt-1 block text-xs">
+                              {visibilityLabel(item.visibility)}
+                            </span>
+                            <span className="text-muted-foreground mt-1 block text-xs">
+                              기준일 {item.asOfDate ?? "미입력"} ·{" "}
+                              {item.source === "manual"
+                                ? "직접 입력"
+                                : "출처 미입력"}
+                            </span>
+                            {replacedManualIds.has(item.id) ? (
+                              <span className="text-muted-foreground mt-2 block text-xs">
+                                새로 가져온 대출로 대체 · 합계 제외
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="ml-auto min-w-0 max-w-full basis-32 text-right sm:basis-auto sm:max-w-[52%]">
+                            <strong
+                              className={`block break-all text-lg tracking-tight tabular-nums ${
+                                replacedManualIds.has(item.id)
+                                  ? "text-muted-foreground font-medium"
+                                  : ""
+                              }`}
+                            >
+                              {displayManualKrw(item.amount)}
+                            </strong>
+                            <small className="text-muted-foreground text-xs">
+                              {ASSET_VALUE_LABELS[item.kind]}
+                              {opening === item.id ? " · 확인 중" : ""}
+                            </small>
+                          </span>
+                        </button>
+                      ))}
+                      {groupLoans.map((item) => (
+                        <LoanOverviewRow key={item.id} item={item} />
+                      ))}
+                    </section>
+                  );
+                })}
               </>
             ) : (
               <EmptyState
@@ -287,7 +338,9 @@ function ScopedAssets({
                 }
                 description={
                   canCreate
-                    ? hasRecords ? "다른 종류를 선택하거나 자산을 추가해 보세요." : "통장 잔액이나 대출부터 기록해 보세요."
+                    ? hasRecords
+                      ? "다른 종류를 선택하거나 자산을 추가해 보세요."
+                      : "통장 잔액이나 대출부터 기록해 보세요."
                     : "현재 선택한 목록에 자산이 없어요."
                 }
                 action={
@@ -321,49 +374,79 @@ function ScopedAssets({
           자산 정보를 여는 중이에요.
         </p>
       ) : null}
-      {scope === "household" && user ? <ConnectionScreen key={`${user.id}/${householdId}/${canCreate}`}
-        householdId={householdId} userId={user.id} canManage={canCreate} presentation="asset-summary" /> : null}
-      {scope === "household" && user ? <BankConnectionScreen key={`bank/${user.id}/${householdId}/${canCreate}`}
-        householdId={householdId} userId={user.id} canManage={canCreate} summary /> : null}
+      {scope === "household" && user ? (
+        <ConnectionScreen
+          key={`${user.id}/${householdId}/${canCreate}`}
+          householdId={householdId}
+          userId={user.id}
+          canManage={canCreate}
+          presentation="asset-summary"
+        />
+      ) : null}
+      {scope === "household" && user ? (
+        <BankConnectionScreen
+          key={`bank/${user.id}/${householdId}/${canCreate}`}
+          householdId={householdId}
+          userId={user.id}
+          canManage={canCreate}
+          summary
+        />
+      ) : null}
       <section className="space-y-3" aria-label="자산 관리">
-      <h2 className="text-lg font-semibold">자산 관리</h2>
-      <div className="finance-panel divide-y divide-border/60 overflow-hidden px-4 sm:px-5">
-      <Link
-        href="/more/connections"
-        className="hover:bg-muted/50 flex min-h-20 items-center gap-3 py-4 text-sm font-medium"
-      >
-        <Building2 className="text-primary size-5 shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1">
-          <span className="block">은행·증권 자동 연결</span>
-          <span className="text-muted-foreground mt-1 block text-xs font-normal">신한 · 토스증권 · 토스뱅크 · 국민은행</span>
-        </span>
-        <ChevronRight className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
-      </Link>
-      <Link
-        href="/plan"
-        className="hover:bg-muted/50 flex min-h-20 items-center gap-3 py-4 text-sm font-medium"
-      >
-        <House className="text-primary size-5 shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1">
-          <span className="block">주택 납부 일정</span>
-          <span className="text-muted-foreground mt-1 block text-xs font-normal">계약금·중도금·잔금 일정</span>
-        </span>
-        <ChevronRight className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
-      </Link>
-      <Link
-        href="/cards"
-        className="hover:bg-muted/50 flex min-h-20 items-center gap-3 py-4 text-sm font-medium"
-      >
-        <CreditCard className="text-primary size-5 shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1">결제 카드 관리</span>
-        <ChevronRight className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
-      </Link>
-      </div>
+        <h2 className="text-lg font-semibold">자산 관리</h2>
+        <div className="finance-panel divide-y divide-border/60 overflow-hidden px-4 sm:px-5">
+          {/* 자동 연결 진입은 위 연결 요약 패널("자동 연결 관리"·"신한 연결 관리")과 자산 추가
+          시트가 이미 갖고 있다. 같은 이름·같은 목적지의 행을 한 화면에 또 두면 사용자는
+          둘이 다른 것이라고 가정한다. */}
+          <Link
+            href="/plan"
+            className="hover:bg-muted/50 flex min-h-20 items-center gap-3 py-4 text-sm font-medium"
+          >
+            <House
+              className="text-primary size-5 shrink-0"
+              aria-hidden="true"
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block">주택 납부 일정</span>
+              <span className="text-muted-foreground mt-1 block text-xs font-normal">
+                계약금·중도금·잔금 일정
+              </span>
+            </span>
+            <ChevronRight
+              className="text-muted-foreground size-4 shrink-0"
+              aria-hidden="true"
+            />
+          </Link>
+          <Link
+            href="/cards"
+            className="hover:bg-muted/50 flex min-h-20 items-center gap-3 py-4 text-sm font-medium"
+          >
+            <CreditCard
+              className="text-primary size-5 shrink-0"
+              aria-hidden="true"
+            />
+            <span className="min-w-0 flex-1">결제 카드 관리</span>
+            <ChevronRight
+              className="text-muted-foreground size-4 shrink-0"
+              aria-hidden="true"
+            />
+          </Link>
+        </div>
       </section>
       <details className="text-muted-foreground px-1 text-xs leading-relaxed">
-        <summary className="min-h-11 cursor-pointer py-3">자산 합계 기준</summary>
-        <p className="pb-3">직접 입력한 금액과 합계 반영을 선택한 신한 대출을 합산해요. 기존 대출과 연결한 경우 가져온 원금만 반영해요. 참고용·중복·연결 확인이 필요한 대출과 카드 한도·주택 계약금액·적금 만기 예상액은 제외해요.</p>
-        <p className="pb-3">이전에 가져온 대출은 브라우저에서 확인했던 시점의 남은 원금이에요. 은행의 별도 금액 기준일은 제공되지 않아요. 은행·증권 자동 연결 내역은 따로 표시하며 기존 합계에 더하거나 원화로 환산하지 않아요.</p>
+        <summary className="min-h-11 cursor-pointer py-3">
+          자산 합계 기준
+        </summary>
+        <p className="pb-3">
+          직접 입력한 금액과 합계 반영을 선택한 신한 대출을 합산해요. 기존
+          대출과 연결한 경우 가져온 원금만 반영해요. 참고용·중복·연결 확인이
+          필요한 대출과 카드 한도·주택 계약금액·적금 만기 예상액은 제외해요.
+        </p>
+        <p className="pb-3">
+          이전에 가져온 대출은 브라우저에서 확인했던 시점의 남은 원금이에요.
+          은행의 별도 금액 기준일은 제공되지 않아요. 은행·증권 자동 연결 내역은
+          따로 표시하며 기존 합계에 더하거나 원화로 환산하지 않아요.
+        </p>
       </details>
       {editor && !editorIsUnavailable && (editor !== "new" || canCreate) ? (
         <AssetEditor

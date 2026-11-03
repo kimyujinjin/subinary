@@ -12,6 +12,7 @@ import {
 import type { ManualFinanceVisibility } from "@family/contracts";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { ListLoading } from "@/components/widgets/list-loading";
 import {
   Dialog,
   DialogContent,
@@ -40,12 +41,18 @@ const RecordDialogContext = createContext<{
 
 export function LegacyPrivateNotice({ href }: { href: "/assets" | "/plan" }) {
   return (
-    <section aria-label="기존 비공개 기록" className="rounded-xl border bg-muted/30 p-4">
+    <section
+      aria-label="기존 비공개 기록"
+      className="rounded-xl border bg-muted/30 p-4"
+    >
       <h2 className="text-sm font-semibold">기존 비공개 기록</h2>
       <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
         예전에 비공개로 등록한 내용이에요. 수정해도 공개 범위는 유지돼요.
       </p>
-      <Link href={href} className="text-primary mt-1 inline-flex min-h-11 items-center text-sm font-medium">
+      <Link
+        href={href}
+        className="text-primary mt-1 inline-flex min-h-11 items-center text-sm font-medium"
+      >
         공유 목록으로 돌아가기 →
       </Link>
     </section>
@@ -88,15 +95,15 @@ export function FinanceLoadError({ retry }: { retry: () => void }) {
     </section>
   );
 }
+/**
+ * 금융 화면의 목록·카드 로딩.
+ *
+ * 자체 `animate-pulse` 블록 하나를 그리던 것을 공용 `ListLoading`으로 옮겼다 —
+ * 같은 앱에 pulse 구현이 둘이었고, 160px 블록 하나는 들어올 목록의 크기를 예고하지
+ * 못해 내용이 뜨는 순간 화면이 튀었다. 로딩 표현 기준은 `widgets/list-loading.tsx`.
+ */
 export function FinanceLoading() {
-  return (
-    <div role="status" aria-busy="true" className="space-y-3">
-      <p className="text-muted-foreground text-sm">
-        불러오는 중이에요.
-      </p>
-      <div className="bg-muted h-40 animate-pulse rounded-2xl" />
-    </div>
-  );
+  return <ListLoading rows={2} />;
 }
 
 export function ConfirmAction({
@@ -265,7 +272,11 @@ export function RecordDialog({
       <Dialog open onOpenChange={(open) => !open && close.current()}>
         <DialogContent
           onClickCapture={(event) => {
-            if (event.detail === 1 && event.target instanceof Element && event.target.closest("button")) {
+            if (
+              event.detail === 1 &&
+              event.target instanceof Element &&
+              event.target.closest("button")
+            ) {
               guardRepeatedDialogClick(window, event.nativeEvent);
             }
             if (event.detail > 1) {
@@ -281,11 +292,17 @@ export function RecordDialog({
               {description}
             </DialogDescription>
           </DialogHeader>
-          <div data-record-dialog-body className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6">
+          <div
+            data-record-dialog-body
+            className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6"
+          >
             {children}
           </div>
           {notice ? (
-            <p role="status" className="text-muted-foreground shrink-0 border-t px-4 py-2 text-sm sm:px-6">
+            <p
+              role="status"
+              className="text-muted-foreground shrink-0 border-t px-4 py-2 text-sm sm:px-6"
+            >
               {notice}
             </p>
           ) : null}
