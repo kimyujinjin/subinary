@@ -27,6 +27,7 @@ apps/shmup
 # Environment (secrets — injected via compose env_file, never baked into the image)
 .env
 .env.*
+.deploy-logs
 !.env.example
 
 # Logs

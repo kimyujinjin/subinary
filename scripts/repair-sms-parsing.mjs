@@ -60,6 +60,28 @@ export function buildSmsRepairPlan(rows, guardRuntime = runtime()) {
   return { ...plan, digest: digest(plan) };
 }
 
+/**
+ * Dot 파서 개선이 증명한 본인/가구/원본만 한정한다. 기존 수동 CLI의 기본 동작은 유지한다.
+ * @param {unknown} scope @returns {{version:string,memberId:string,householdId:string,entries:{id:string,snapshotHash:string}[],digest:string}}
+ */
+export function validateSmsRepairScope(scope) {
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) throw new Error('sms_repair_invalid_scope');
+  const { digest: expectedDigest, ...body } = scope;
+  if (scope.version !== 'parser-maintenance-scope-v1' || !UUID.test(scope.memberId) || !UUID.test(scope.householdId)
+    || !Array.isArray(scope.entries) || scope.entries.length < 1 || scope.entries.length > MAX_TARGETS
+    || scope.entries.some(entry => !entry || typeof entry !== 'object' || !UUID.test(entry.id) || !/^[a-f0-9]{64}$/u.test(entry.snapshotHash))
+    || new Set(scope.entries.map(entry => entry.id)).size !== scope.entries.length || digest(body) !== expectedDigest) throw new Error('sms_repair_invalid_scope');
+  return scope;
+}
+
+/** @param {Record<string, unknown>[]} rows @param {ReturnType<typeof validateSmsRepairScope>} scope @param {ReturnType<typeof runtime>} guardRuntime */
+export function assertSmsRepairScopeRows(rows, scope, guardRuntime = runtime()) {
+  validateSmsRepairScope(scope);
+  const expected = new Map(scope.entries.map(entry => [entry.id, entry.snapshotHash]));
+  if (rows.length !== expected.size || rows.some(row => row.memberId !== scope.memberId || row.householdId !== scope.householdId
+    || !expected.has(row.id) || guardRuntime.cardSmsRepairSnapshotHash(snapshot(row)) !== expected.get(row.id))) throw new Error('sms_repair_scope_source_changed');
+}
+
 /** @param {ReturnType<typeof buildSmsRepairPlan>} plan @param {number|undefined} expectedCount */
 export function validateSmsRepairPlan(plan, expectedCount) {
   const { digest: expectedDigest, ...body } = plan;
@@ -179,7 +201,7 @@ function saveAudit(path, value) {
 }
 
 /** 모든 명령이 DB 조회에는 같은 readonly 트랜잭션을 사용한다. */
-async function readRows(sql, ids) {
+async function readRows(sql, ids, scope) {
   if (ids?.length === 0) return [];
   return sql.begin('read only', async tx => {
     await tx`set local statement_timeout = '10s'`;
@@ -192,6 +214,7 @@ async function readRows(sql, ids) {
         t.transaction_type as "promotedType", t.member_id as "transactionMemberId"
       from card_sms_events e left join card_transactions t on t.source_event_id=e.id
       where ${ids ? tx`e.id in ${tx(ids)}` : tx`e.parse_status='parse_failed'`}
+        ${scope ? tx`and e.member_id=${scope.memberId} and e.household_id=${scope.householdId}` : tx``}
       order by e.id limit ${MAX_TARGETS + 1}`;
   });
 }
@@ -204,6 +227,9 @@ export async function runSmsRepairCli(args = process.argv.slice(2)) {
   const guardRuntime = runtime();
   const path = resolve(suppliedFile ?? `.deploy-logs/sms-parsing/plan-${Date.now()}.json`);
   const plan = command === 'plan' ? null : JSON.parse(readFileSync(path, 'utf8'));
+  const scopeFile = options.find(option => option.startsWith('--scope-file='))?.slice('--scope-file='.length);
+  const scope = scopeFile ? validateSmsRepairScope(JSON.parse(readFileSync(resolve(scopeFile), 'utf8'))) : undefined;
+  if (plan?.scope && (!scope || scope.digest !== plan.scope.digest)) throw new Error('sms_repair_scope_required');
   const rawCount = options.find(option => option.startsWith('--expected-count='))?.slice('--expected-count='.length);
   if (['apply', 'retry'].includes(command) && (!rawCount || !/^\d+$/u.test(rawCount))) throw new Error('sms_repair_expected_count_required');
   if (plan) {
@@ -215,11 +241,17 @@ export async function runSmsRepairCli(args = process.argv.slice(2)) {
   const sql = postgres(process.env.DATABASE_URL, { max: 1, prepare: false, connect_timeout: 5, idle_timeout: 5 });
   let queue;
   try {
-    const rows = await readRows(sql, plan?.entries.map(entry => entry.id));
+    const rows = await readRows(sql, plan?.entries.map(entry => entry.id) ?? scope?.entries.map(entry => entry.id), scope);
     if (command === 'plan') {
+      if (scope) assertSmsRepairScopeRows(rows, scope, guardRuntime);
       const generated = buildSmsRepairPlan(rows, guardRuntime);
-      saveAudit(path, generated);
-      return { mode: 'read_only_plan', targets: generated.entries.length, skipped: generated.skipped.length, plan: path, digest: generated.digest };
+      if (scope && (generated.entries.length !== scope.entries.length || generated.skipped.length > 0)) throw new Error('sms_repair_scope_not_fully_resolved');
+      // 기존 plan digest 계약을 유지하면서 scope도 내용 해시에 포함한다.
+      const { digest: _digest, ...body } = generated;
+      const scoped = scope ? { ...body, scope: { digest: scope.digest, memberId: scope.memberId, householdId: scope.householdId } } : body;
+      const savedPlan = { ...scoped, digest: digest(scoped) };
+      saveAudit(path, savedPlan);
+      return { mode: 'read_only_plan', targets: generated.entries.length, skipped: generated.skipped.length, plan: path, digest: savedPlan.digest };
     }
     if (command === 'verify') {
       const results = verifySmsRepairRows(plan, rows);
@@ -242,6 +274,7 @@ export async function runSmsRepairCli(args = process.argv.slice(2)) {
     // 이미 적용됐으면 새 작업을 만들지 않고 검증 결과만 반환한다.
     const verification = verifySmsRepairRows(plan, rows);
     if (verification.every(result => result.status === 'verified')) return { mode: 'already_verified', targets: verification.length, digest: plan.digest };
+    if (scope) assertSmsRepairScopeRows(rows, scope, guardRuntime);
     const current = buildSmsRepairPlan(rows, guardRuntime);
     if (JSON.stringify(current.entries) !== JSON.stringify(plan.entries)) throw new Error('sms_repair_snapshot_changed_verify_first');
     const jobs = smsRepairJobs(plan);
