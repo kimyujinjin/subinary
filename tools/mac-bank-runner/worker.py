@@ -36,7 +36,8 @@ PROMPT = '''사용자가 모아에서 누른 신한은행 본인 통장·대출 
 moa_login은 모아에 사용자가 저장한 정보를 해당 요청의 Mac 입력기로 한 번만 전달해 정상 로그인합니다.
 아이디·비밀번호는 모델에 반환하지 않습니다. 로그인 입력을 직접 작성하거나 같은 요청에서 재시도하지 마세요.
 도구가 로그인 제출을 확인하면 native AX로 다음 화면을 확인하고 조회를 계속하세요.
-로그인 정보가 없거나 은행이 추가 인증·비밀번호 오류·보안 입력을 요구하면 화면을 남기고
+moa_login은 은행이 표시한 정상 가상키보드도 사용할 수 있습니다. 모델이 직접 비밀번호를 입력하지 마세요.
+로그인 정보가 없거나 은행이 추가 인증·비밀번호 오류·지원하지 않는 보안 입력을 요구하면 화면을 남기고
 status=authentication_required 로 끝내세요. 보안 프로그램·가상키보드를 우회하지 마세요.
 이미 정상 로그인되어 있으면 본인 통장 원화 장부 잔액과 지원되는 대출(중도금 interim, 전세 jeonse)의
 남은 원금·만기일만 읽으세요. 출금 가능액·대출한도를 잔액으로 바꾸지 마세요. 다른 유형은 추정하지 마세요.
@@ -168,6 +169,47 @@ RESULT_SCHEMA: dict[str, object] = {'type': 'object', 'additionalProperties': Fa
         'logoutConfirmed': {'type': 'boolean'}, 'errorCode': {'type': ['string', 'null'], 'enum': [None, *sorted(ERRORS)]}},
     'required': ['status', 'logoutConfirmed', 'errorCode']}
 
+# 실제 은행의 native AX에서 확인한 가상키보드 이름이다. 위치·DOM·내부 보안 API를 사용하지 않는다.
+VIRTUAL_KEY_LABELS: dict[str, str] = {
+    **{chr(code): chr(code) for code in range(ord('a'), ord('z') + 1)},
+    **{chr(code): '대문자' + chr(code) for code in range(ord('A'), ord('Z') + 1)},
+    **{str(number): str(number) for number in range(10)},
+    '`': '어금기호', '-': '빼기', '=': '등호', '\\': '원기호', '[': '왼쪽대괄호', ']': '오른쪽대괄호',
+    ';': '세미콜론', "'": '작은따옴표', ',': '쉼표', '.': '마침표', '/': '슬래시',
+    '~': '물결표시', '!': '느낌표', '@': '골뱅이', '#': '우물정', '$': '달러기호', '%': '퍼센트',
+    '^': '꺽쇠', '&': '엠퍼샌드', '*': '별표', '(': '왼쪽괄호', ')': '오른쪽괄호',
+    '_': '밑줄', '+': '더하기', '|': '수직막대', '{': '왼쪽중괄호', '}': '오른쪽중괄호',
+    ':': '콜론', '"': '따옴표', '<': '왼쪽꺽쇠괄호', '>': '오른쪽꺽쇠괄호', '?': '물음표',
+}
+BANK_AX_JS = '''var __moaAx = await __moaBrokerAside.getAXState({emit:false,disableDiffing:true});
+var __moaUrls = [...__moaAx.matchAll(/\\bURL:\\s*([^\\s,]+)/g)].map(v=>v[1]);
+if (!__moaUrls.length || __moaUrls.some(v=>!/^https:\\/\\/bank\\.shinhan\\.com(?::443)?(?:\\/|$)/.test(v.includes("://")?v:"https://"+v))) throw new Error("bank_origin_changed");
+'''
+
+
+def virtual_key_script(label: str, *, allow_shift: bool = True) -> str:
+    """새 AX에서 현재 키를 찾고 은행의 정상 가상키보드 버튼만 누른다."""
+    code = BANK_AX_JS + '''var __moaKeyIndex = (ax, label) => {
+if (!/^\\s*\\d+ 버튼 가상키보드 닫기\\s*$/m.test(ax)) throw new Error("keyboard_missing");
+var matches = [...ax.matchAll(/^\\s*(\\d+) 버튼 (.+)$/gm)].filter(v=>v[2]===label);
+if (matches.length > 1) throw new Error("keyboard_ambiguous");
+return matches.length === 1 ? Number(matches[0][1]) : null;
+};
+var __moaKeyLabel = ''' + json.dumps(label) + ''';
+var __moaKey = __moaKeyIndex(__moaAx, __moaKeyLabel);
+'''
+    if allow_shift:
+        code += '''if (__moaKey === null) {
+var __moaShift = __moaKeyIndex(__moaAx, "왼쪽 쉬프트");
+if (__moaShift === null) throw new Error("keyboard_shift_missing");
+await __moaBrokerAside.click(__moaShift);
+''' + BANK_AX_JS + '''__moaKey = __moaKeyIndex(__moaAx, __moaKeyLabel);
+}
+'''
+    return code + '''if (__moaKey === null) throw new Error("keyboard_key_missing");
+await __moaBrokerAside.click(__moaKey);
+await __moaBrokerAside.getAXState({emit:false}); nodeRepl.write("MOA_KEY_ENTERED");'''
+
 
 def bank_origin_observed(text_value: str) -> bool:
     """native AX의 HTTPS 생략 표시를 정규화하되 정확한 은행 호스트만 인정한다."""
@@ -204,6 +246,8 @@ class CodexClient:
         self.native_server: str | None = None
         self.credentials = credentials
         self.login_attempted = False
+        self.closing = False
+        self.thread_closed = False
 
     def native_call(self, code: str) -> str:
         """공개 MCP 직접 호출로 입력하고 결과 원문은 대화·파일에 넣지 않는다."""
@@ -227,7 +271,15 @@ class CodexClient:
             raise Stopped('unsupported_layout')
         self.native_call('var __moaBrokerAside = await cua.getApp("Aside");')
         current = self.native_call('nodeRepl.write(await __moaBrokerAside.getAXState({emit:false,disableDiffing:true}));')
-        if not bank_origin_observed(current) or not re.search(r'^\s*\d+ 텍스트 필드 \(settable\) 이용자ID(?:, Value:.*)?\s*$', current, re.M) or not re.search(r'^\s*\d+ 보안 텍스트 필드 비밀번호(?:, Value:.*)?\s*$', current, re.M):
+        if not bank_origin_observed(current) or not re.search(r'^\s*\d+ 텍스트 필드 \(settable\) 이용자ID(?:, Value:.*)?\s*$', current, re.M) or not re.search(r'^\s*\d+ 보안 텍스트 필드 (?:\(disabled\) )?비밀번호(?:, Value:.*)?\s*$', current, re.M):
+            raise Stopped('unsupported_layout')
+        # 기존 마스킹 값을 읽거나 추정하지 않고 정상 새로고침으로 빈 입력 상태에서 시작한다.
+        self.native_call(BANK_AX_JS + 'await __moaBrokerAside.pressKey("super+r"); await __moaBrokerAside.getAXState({emit:false});')
+        for _ in range(5):
+            current = self.native_call('nodeRepl.write(await __moaBrokerAside.getAXState({emit:false,disableDiffing:true}));')
+            if bank_origin_observed(current) and re.search(r'^\s*\d+ 보안 텍스트 필드 비밀번호\s*$', current, re.M):
+                break
+        else:
             raise Stopped('unsupported_layout')
         self.login_attempted = True
         value = self.credentials()
@@ -238,21 +290,25 @@ class CodexClient:
                 or re.search(r'[\x00-\x1f\x7f]', value['loginId'] + value['password'])
                 or type(value['credentialVersion']) is not int or value['credentialVersion'] < 1):
                 raise Stopped('authentication_required')
+            if any(character not in VIRTUAL_KEY_LABELS for character in value['password']):
+                raise Stopped('authentication_required')
             # 주소·필드 검사는 입력 직전에 매번 새 AX로 수행한다. 평문은 이 로컬 RPC 외로 반환하지 않는다.
-            prefix = '''var __moaAx = await __moaBrokerAside.getAXState({emit:false,disableDiffing:true});
-var __moaUrls = [...__moaAx.matchAll(/\\bURL:\\s*([^\\s,]+)/g)].map(v=>v[1]);
-if (!__moaUrls.length || __moaUrls.some(v=>!/^https:\\/\\/bank\\.shinhan\\.com(?::443)?(?:\\/|$)/.test(v.includes("://")?v:"https://"+v))) throw new Error("bank_origin_changed");
-'''
-            for field, secret in [('텍스트 필드 \\(settable\\) 이용자ID', value['loginId']), ('보안 텍스트 필드 비밀번호', value['password'])]:
+            for field, secret in [('텍스트 필드 \\(settable\\) 이용자ID', value['loginId']), ('보안 텍스트 필드 비밀번호', None)]:
                 pattern = '^\\s*(\\d+) ' + field + '(?:, Value:.*)?\\s*$'
-                code = prefix + 'var __moaFields = [...__moaAx.matchAll(new RegExp(' + json.dumps(pattern) + ',"gm"))];\n'
+                code = BANK_AX_JS + 'var __moaFields = [...__moaAx.matchAll(new RegExp(' + json.dumps(pattern) + ',"gm"))];\n'
                 code += 'if (__moaFields.length !== 1) throw new Error("login_field_changed");\n'
-                code += 'await __moaBrokerAside.click(Number(__moaFields[0][1])); await __moaBrokerAside.pressKey("super+a");\n'
-                code += 'await __moaBrokerAside.typeText(' + json.dumps(secret) + ');\n'
+                code += 'await __moaBrokerAside.click(Number(__moaFields[0][1]));\n'
+                if secret is not None:
+                    code += 'await __moaBrokerAside.pressKey("super+a"); await __moaBrokerAside.typeText(' + json.dumps(secret) + ');\n'
                 code += 'await __moaBrokerAside.getAXState({emit:false}); nodeRepl.write("MOA_FIELD_ENTERED");'
                 if 'MOA_FIELD_ENTERED' not in self.native_call(code):
                     raise Stopped('operation_unknown')
-            submit = prefix + '''var __moaSubmit = [...__moaAx.matchAll(/^\\s*(\\d+) link ID 로그인(?:, Value:.*)?\\s*$/gm)];
+            for character in value['password']:
+                if 'MOA_KEY_ENTERED' not in self.native_call(virtual_key_script(VIRTUAL_KEY_LABELS[character])):
+                    raise Stopped('operation_unknown')
+            if 'MOA_KEY_ENTERED' not in self.native_call(virtual_key_script('가상키보드 닫기', allow_shift=False)):
+                raise Stopped('operation_unknown')
+            submit = BANK_AX_JS + '''var __moaSubmit = [...__moaAx.matchAll(/^\\s*(\\d+) link ID 로그인(?:, Value:.*)?\\s*$/gm)];
 if (__moaSubmit.length !== 1) throw new Error("login_button_changed");
 await __moaBrokerAside.click(Number(__moaSubmit[0][1]));
 await __moaBrokerAside.getAXState({emit:false}); nodeRepl.write("MOA_LOGIN_SUBMITTED");'''
@@ -274,7 +330,7 @@ await __moaBrokerAside.getAXState({emit:false}); nodeRepl.write("MOA_LOGIN_SUBMI
         while b'\n' not in self.buffer:
             if time.monotonic() >= self.deadline:
                 raise Stopped('operation_unknown')
-            if time.monotonic() >= self.next_check:
+            if not self.closing and time.monotonic() >= self.next_check:
                 self.check_active()
                 self.next_check = time.monotonic() + 8
             if not select.select([self.process.stdout], [], [], 1)[0]:
@@ -312,6 +368,17 @@ await __moaBrokerAside.getAXState({emit:false}); nodeRepl.write("MOA_LOGIN_SUBMI
         method = value.get('method')
         params = value.get('params')
         if not isinstance(method, str) or not isinstance(params, dict):
+            return
+        if self.closing:
+            # 정리 중에는 조회·로그인·승인 요청을 실행하지 않고 종료 알림만 소비한다.
+            if 'id' in value:
+                self.send({'id': value['id'], 'error': {'code': -32600, 'message': '실행을 종료 중입니다.'}})
+            elif method == 'thread/closed' and params.get('threadId') == self.thread_id:
+                self.thread_closed = True
+            elif method == 'turn/completed' and params.get('threadId') == self.thread_id:
+                turn = params.get('turn')
+                if isinstance(turn, dict) and turn.get('id') == self.turn_id:
+                    self.complete = True
             return
         if 'id' in value:
             if method != 'item/tool/call' or params.get('tool') not in {'moa_capture', 'moa_login'} or params.get('threadId') != self.thread_id or params.get('turnId') != self.turn_id:
@@ -386,12 +453,35 @@ await __moaBrokerAside.getAXState({emit:false}); nodeRepl.write("MOA_LOGIN_SUBMI
             self.complete = True
             self.normal = turn.get('status') == 'completed'
 
+    def close_thread(self) -> bool:
+        """공개 구독 해제와 종료 알림으로 임시 대화를 정리하며 추가 작업은 거절한다."""
+        self.closing = True
+        self.deadline = time.monotonic() + 10
+        if not self.thread_id or self.process.poll() is not None:
+            return False
+        try:
+            if self.turn_id and not self.complete:
+                self.request('turn/interrupt', {'threadId': self.thread_id, 'turnId': self.turn_id})
+                while not self.complete:
+                    self.observe(self.receive())
+            result = self.request('thread/unsubscribe', {'threadId': self.thread_id})
+            if result.get('status') == 'notLoaded':
+                self.thread_closed = True
+            elif result.get('status') not in {'unsubscribed', 'notSubscribed'}:
+                return False
+            while not self.thread_closed:
+                self.observe(self.receive())
+            return True
+        except (Stopped, OSError, ValueError):
+            return False
+
 
 def codex_phase(codex: str, cwd: Path, check_active: Callable[[], None],
                 credentials: Callable[[], dict[str, object]] | None = None) -> dict[str, object]:
     """요청마다 짧은 임시 대화에서 실행하며 기존 ChatGPT 인증만 사용한다."""
     process = subprocess.Popen([codex, '-c', 'features.shell_tool=false', '-c', 'web_search="disabled"',
         '-c', 'mcp_servers.node_repl.enabled=false', '-c', 'mcp_servers.family-finance.enabled=false',
+        '-c', 'thread_unload_delay_secs=0',
         'app-server', '--listen', 'stdio://'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, cwd=cwd)
     client = CodexClient(process, check_active, credentials)
@@ -427,11 +517,7 @@ def codex_phase(codex: str, cwd: Path, check_active: Callable[[], None],
         error = final.get('errorCode')
         return {'outcome': 'failed', 'errorCode': error if isinstance(error, str) and error in ERRORS else 'operation_unknown', 'logoutConfirmed': client.logout_seen, 'observations': []}
     finally:
-        if client.thread_id and client.turn_id and not client.complete and process.poll() is None:
-            try:
-                client.send({'id': 99999, 'method': 'turn/interrupt', 'params': {'threadId': client.thread_id, 'turnId': client.turn_id}})
-            except (OSError, ValueError):
-                pass
+        client.close_thread()
         if process.stdin:
             try:
                 process.stdin.close()

@@ -166,17 +166,28 @@ class LoginBrokerTests(unittest.TestCase):
         self.client.native_count = 1; self.client.bank_origin_seen = True; self.client.native_server = 'cua_repl'
         self.ax = '0 윈도우, URL: bank.shinhan.com/index.jsp\n 91 텍스트 필드 (settable) 이용자ID\n 92 보안 텍스트 필드 비밀번호\n 94 link ID 로그인, Value: javascript:void(null);'
 
+    def native_reply(self, code):
+        if code.startswith('nodeRepl.write(await '): return self.ax
+        if 'MOA_LOGIN_SUBMITTED' in code: return 'MOA_LOGIN_SUBMITTED'
+        if 'MOA_KEY_ENTERED' in code: return 'MOA_KEY_ENTERED'
+        if 'MOA_FIELD_ENTERED' in code: return 'MOA_FIELD_ENTERED'
+        return 'app'
+
     def test_login_submits_once_without_returning_credentials_to_model(self):
-        self.client.native_call = Mock(side_effect=['app', self.ax, 'MOA_FIELD_ENTERED', 'MOA_FIELD_ENTERED', 'MOA_LOGIN_SUBMITTED'])
+        password_length = len(self.raw['password'])
+        self.client.native_call = Mock(side_effect=self.native_reply)
         request = {'id': 3, 'method': 'item/tool/call', 'params': {'threadId': 'thread', 'turnId': 'turn', 'tool': 'moa_login', 'arguments': {}}}
         self.client.observe(request)
         self.client.observe(dict(request, id=4))
         self.credentials.assert_called_once()
-        self.assertEqual(self.client.native_call.call_count, 5)
+        self.assertEqual(self.client.native_call.call_count, 8 + password_length)
         self.assertEqual(self.raw, {})
         responses = str(self.process.stdin.write.call_args_list)
         self.assertNotIn('synthetic-id', responses)
         self.assertNotIn('synthetic-', responses)
+        codes = [call.args[0] for call in self.client.native_call.call_args_list]
+        self.assertEqual(sum('typeText(' in code for code in codes), 1)
+        self.assertEqual(sum('MOA_LOGIN_SUBMITTED' in code for code in codes), 1)
 
     def test_changed_origin_or_missing_fields_never_retrieves_password(self):
         for ax in [self.ax.replace('bank.shinhan.com', 'evil.invalid'), self.ax.replace('비밀번호', '보안카드')]:
@@ -186,7 +197,7 @@ class LoginBrokerTests(unittest.TestCase):
         self.credentials.assert_not_called()
 
     def test_failed_input_never_retries_within_same_claim(self):
-        self.client.native_call = Mock(side_effect=['app', self.ax, worker.Stopped('unsupported_layout')])
+        self.client.native_call = Mock(side_effect=['app', self.ax, 'reload', self.ax, worker.Stopped('unsupported_layout')])
         with self.assertRaises(worker.Stopped):
             self.client.login()
         self.assertEqual(self.raw, {})
@@ -194,15 +205,16 @@ class LoginBrokerTests(unittest.TestCase):
         self.credentials.assert_called_once()
 
     def test_each_native_input_rechecks_origin_before_typing(self):
-        self.client.native_call = Mock(side_effect=['app', self.ax, 'MOA_FIELD_ENTERED', 'MOA_FIELD_ENTERED', 'MOA_LOGIN_SUBMITTED'])
+        self.client.native_call = Mock(side_effect=self.native_reply)
         self.client.login()
-        codes = [call.args[0] for call in self.client.native_call.call_args_list][2:]
+        codes = [call.args[0] for call in self.client.native_call.call_args_list if worker.BANK_AX_JS in call.args[0]]
         executable = shutil.which('node')
         self.assertIsNotNone(executable)
         # 실제 RPC에 보낼 JS를 합성 native 입력기에서 실행해 주소 변경 시 입력이 없는지 검증한다.
         for index, code in enumerate(codes):
             for host in ['bank.shinhan.com', 'evil.invalid', 'bank.shinhan.com.evil.invalid']:
-                ax = self.ax.replace('bank.shinhan.com', host)
+                ax = self.ax.replace('bank.shinhan.com', host) + '\n100 버튼 가상키보드 닫기\n'
+                ax += '\n'.join(str(index + 101) + ' 버튼 ' + label for index, label in enumerate(worker.VIRTUAL_KEY_LABELS.values()))
                 harness = 'var actions=[]; var nodeRepl={write:()=>{}}; var __moaBrokerAside={getAXState:async()=>'+json.dumps(ax)+',click:async(v)=>actions.push(v),pressKey:async()=>{},typeText:async()=>actions.push("typed")};'
                 harness += '(async()=>{try{'+code+';console.log(JSON.stringify({ok:true,actions}));}catch{console.log(JSON.stringify({ok:false,actions}));}})();'
                 result = subprocess.run([executable, '-e', harness], capture_output=True, text=True, check=True)
@@ -212,12 +224,27 @@ class LoginBrokerTests(unittest.TestCase):
                     if host != 'bank.shinhan.com': self.assertEqual(observed['actions'], [])
 
     def test_delivery_failure_is_not_automatically_retried(self):
-        self.client.native_call = Mock(side_effect=['app', self.ax])
+        self.client.native_call = Mock(side_effect=self.native_reply)
         self.credentials.side_effect = worker.Stopped('api_unavailable')
         with self.assertRaises(worker.Stopped):
             self.client.login()
         self.client.login()
         self.credentials.assert_called_once()
+
+    def test_unsupported_character_stops_before_any_credential_input(self):
+        self.raw['password'] = 'has space'
+        self.client.native_call = Mock(side_effect=self.native_reply)
+        with self.assertRaisesRegex(worker.Stopped, 'authentication_required'):
+            self.client.login()
+        self.assertEqual(self.raw, {})
+        self.assertFalse(any('typeText(' in call.args[0] or 'MOA_LOGIN_SUBMITTED' in call.args[0]
+                             for call in self.client.native_call.call_args_list))
+
+    def test_reload_must_confirm_fresh_password_form_before_delivery(self):
+        self.client.native_call = Mock(side_effect=['app', self.ax, 'reload'] + ['로딩 중'] * 5)
+        with self.assertRaisesRegex(worker.Stopped, 'unsupported_layout'):
+            self.client.login()
+        self.credentials.assert_not_called()
 
     def test_claim_journal_contains_attempt_only_and_continue_cannot_redeliver(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -276,6 +303,7 @@ class InvocationConfigTests(unittest.TestCase):
         self.assertEqual(start.call_args.args[0], [
             '/synthetic/codex', '-c', 'features.shell_tool=false', '-c', 'web_search="disabled"',
             '-c', 'mcp_servers.node_repl.enabled=false', '-c', 'mcp_servers.family-finance.enabled=false',
+            '-c', 'thread_unload_delay_secs=0',
             'app-server', '--listen', 'stdio://'])
         self.assertNotIn('env', start.call_args.kwargs)
         self.assertEqual(start.call_args.kwargs['stderr'], subprocess.DEVNULL)
@@ -297,6 +325,74 @@ class InvocationConfigTests(unittest.TestCase):
                 client.observe(event('item/completed', dict(item, status='completed', result={'content': []})))
                 self.assertEqual(client.native_count, 1)
                 self.assertEqual(client.native_server, server)
+
+
+class VirtualKeyboardTests(unittest.TestCase):
+    """배치가 바뀌거나 Shift 후 주소가 바뀌면 이전 인덱스로 입력하지 않는다."""
+    def run_script(self, states, label='대문자A'):
+        code = worker.virtual_key_script(label)
+        harness = 'var states='+json.dumps(states)+';var actions=[];var nodeRepl={write:()=>{}};'
+        harness += 'var __moaBrokerAside={getAXState:async()=>states.length>1?states.shift():states[0],click:async(v)=>actions.push(v)};'
+        harness += '(async()=>{try{'+code+';console.log(JSON.stringify({ok:true,actions}));}catch{console.log(JSON.stringify({ok:false,actions}));}})();'
+        result = subprocess.run([shutil.which('node'), '-e', harness], capture_output=True, text=True, check=True)
+        return json.loads(result.stdout)
+
+    def test_shift_uses_newly_observed_key_index(self):
+        initial = 'URL: bank.shinhan.com/\n1 버튼 가상키보드 닫기\n2 버튼 왼쪽 쉬프트\n3 버튼 a'
+        shifted = 'URL: bank.shinhan.com/\n11 버튼 가상키보드 닫기\n12 버튼 왼쪽 쉬프트\n13 버튼 대문자A'
+        self.assertEqual(self.run_script([initial, shifted]), {'ok': True, 'actions': [2, 13]})
+        self.assertEqual(self.run_script([shifted]), {'ok': True, 'actions': [13]})
+
+    def test_changed_origin_missing_or_duplicate_key_never_types(self):
+        initial = 'URL: bank.shinhan.com/\n1 버튼 가상키보드 닫기\n2 버튼 왼쪽 쉬프트\n3 버튼 a'
+        for changed in ['URL: evil.invalid/\n1 버튼 가상키보드 닫기\n13 버튼 대문자A',
+                        'URL: bank.shinhan.com/\n1 버튼 가상키보드 닫기',
+                        'URL: bank.shinhan.com/\n1 버튼 가상키보드 닫기\n13 버튼 대문자A\n14 버튼 대문자A']:
+            self.assertEqual(self.run_script([initial, changed]), {'ok': False, 'actions': [2]})
+        self.assertEqual(self.run_script(['URL: bank.shinhan.com/\n13 버튼 대문자A']), {'ok': False, 'actions': []})
+
+    def test_only_observed_printable_keys_are_supported(self):
+        self.assertEqual(set(worker.VIRTUAL_KEY_LABELS), {chr(code) for code in range(33, 127)})
+        self.assertEqual(len(set(worker.VIRTUAL_KEY_LABELS.values())), 94)
+        self.assertEqual(worker.VIRTUAL_KEY_LABELS['"'], '따옴표')
+        self.assertEqual(worker.VIRTUAL_KEY_LABELS['\\'], '원기호')
+
+
+class ThreadCleanupTests(unittest.TestCase):
+    """자원 감시를 유지하면서 공식 수명주기 종료를 먼저 기다린다."""
+    def setUp(self):
+        self.process = Mock(); self.process.poll.return_value = None
+        self.client = worker.CodexClient(self.process, Mock())
+        self.client.thread_id = 'own'; self.client.turn_id = 'turn'
+        self.closed = {'method': 'thread/closed', 'params': {'threadId': 'own'}}
+
+    def test_completed_thread_waits_for_own_closed_notification(self):
+        self.client.complete = True
+        self.client.request = Mock(return_value={'status': 'unsubscribed'})
+        self.client.receive = Mock(side_effect=[{'method': 'thread/closed', 'params': {'threadId': 'other'}}, self.closed])
+        self.assertTrue(self.client.close_thread())
+        self.client.request.assert_called_once_with('thread/unsubscribe', {'threadId': 'own'})
+        self.client.check_active.assert_not_called()
+
+    def test_active_turn_interrupts_before_unsubscribe_and_rejects_tools(self):
+        self.client.request = Mock(side_effect=[{}, {'status': 'unsubscribed'}])
+        self.client.receive = Mock(side_effect=[
+            {'id': 9, 'method': 'item/tool/call', 'params': {'threadId': 'own', 'tool': 'moa_login', 'arguments': {}}},
+            {'method': 'turn/completed', 'params': {'threadId': 'own', 'turn': {'id': 'turn'}}}, self.closed])
+        self.client.login = Mock(side_effect=AssertionError('cleanup_must_not_login'))
+        self.assertTrue(self.client.close_thread())
+        self.assertEqual([call.args[0] for call in self.client.request.call_args_list], ['turn/interrupt', 'thread/unsubscribe'])
+        self.client.login.assert_not_called()
+        self.assertIn('error', json.loads(self.process.stdin.write.call_args.args[0]))
+
+    def test_unloaded_and_timeout_are_distinguished(self):
+        self.client.complete = True
+        self.client.request = Mock(return_value={'status': 'notLoaded'})
+        self.assertTrue(self.client.close_thread())
+        self.client.thread_closed = False
+        self.client.request = Mock(return_value={'status': 'unsubscribed'})
+        self.client.receive = Mock(side_effect=worker.Stopped('operation_unknown'))
+        self.assertFalse(self.client.close_thread())
 
 if __name__ == '__main__':
     unittest.main()
