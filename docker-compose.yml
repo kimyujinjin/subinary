@@ -10,7 +10,16 @@
 #   앱의 package.json / tsconfig / nest-cli.json 등 설정 변경 시 `docker compose up --build` 로 재빌드 필요.
 # - caddy 는 profile "proxy" 로만 기동: `docker compose --profile proxy up`
 
-name: family-memory-ai
+# 프로젝트 이름을 prod와 분리한다.
+#
+# 예전에는 dev·prod가 둘 다 `family-memory-ai`였다. compose는 이름으로 스택을
+# 식별하므로, 그 상태에서 dev를 올리면 **운영 컨테이너를 인수한다** — prod에만 있는
+# 서비스(cloudflared·ops-sentinel·gatus·backup…)는 "정의되지 않음"으로 제거된다.
+# 저장소 복사본이 여러 개라 어느 디렉터리에서 실수로 올리든 같은 일이 벌어졌다.
+#
+# 검증용으로 또 다른 스택이 필요하면 환경변수로 이름만 바꾼다:
+#   COMPOSE_PROJECT_NAME=fma-verify docker compose up
+name: ${COMPOSE_PROJECT_NAME:-family-memory-ai-dev}
 
 # ADR-0027 5단계 — 금액 계약 모드.
 #
