@@ -112,7 +112,9 @@ export class ConnectedAccountsService {
       const jobs = await this.db.execute(sql`select distinct on (j.owner_user_id) j.id, j.owner_user_id, j.observations
         from mac_bank_runner_jobs j
         join ${schema.householdMembers} m on m.id = j.member_id and m.user_id = j.owner_user_id and m.household_id = j.household_id
-          and m.joined_at = j.member_joined_at and m.status = 'active'
+          -- Mac 조회 작업은 가입 시각을 JS Date(밀리초)로 받아 저장한다. DB의 joined_at은 마이크로초까지 있어
+          -- 그대로 비교하면 항상 다르다(2026-11-04 운영에서 신한 행이 전부 빠졌다). 밀리초로 맞춰 비교한다.
+          and date_trunc('milliseconds', m.joined_at) = date_trunc('milliseconds', j.member_joined_at) and m.status = 'active'
         where j.household_id = ${householdId} and j.state = 'succeeded'
         order by j.owner_user_id, j.completed_at desc, j.id desc`) as unknown as JobRow[];
       for (const job of jobs) {
