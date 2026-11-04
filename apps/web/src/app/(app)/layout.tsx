@@ -1,12 +1,11 @@
 "use client";
-/** Three main destinations; management tools remain reachable through 설정. */
-import { Bell, Home, Landmark, Receipt, type LucideIcon } from "lucide-react";
+/** 하단 탭 4개(홈·가계부·자산·전체). 설정은 '전체' 탭이다 — ADR-0037. */
+import { Bell, Home, Landmark, LayoutGrid, Receipt, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type ReactNode } from "react";
 
 import { AppReadinessBoundary } from "@/components/app-readiness-boundary";
-import { AccountLink } from "@/components/account-link";
 import {
   ActivityProvider,
   useActivityStore,
@@ -28,6 +27,7 @@ const NAV_ICONS: Readonly<Record<TabKey, LucideIcon>> = {
   home: Home,
   assets: Landmark,
   ledger: Receipt,
+  all: LayoutGrid,
 };
 const NAV_ITEMS: ReadonlyArray<NavItem> = PRIMARY_TABS.map((tab) => ({
   ...tab,
@@ -41,7 +41,7 @@ function BrandMark() {
       aria-label="모아 홈"
       className="text-primary flex min-h-11 min-w-11 shrink-0 items-center rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
     >
-      <span className="text-[22px] font-extrabold tracking-[-0.07em]">
+      <span className="text-title font-extrabold tracking-[-0.07em]">
         모아
       </span>
     </Link>
@@ -56,12 +56,12 @@ function NotificationBell() {
     <Link
       href="/notifications"
       aria-label={count > 0 ? `알림 ${count}건` : "알림"}
-      // size-11 = 44px 터치 타깃(헤더 아이콘 3개를 같은 크기로 맞춘다).
-      className="hover:bg-muted relative flex size-11 items-center justify-center rounded-full transition-colors"
+      // 헤더 아이콘은 배경 없이 아이콘 24 + 터치 44(docs/ux-renewal-2026-11.md §3.3).
+      className="text-foreground/80 hover:text-foreground relative -mr-2 flex size-11 items-center justify-center transition-colors"
     >
-      <Bell className="size-5" aria-hidden="true" />
+      <Bell className="size-6" strokeWidth={1.8} aria-hidden="true" />
       {count > 0 ? (
-        <span className="bg-destructive text-destructive-foreground absolute top-1 right-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold">
+        <span className="bg-destructive text-destructive-foreground text-micro absolute top-1.5 right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-semibold">
           {count > 9 ? "9+" : count}
         </span>
       ) : null}
@@ -84,16 +84,16 @@ function NavigationItem({
       href={item.href}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:min-h-12 lg:flex-row lg:justify-start lg:gap-3 lg:px-4 lg:py-3 lg:text-sm",
+        "text-micro flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-control px-1 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:min-h-12 lg:flex-row lg:justify-start lg:gap-3 lg:px-4 lg:py-3 lg:text-sm",
         active
-          ? "text-primary font-semibold lg:bg-accent"
-          : "text-muted-foreground hover:text-foreground lg:hover:bg-muted"
+          ? "text-foreground font-semibold lg:bg-muted"
+          : "text-muted-foreground/80 hover:text-foreground lg:hover:bg-muted"
       )}
     >
       <span className="relative flex h-8 w-11 shrink-0 items-center justify-center lg:h-auto lg:w-auto">
         <Icon
-          className="size-[22px]"
-          strokeWidth={active ? 2.4 : 1.8}
+          className="size-6"
+          strokeWidth={active ? 2.2 : 1.7}
           aria-hidden="true"
         />
         {dot ? (
@@ -118,7 +118,7 @@ function PrimaryNav({ pathname }: { pathname: string }) {
       data-bottom-nav
       className="bg-card/95 fixed inset-x-0 bottom-0 z-40 border-t pb-[var(--safe-bottom)] backdrop-blur lg:inset-x-auto lg:top-[var(--app-header-h)] lg:bottom-0 lg:left-0 lg:w-52 lg:border-r lg:border-t-0 lg:bg-card lg:p-4"
     >
-      <div className="mx-auto grid h-20 w-full max-w-lg grid-cols-3 items-center lg:h-auto lg:grid-cols-1 lg:gap-2">
+      <div className="mx-auto grid h-16 w-full max-w-lg grid-cols-4 items-center lg:h-auto lg:grid-cols-1 lg:gap-2">
         {NAV_ITEMS.map((item) => (
           <NavigationItem
             key={item.href}
@@ -143,16 +143,14 @@ function AppShell({ children }: Readonly<{ children: ReactNode }>) {
         본문으로 건너뛰기
       </a>
       {/* 웹과 Android가 제공하는 안전 영역을 셸 치수와 동일하게 반영한다. */}
-      <header className="bg-card/95 sticky top-0 z-30 border-b border-border/60 pt-[var(--safe-top)] backdrop-blur">
+      <header className="bg-background/95 sticky top-0 z-30 pt-[var(--safe-top)] backdrop-blur">
         <div className="flex h-14 items-center justify-between gap-2 px-4 lg:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <BrandMark />
             <HouseholdSwitcher />
           </div>
-          {/* 기존 내 계정·관리 진입을 유지한다. */}
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 items-center">
             <NotificationBell />
-            <AccountLink />
           </div>
         </div>
       </header>
