@@ -39,6 +39,8 @@ LAYER_WORDS = (*CREDENTIAL_WORDS, *CREDENTIAL_CONTEXT, *AUTH_WORDS, *LOADING_WOR
 # 'ID 로그인'을 누르면 은행이 먼저 띄우는 안내(2026-11-04 확인). [확인]을 눌러야 로그인이 진행된다. 이 안내에서만 [확인]을 누른다.
 ID_LOGIN_NOTICE = ('ID로그인', '서비스가 제한')
 MAX_NOTICE_CONFIRMS = 2
+# 로그인 후 첫 화면의 계좌 탭 묶음에만 있는 이름. 로그인 전 메인의 '금융상품' 바로가기에도 예금/신탁·펀드·대출이 있어 이것으로 가른다.
+LOAN_TAB_MARKERS = ('ISA', '휴면예금', '다른기관계좌')
 
 
 class ReplFailure(Exception):
@@ -185,9 +187,10 @@ const moaLoginState = () => { const vis = (e) => { const r = e.getBoundingClient
 const moaMarkNotice = () => { const vis = (e) => { const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'; }; const notice = __NOTICE__; document.querySelectorAll('[data-moa-confirm]').forEach((e) => e.removeAttribute('data-moa-confirm')); const layer = [...document.querySelectorAll('.w2modal_popupLayer')].filter(vis).find((e) => { const t = (e.innerText || '').replace(/\s+/g, ' '); return notice.every((w) => t.includes(w)); }); if (!layer) return false; const ok = [...layer.querySelectorAll('a, button, input[type="button"]')].filter((e) => vis(e) && (e.innerText || e.value || '').trim() === '확인'); if (ok.length !== 1) return false; ok[0].setAttribute('data-moa-confirm', '1'); return true; };
 const moaDeposits = () => { const t = document.getElementById('grd_list_01_body_table'); if (!t) return null; const f = document.getElementById('grd_list_01_foot_table'); const rows = [...t.querySelectorAll('tr')].filter((r) => r.querySelector('td[col_id="잔액_display"]')).map((r) => { const c = (k) => { const e = r.querySelector('td[col_id="' + k + '"]'); return e ? e.textContent.trim() : ''; }; return { number: c('계좌번호_view'), amount: c('잔액_display') }; }); return rows.length || /[0-9]/.test(f ? f.textContent : '') ? { rows } : null; };
 const moaLoans = () => { const t = document.getElementById('grd_list03_body_table'); if (!t) return null; const f = document.getElementById('grd_list03_foot_table'); const rows = [...t.querySelectorAll('tr')].filter((r) => r.querySelector('td[col_id="대출잔액_display"]')).map((r) => { const c = (k) => { const e = r.querySelector('td[col_id="' + k + '"]'); return e ? e.textContent.trim() : ''; }; return { name: c('계좌명_display'), number: c('대출계좌번호_view'), maturity: c('대출만기일_display'), amount: c('대출잔액_display') }; }); const empty = [...document.querySelectorAll('[id^="grd_list03"]')].some((e) => /없습니다/.test(e.textContent)); return rows.length || empty || /[0-9]/.test(f ? f.textContent : '') ? { rows } : null; };
+const moaMarkLoanTab = () => { const vis = (e) => { const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'; }; const text = (e) => (e.innerText || e.textContent || '').replace(/\s+/g, ' ').trim(); document.querySelectorAll('[data-moa-tab]').forEach((e) => e.removeAttribute('data-moa-tab')); const cands = [...document.querySelectorAll('a, button, [role="tab"]')].filter((e) => text(e) === '대출'); const tabs = cands.filter((e) => { let node = e; for (let i = 0; i < 4 && node && node.parentElement; i += 1, node = node.parentElement) { const names = [...node.parentElement.children].map(text); if (names.includes('예금/신탁') && __TAB_MARKERS__.some((w) => names.includes(w))) return true; } return false; }); const shown = tabs.filter(vis); if (shown.length !== 1) return { marked: false, candidates: cands.length, tabs: tabs.length, shown: shown.length }; shown[0].setAttribute('data-moa-tab', '1'); return { marked: true, candidates: cands.length, tabs: tabs.length, shown: 1 }; };
 const moaLoggedOut = () => { const t = ((document.body && document.body.innerText) || '').replace(/\s+/g, ' '); const b = document.getElementById('btn_logout'); const r = b ? b.getBoundingClientRect() : null; return /로그아웃 되었습니다/.test(t) && !(r && r.width > 0 && r.height > 0); };
 moaEmit({ ready: true });
-'''.replace('__WORDS__', json.dumps(LAYER_WORDS, ensure_ascii=False)).replace('__NOTICE__', json.dumps(ID_LOGIN_NOTICE, ensure_ascii=False))
+'''.replace('__WORDS__', json.dumps(LAYER_WORDS, ensure_ascii=False)).replace('__TAB_MARKERS__', json.dumps(LOAN_TAB_MARKERS, ensure_ascii=False)).replace('__NOTICE__', json.dumps(ID_LOGIN_NOTICE, ensure_ascii=False))
 
 FIND = '''/*moa:find*/ await (async () => {
 const tabs = (await listBrowserTabs()).filter((t) => moaBank(t.url)); let hit = null;
@@ -273,7 +276,11 @@ def diagnostic(step: str, code: str, value: dict[str, object] | None = None) -> 
     hits = [word for word in value.get('hits') or [] if word in LAYER_WORDS] if isinstance(value.get('hits'), list) else []
     alerts = [kind for kind in value.get('alerts') or [] if kind in {'password', 'login_id', 'auth', 'other'}] if isinstance(value.get('alerts'), list) else []
     hash_value, confirms = value.get('hash'), value.get('confirms')
-    return {'step': step, 'code': code, 'hits': hits, 'alerts': alerts,
+    tab = value.get('tab') if isinstance(value.get('tab'), dict) else {}
+    counts = {key: tab.get(key) for key in ('candidates', 'tabs', 'shown') if type(tab.get(key)) is int}
+    layers = value.get('layers')
+    return {'step': step, 'code': code, 'hits': hits, 'alerts': alerts, 'tab': counts or None,
+            'layers': layers if type(layers) is int else None,
             'notice': value.get('notice') if isinstance(value.get('notice'), bool) else None,
             'confirms': confirms if type(confirms) is int else None,
             'hash': hash_value if isinstance(hash_value, str) and re.fullmatch(r'#?[0-9]{0,20}', hash_value) else None,
@@ -284,12 +291,15 @@ let d = await moaWait(moaDeposits, 15000);
 if (!d) { try { await moaPage().goto(__MAIN__); } catch (e) { moaFail('timeout'); } d = await moaWait(moaDeposits, 15000); }
 if (!(await moaPage().evaluate(moaLoggedIn).catch(() => false))) moaFail('authentication_required');
 if (!d) moaFail('unsupported_layout');
-moaEmit({ deposits: d.rows }); })();'''.replace('__MAIN__', json.dumps(MAIN_URL))
+const s = await moaPage().evaluate(moaLoginState).catch(() => null);
+moaEmit({ deposits: d.rows, layers: s ? s.layers : null, hits: s ? s.hits : [] }); })();'''.replace('__MAIN__', json.dumps(MAIN_URL))
 
 LOANS = '''/*moa:loans*/ await (async () => {
-const p = moaPage(); await moaClick(p.getByRole('link', { name: '대출', exact: true }));
+const p = moaPage(); const m = await p.evaluate(moaMarkLoanTab);
+if (!m.marked) { moaEmit({ loans: null, tab: m }); return; }
+await moaClick(p.locator('[data-moa-tab="1"]'));
 const l = await moaWait(moaLoans, 15000); if (!l) moaFail('timeout');
-moaEmit({ loans: l.rows }); })();'''
+moaEmit({ loans: l.rows, tab: m }); })();'''
 
 LOGOUT = '''/*moa:logout*/ await (async () => {
 const p = moaPage(); if (!(await p.evaluate(moaLoggedIn).catch(() => false))) { moaEmit({ logout: false }); return; }
@@ -427,6 +437,7 @@ def repl_phase(aside: str, check_active: Callable[[], None], credentials: Callab
     session = open_session() if open_session else ReplSession(aside)
     logged_in = own_tab = False
     step = 'start'
+    context: dict[str, object] = {}
 
     def note(value: dict[str, object]) -> None:
         if diagnose:
@@ -493,16 +504,20 @@ def repl_phase(aside: str, check_active: Callable[[], None], credentials: Callab
         except Exception:  # 진행 표시는 결과에 영향을 주지 않는다.
             pass
         check_active()
-        deposits = call(DEPOSITS, 45).get('deposits')
-        loans = call(LOANS, 30).get('loans')
-        found = observations(deposits, loans, capture)
+        read = call(DEPOSITS, 45)
+        context = {'layers': read.get('layers'), 'hits': read.get('hits')}
+        loaded = call(LOANS, 30)
+        context = dict(context, tab=loaded.get('tab'))
+        if loaded.get('loans') is None:
+            raise ReplFailure('unsupported_layout')
+        found = observations(read.get('deposits'), loaded.get('loans'), capture)
         confirmed = logout()
         logged_in = not confirmed
         if not confirmed:
             return failed('operation_unknown')
         return {'outcome': 'succeeded', 'logoutConfirmed': True, 'observations': found}
     except ReplFailure as error:
-        note(diagnostic(step, error.code))
+        note(diagnostic(step, error.code, context))
         return failed(error.code, logout() if logged_in else False)
     except BaseException:
         if logged_in:

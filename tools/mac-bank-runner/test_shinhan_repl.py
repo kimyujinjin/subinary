@@ -35,9 +35,9 @@ STEP = re.compile(r'/\*moa:([a-z-]+)\*/')
 
 class FakeBank:
     """은행 단계 응답을 흉내 낸다. 키패드 ref는 snapshot마다 새로 발급하고 이전 ref는 거절한다."""
-    def __init__(self, *, tab_logged_in=False, result=None, deposits=None, loans=None, logout=True, fail=None, drop_key=None):
+    def __init__(self, *, tab_logged_in=False, result=None, loan_tab=None, deposits=None, loans=None, logout=True, fail=None, drop_key=None):
         self.codes: list[str] = []
-        self.tab_logged_in, self.logout, self.fail, self.drop_key = tab_logged_in, logout, fail, drop_key
+        self.tab_logged_in, self.logout, self.fail, self.drop_key, self.loan_tab = tab_logged_in, logout, fail, drop_key, loan_tab
         self.result = result or {'result': 'ok', 'hits': [], 'alerts': [], 'hash': '#010800000000', 'loginForm': False}
         self.deposits = deposits if deposits is not None else [{'number': '110-123-456789', 'amount': '2,000,000'}]
         self.loans = loans if loans is not None else [{'name': '<가계>일반자금대출(주택관련 중도금대출)', 'number': '220-333-444555', 'maturity': '2030.05.31', 'amount': '150,000,000'}]
@@ -85,8 +85,10 @@ class FakeBank:
         if step == 'keypad-close': return {'length': self.length, 'open': False}
         if step == 'submit': return {'submitted': True}
         if step == 'result': return dict(self.result)
-        if step == 'deposits': return {'deposits': [dict(row) for row in self.deposits]}
-        if step == 'loans': return {'loans': [dict(row) for row in self.loans]}
+        if step == 'deposits': return {'deposits': [dict(row) for row in self.deposits], 'layers': 0, 'hits': []}
+        if step == 'loans':
+            if self.loan_tab is not None: return {'loans': None, 'tab': self.loan_tab}
+            return {'loans': [dict(row) for row in self.loans], 'tab': {'marked': True, 'candidates': 1, 'tabs': 1, 'shown': 1}}
         if step == 'logout': return {'logout': self.logout}
         if step == 'cleanup': return {'cleaned': True}
         raise AssertionError(step)
@@ -174,10 +176,17 @@ class ReplPhaseTests(unittest.TestCase):
 
     def test_diagnostic_keeps_only_fixed_vocabulary(self):
         note = repl.diagnostic('result', 'timeout', {'hits': ['비밀번호', '이수빈 고객님', '110-123-456789'], 'hash': '#011100000000', 'loginForm': True})
-        self.assertEqual(note, {'step': 'result', 'code': 'timeout', 'hits': ['비밀번호'], 'alerts': [], 'notice': None, 'confirms': None,
+        self.assertEqual(note, {'step': 'result', 'code': 'timeout', 'hits': ['비밀번호'], 'alerts': [], 'tab': None, 'layers': None, 'notice': None, 'confirms': None,
                                 'hash': '#011100000000', 'loginForm': True})
         self.assertEqual(repl.diagnostic('result', 'x', {'alerts': ['password', '원문 메시지'], 'notice': True, 'confirms': 2})['alerts'], ['password'])
         self.assertIsNone(repl.diagnostic('x', 'timeout', {'hash': '#abc<script>'})['hash'])
+
+    def test_missing_loan_tab_stops_with_counts_and_logs_out(self):
+        notes = []
+        bank = FakeBank(loan_tab={'marked': False, 'candidates': 2, 'tabs': 0, 'shown': 0})
+        result = repl.repl_phase('aside', self.check_active, self.credentials, self.progress, worker.capture, LABELS, open_session=lambda: bank, diagnose=notes.append)
+        self.assertEqual((result['errorCode'], result['logoutConfirmed'], result['observations']), ('unsupported_layout', True, []))
+        self.assertEqual((notes[0]['step'], notes[0]['tab'], notes[0]['layers']), ('loans', {'candidates': 2, 'tabs': 0, 'shown': 0}, 0))
 
     def test_failure_step_is_noted(self):
         notes = []
@@ -292,6 +301,52 @@ class ResultLoopTests(unittest.TestCase):
         self.assertEqual(self.run_loop([{'hash': '#999900000000', 'loginForm': False}])[0]['result'], 'moved')
         result, clicks = self.run_loop([{}])
         self.assertEqual((result['result'], clicks), ('timeout', []))
+
+
+FAKE_DOM = r"""
+class El { constructor(tag, text = '', attrs = {}, shown = true) { this.tagName = tag.toUpperCase(); this.ownText = text; this.attrs = { ...attrs }; this.shown = shown; this.children = []; this.parentElement = null; }
+  add(...kids) { for (const k of kids) { k.parentElement = this; this.children.push(k); } return this; }
+  get textContent() { return this.ownText + this.children.map((c) => c.textContent).join(' '); }
+  get innerText() { return this.shown ? this.ownText + this.children.map((c) => c.innerText).join(' ') : ''; }
+  getBoundingClientRect() { let n = this; while (n) { if (!n.shown) return { width: 0, height: 0 }; n = n.parentElement; } return { width: 10, height: 10 }; }
+  setAttribute(k, v) { this.attrs[k] = String(v); } removeAttribute(k) { delete this.attrs[k]; } getAttribute(k) { return this.attrs[k] ?? null; }
+  contains(o) { while (o) { if (o === this) return true; o = o.parentElement; } return false; }
+  all() { return this.children.flatMap((c) => [c, ...c.all()]); }
+  matches(sel) { return sel.split(',').map((s) => s.trim()).some((s) => s === '[data-moa-tab]' ? 'data-moa-tab' in this.attrs : s === '[role="tab"]' ? this.attrs.role === 'tab' : this.tagName === s.toUpperCase()); }
+  querySelectorAll(sel) { return this.all().filter((e) => e.matches(sel)); } }
+globalThis.getComputedStyle = () => ({ visibility: 'visible', display: 'block' });
+const tabList = (names) => new El('ul').add(...names.map((n) => new El('li').add(new El('div').add(new El('a', n)))));
+const body = new El('body');
+globalThis.document = { querySelectorAll: (sel) => body.querySelectorAll(sel) };
+"""
+
+
+@unittest.skipUnless(Path(NODE).exists(), 'node가 없어 대출 탭 판별을 건너뛴다')
+class LoanTabTests(unittest.TestCase):
+    """로그인 후 계좌 탭 묶음의 '대출'만 고르고, 메뉴·바로가기의 같은 이름은 고르지 않는다."""
+    def mark(self, scene: str):
+        helpers = repl.one_line(repl.HELPERS).split('const moaMarkLoanTab = ', 1)[1].split('; const moaLoggedOut', 1)[0]
+        code = FAKE_DOM + scene + '\nconst moaMarkLoanTab = ' + helpers + ';\nconst r = moaMarkLoanTab();\nconst hit = body.querySelectorAll("[data-moa-tab]");\nprocess.stdout.write(JSON.stringify({ r, hit: hit.map((e) => e.parentElement.parentElement.parentElement.children.map((c) => c.innerText).join("|")) }));'
+        with tempfile.TemporaryDirectory() as folder:
+            script = Path(folder) / 'tab.mjs'; script.write_text(code)
+            done = subprocess.run([NODE, str(script)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_account_tab_is_chosen_over_menu_and_shortcuts(self):
+        value = self.mark("""
+body.add(new El('nav').add(new El('a', '금융상품'), new El('ul').add(new El('li').add(new El('a', '대출')))));
+body.add(new El('section').add(new El('h2', '금융상품'), tabList(['예금/신탁', '펀드', '대출', '외환'])));
+body.add(new El('section').add(tabList(['예금/신탁', 'ISA', '대출', '펀드', '휴면예금'])));
+body.add(new El('a', '대출', {}, false));
+""")
+        self.assertEqual(value['r'], {'marked': True, 'candidates': 4, 'tabs': 1, 'shown': 1})
+        self.assertEqual(len(value['hit']), 1)
+        self.assertIn('ISA', value['hit'][0])
+
+    def test_no_account_tabs_marks_nothing(self):
+        value = self.mark("body.add(tabList(['예금/신탁', '펀드', '대출']));")
+        self.assertEqual((value['r']['marked'], value['r']['tabs'], value['hit']), (False, 0, []))
 
 
 class KeypadTests(unittest.TestCase):
