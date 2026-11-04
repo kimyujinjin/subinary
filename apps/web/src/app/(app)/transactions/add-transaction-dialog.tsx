@@ -310,7 +310,7 @@ export function AddTransactionDialog({
 
         {mode === "text" ? (
           <div className="flex flex-col gap-3">
-            <Label htmlFor="paste-content">카드 알림/문자 원문</Label>
+            <Label htmlFor="paste-content">카드 문자 내용</Label>
             <textarea
               id="paste-content"
               value={content}

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import type { FinanceConnection, FinanceConnectionList, FinanceConnectionResult } from "@family/contracts";
 import { Button } from "@/components/ui/button";
+import { StatusChip } from "@/components/widgets/status-chip";
 import { FinanceLoading } from "@/components/manual-finance/shared";
 import { PageBackHeader } from "@/components/widgets/page-back-header";
 import { useAuth } from "@/lib/auth-context";
@@ -168,38 +169,34 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
   const pendingRegistration = items.some((item) => item.status === "connecting");
   if (presentation === "asset-summary") return <AssetConnectionsSummary data={data} busy={busy}
     loading={!data && (busy || owned.isPending)} notice={notice} uncertainId={uncertain?.id ?? null} />;
+  const reread = <Button variant="weak" size="sm" disabled={busy || owned.isFetching} onClick={() => { void owned.reread(); }}>{busy ? "확인 중…" : "다시 확인"}</Button>;
   return (
     <div className="mx-auto flex w-full max-w-2xl min-w-0 flex-col gap-5 pb-8">
-      {presentation !== "embedded" ? <header className="pl-2.5">
-        <PageBackHeader title="연결 관리" subtitle="내 토스증권 계좌의 보유 주식을 확인해요." backHref="/more" />
-      </header> : null}
-      <section className="rounded-xl bg-muted/60 p-4 text-sm leading-relaxed text-muted-foreground" aria-label="연결 정보 공개 범위">
-        연결한 계정에서만 볼 수 있어요. 가족에게 공유하거나 기존 자산 합계에 더하지 않아요.
-      </section>
-      {notice ? <section role="alert" className="space-y-2 rounded-xl border p-4 text-sm leading-relaxed">
-        <p>{notice}</p>
-        {uncertain ? <p className="text-muted-foreground">결과가 확인될 때까지 새 요청은 보내지 않아요. 상태가 계속 바뀌지 않으면 운영자에게 확인해 주세요.</p> : null}
-        <Button variant="outline" className="min-h-11 w-full" disabled={busy || owned.isFetching} onClick={() => { void owned.reread(); }}>{busy ? "확인 중…" : "연결 상태 확인"}</Button>
+      {presentation !== "embedded" ? <PageBackHeader title="연결 관리" backHref="/more" /> : null}
+      {notice ? <section role="alert" className="flex items-center justify-between gap-3">
+        <p className="text-caption text-muted-foreground">{notice}{uncertain ? " 결과가 확인될 때까지 새 요청은 보내지 않아요." : ""}</p>
+        {reread}
       </section> : null}
       {!data && (busy || owned.isPending) ? <FinanceLoading /> : null}
-      {data && !data.enabled ? <section role="status" className="rounded-2xl border bg-card p-4">
-        <h2 className="font-semibold">연결 준비 중이에요</h2>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">운영자가 안전한 키 저장과 조회 설정을 마치면 연결할 수 있어요. 지금은 키를 입력하지 않아도 돼요.</p>
+      {data && !data.enabled ? <section role="status" className="finance-panel flex items-center justify-between gap-3 p-5">
+        <div className="min-w-0">
+          <h2 className="text-heading">연결 준비 중이에요</h2>
+          <p className="text-caption text-muted-foreground mt-1">운영자 설정이 끝나면 연결할 수 있어요.</p>
+        </div>
+        <StatusChip tone="pending">준비 중</StatusChip>
       </section> : null}
-      {data && !canManage ? <p className="text-sm text-muted-foreground">현재 가족에서는 조회만 할 수 있어요. 연결 설정은 변경할 수 없어요.</p> : null}
-      {data?.enabled && items.length === 0 && !showForm ? <section className="rounded-2xl border bg-card p-5">
-        <h2 className="font-semibold">연결한 계좌가 없어요</h2>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">본인 명의의 토스증권 계좌를 연결해 주세요. 다른 가족의 계좌는 그 가족의 앱 계정에서 연결할 수 있어요.</p>
+      {data && !canManage ? <p className="text-caption text-muted-foreground">현재 가족에서는 조회만 할 수 있어요.</p> : null}
+      {data?.enabled && items.length === 0 && !showForm ? <section className="finance-panel p-5">
+        <h2 className="text-heading">연결한 계좌가 없어요</h2>
+        <p className="text-caption text-muted-foreground mt-1">본인 명의 토스증권 계좌만 연결할 수 있어요.</p>
       </section> : null}
       {items.map((item) => <ConnectionCard key={`${item.id}/${item.version}`} item={item} disabled={busy || !!uncertain} unconfirmed={uncertain?.id === item.id} canManage={canManage} enabled={!!data?.enabled}
         onSelect={(accountId) => selectAccount(item, accountId)} onRefresh={() => refresh(item)} onDisconnect={() => disconnect(item)} />)}
+      {!notice && items.some((item) => item.status === "connecting" || item.status === "refreshing") ? <div className="flex items-center justify-between gap-3">
+        <p className="text-caption text-muted-foreground">처리 중이에요.</p>{reread}
+      </div> : null}
       {showForm && data?.enabled && canManage ? <ConnectionRegistrationForm busy={busy} onSubmit={register} onClose={() => { setShowForm(false); }} /> : null}
-      {data?.enabled && canManage && !showForm ? <Button className="min-h-11 w-full" disabled={busy || !!uncertain || pendingRegistration} onClick={() => setShowForm(true)}><Plus className="size-4" aria-hidden="true" />토스증권 연결</Button> : null}
-      {!notice ? <Button variant="outline" className="min-h-11 w-full" disabled={busy || owned.isFetching} onClick={() => { void owned.reread(); }}>{busy ? "확인 중…" : "연결 상태 확인"}</Button> : null}
-      <details className="border-t text-xs leading-relaxed text-muted-foreground">
-        <summary className="min-h-11 cursor-pointer py-3 text-sm">조회 내역은 언제 바뀌나요?</summary>
-        <p>보유 주식은 자산 또는 연결 화면을 열거나 ‘새로 조회’를 누를 때 갱신돼요. 조회가 실패하면 이전 내역과 마지막 조회 시각을 보여줘요.</p>
-      </details>
+      {data?.enabled && canManage && !showForm ? <Button size="lg" className="w-full" disabled={busy || !!uncertain || pendingRegistration} onClick={() => setShowForm(true)}><Plus aria-hidden="true" />토스증권 연결</Button> : null}
     </div>
   );
 }

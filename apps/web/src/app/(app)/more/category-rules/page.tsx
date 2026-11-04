@@ -190,7 +190,6 @@ export default function CategoryRulesPage() {
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
       <PageBackHeader
         title="카테고리 규칙"
-        subtitle="가맹점마다 어떤 카테고리가 자동으로 붙는지 확인해요"
         backHref="/more"
       />
 
@@ -208,27 +207,29 @@ export default function CategoryRulesPage() {
             description="거래의 카테고리를 고치면서 '이 가맹점에 계속 적용'을 켜면 여기에 쌓여요."
           />
         ) : (
-          rules.map((rule) => (
-            <Card key={rule.id}>
-              <CardContent className="flex flex-col gap-3 p-4">
-                <div className="flex items-start justify-between gap-3">
+          <div className="finance-panel divide-border/60 divide-y px-5">
+          {rules.map((rule) => (
+            <div key={rule.id} className="flex flex-col gap-2 py-3">
+                <div className="flex items-center justify-between gap-2">
                   <div className="flex min-w-0 flex-col gap-0.5">
-                    <span className="truncate text-[15px] font-medium">
+                    <span className="text-body truncate font-medium">
                       {rule.merchantPattern}
                     </span>
-                    <span className="text-muted-foreground text-[13px]">
+                    <span className="text-caption text-muted-foreground">
                       → {rule.categoryName ?? "알 수 없는 카테고리"}
+                      {rule.source === "human_confirmed" ? "" : " · 자동 학습"}
                     </span>
                   </div>
-                  {rule.source === "human_confirmed" ? (
-                    <StatusBadge
-                      status="human"
-                      tone="success"
-                      label="내가 확정"
-                    />
-                  ) : (
-                    <StatusBadge status="model" tone="neutral" label="자동 학습" />
-                  )}
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="text-muted-foreground -mr-2 shrink-0"
+                    aria-label={`${rule.merchantPattern} 규칙 지우기`}
+                    disabled={removeRule.isPending}
+                    onClick={() => removeRule.mutate(rule.id)}
+                  >
+                    <Trash2 />
+                  </Button>
                 </div>
 
                 {/*
@@ -237,12 +238,12 @@ export default function CategoryRulesPage() {
                 */}
                 {rule.staleTransactionCount > 0 ? (
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-warning-strong text-[13px]">
+                    <span className="text-caption text-warning-strong">
                       과거 {rule.staleTransactionCount}건이 다른 카테고리로 남아 있어요
                     </span>
                     <Button
                       size="sm"
-                      variant="outline"
+                      variant="weak"
                       onClick={() => setTarget(rule)}
                     >
                       <Sparkles className="size-4" />
@@ -251,20 +252,9 @@ export default function CategoryRulesPage() {
                   </div>
                 ) : null}
 
-                <div className="flex justify-end">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={removeRule.isPending}
-                    onClick={() => removeRule.mutate(rule.id)}
-                  >
-                    <Trash2 className="size-4" />
-                    규칙 지우기
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))
+            </div>
+          ))}
+          </div>
         )}
       </section>
 

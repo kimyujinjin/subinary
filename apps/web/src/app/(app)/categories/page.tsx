@@ -183,78 +183,23 @@ export default function CategoriesPage() {
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <PageBackHeader
         title="카테고리 관리"
-        subtitle="우리 가족만의 지출 카테고리를 만들어요. 만든 카테고리는 AI 자동분류에도 쓰여요."
       />
 
       {/* 모델 학습에는 AI 예측이 아니라 사용자가 명시적으로 확정한 규칙만 사용한다. */}
       <Card className="flex flex-col gap-4 p-4">
         <div className="flex items-start gap-3">
-          <div className="bg-primary/10 text-primary rounded-full p-2">
-            <BrainCircuit className="size-5" />
-          </div>
+          <BrainCircuit className="text-primary mt-0.5 size-6 shrink-0" aria-hidden="true" />
           <div className="min-w-0 flex-1">
-            <h2 className="font-semibold">가맹점 분류 검토</h2>
-            <p className="text-muted-foreground text-[13px]">
-              직접 확인한 항목만 AI 학습 라벨로 사용해요. 다른 가족의 비공개
-              거래는 표시하지 않아요.
+            <h2 className="text-heading">가맹점 분류 검토</h2>
+            <p className="text-caption text-muted-foreground">
+              직접 확인한 항목만 자동 분류에 써요.
             </p>
           </div>
         </div>
 
-        {trainingReadiness ? (
-          <div className="bg-muted/60 flex flex-col gap-3 rounded-lg p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium">
-                  {trainingReadiness.status === "ready"
-                    ? "라벨 수집 기준을 충족했어요"
-                    : `학습 라벨 ${trainingReadiness.humanConfirmedLabels}/${trainingReadiness.requiredLabels}`}
-                </p>
-                <p className="text-muted-foreground text-xs">
-                  전체 라벨 수집 진행률 {labelProgress}%
-                  {confirmedThisSession > 0
-                    ? ` · 이번에 ${confirmedThisSession}개 확정`
-                    : ""}
-                </p>
-              </div>
-              <span className="bg-background rounded-full px-2 py-1 text-xs font-medium">
-                {labelProgress}%
-              </span>
-            </div>
-            <div
-              className="bg-background h-2 overflow-hidden rounded-full"
-              role="progressbar"
-              aria-label="학습 라벨 수집 진행률"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={labelProgress}
-            >
-              <div
-                className="bg-primary h-full rounded-full transition-[width]"
-                style={{ width: `${labelProgress}%` }}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-              <span>
-                라벨 {trainingReadiness.humanConfirmedLabels}/
-                {trainingReadiness.requiredLabels}
-              </span>
-              <span>
-                클래스 {trainingReadiness.distinctClasses}/
-                {trainingReadiness.requiredClasses}
-              </span>
-              <span>
-                최소 클래스 {trainingReadiness.minimumClassLabels}/
-                {trainingReadiness.requiredLabelsPerClass}
-              </span>
-              <span>
-                계보{" "}
-                {trainingReadiness.missingLineage === 0
-                  ? "정상"
-                  : `${trainingReadiness.missingLineage}건 누락`}
-              </span>
-            </div>
-          </div>
+        {/* 학습 준비도(라벨·클래스·계보)는 운영 지표라 사용자 화면에 두지 않는다 — /ai-operations가 소유한다. */}
+        {confirmedThisSession > 0 ? (
+          <p className="text-caption text-muted-foreground">이번에 {confirmedThisSession}개 확정했어요</p>
         ) : null}
 
         {labelCandidatesQuery.isLoading ? (

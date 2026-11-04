@@ -41,7 +41,7 @@ import {
   type BarListItem,
 } from "@/components/widgets";
 import { UpcomingSpendCard } from "../../dashboard/upcoming-card";
-import { LedgerNav } from "@/components/ledger-nav";
+import { LedgerHeader } from "@/components/ledger-header";
 import { MonthlyInsightsCard } from "@/components/monthly-insights-card";
 import { AddTransactionDialog } from "../../transactions/add-transaction-dialog";
 import { ApiError } from "@/lib/api-client";
@@ -424,13 +424,7 @@ function LedgerAnalysisView() {
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
-      <header className="space-y-1.5">
-        <h1 className="text-[28px] font-bold tracking-tight">소비 분석</h1>
-        <p className="text-muted-foreground text-sm">
-          카드 승인·취소 기록을 기존 공개 범위에 따라 살펴봐요.
-        </p>
-      </header>
-      <LedgerNav active="analysis" month={month} />
+      <LedgerHeader active="analysis" month={month} />
 
       {/* 거래가 한 건도 없으면 달을 옮길 이유가 없다 — 체크리스트 화면에서는 감춘다. */}
       {showChecklist ? null : (
@@ -439,7 +433,7 @@ function LedgerAnalysisView() {
             month={month}
             months={availableMonths}
             onChange={changeMonth}
-            className="-ml-2 [&>button]:size-11 [&>span]:text-2xl [&>span]:font-bold [&>span]:tracking-tight"
+            className="-ml-2"
           />
         </div>
       )}
@@ -467,48 +461,31 @@ function LedgerAnalysisView() {
               ) : monthly && delta ? (
                 <>
                   <div className="flex flex-col gap-1">
-                    <span className="text-muted-foreground text-sm">
-                      {isCurrentMonth
-                        ? "이번 달 소비"
-                        : `${formatMonth(month)} 소비`}
+                    <span className="text-caption text-muted-foreground">
+                      {isCurrentMonth ? "이번 달 소비" : "소비"}
                     </span>
-                    <span className="text-[clamp(1.75rem,7vw,2.5rem)] font-bold tracking-tight tabular-nums [overflow-wrap:anywhere]">
+                    <span className="text-display break-all tracking-tight tabular-nums">
                       {formatWon(monthly.totalNet)}
                     </span>
-                    <p className={cn("text-sm font-medium", delta.className)}>
-                      {delta.text}
-                    </p>
-                    {monthly.previousNet !== 0 ? (
-                      <p className="text-muted-foreground text-xs">
-                        {prevLabel}에는 {formatWon(monthly.previousNet)} 썼어요
+                    {/* 이번 달은 끝나지 않아 지난달 전체와 증감을 비교하지 않는다(홈과 같은 규칙). */}
+                    {isCurrentMonth ? (
+                      monthly.previousNet !== 0 ? (
+                        <p className="text-caption text-muted-foreground">
+                          지난달 전체 {formatWon(monthly.previousNet)}
+                        </p>
+                      ) : null
+                    ) : (
+                      <p className={cn("text-body font-medium", delta.className)}>
+                        {delta.text}
                       </p>
-                    ) : null}
+                    )}
                   </div>
 
-                  <dl className="bg-muted/70 grid min-w-0 grid-cols-3 divide-x divide-border/60 rounded-2xl py-4 text-center">
-                    <div className="flex min-w-0 flex-col gap-1.5 px-2">
-                      <dt className="text-muted-foreground text-xs">승인</dt>
-                      <dd className="text-[13px] font-semibold tabular-nums [overflow-wrap:anywhere]">
-                        {formatWon(monthly.totalApproved)}
-                      </dd>
-                    </div>
-                    <div className="flex min-w-0 flex-col gap-1.5 px-2">
-                      <dt className="text-muted-foreground text-xs">취소</dt>
-                      <dd className="text-[13px] font-semibold tabular-nums [overflow-wrap:anywhere]">
-                        {formatWon(monthly.totalCancelled)}
-                      </dd>
-                    </div>
-                    <div className="flex min-w-0 flex-col gap-1.5 px-2">
-                      <dt className="text-muted-foreground text-xs">거래</dt>
-                      <dd className="text-[13px] font-semibold tabular-nums [overflow-wrap:anywhere]">
-                        {monthly.transactionCount.toLocaleString("ko-KR")}건
-                      </dd>
-                    </div>
-                  </dl>
-
                   {/* 직접 제외·자산 이동만 공시한다. 비공개 거래의 존재·건수는 표시하지 않는다. */}
-                  <p className="text-muted-foreground text-xs">
-                    카드 공개 정책으로 열람할 수 있는 기록만 집계해요.
+                  <p className="text-caption text-muted-foreground">
+                    승인 {formatWon(monthly.totalApproved)} · 취소{" "}
+                    {formatWon(monthly.totalCancelled)} ·{" "}
+                    {monthly.transactionCount.toLocaleString("ko-KR")}건 · 볼 수 있는 기록만
                   </p>
                   {excludedNotes.length > 0 ? (
                     <div className="text-muted-foreground space-y-1 text-xs">
@@ -546,8 +523,8 @@ function LedgerAnalysisView() {
             <MonthlyInsightsCard month={month} />
           ) : (
             <Button
-              variant="outline"
-              className="min-h-11 w-full"
+              variant="weak"
+              className="w-full"
               onClick={() => setInsightsMonth(month)}
             >
               <Sparkles className="size-4" aria-hidden="true" />이 달의 특징
@@ -563,10 +540,6 @@ function LedgerAnalysisView() {
           <Card className="finance-panel">
             <CardHeader>
               <CardTitle>어디에 많이 썼나요?</CardTitle>
-              <CardDescription>
-                {isCurrentMonth ? "이번 달" : formatMonth(month)} 카테고리별
-                지출이에요
-              </CardDescription>
             </CardHeader>
             <CardContent>
               {categoriesQuery.isLoading || categoriesQuery.isError ? (
@@ -590,11 +563,6 @@ function LedgerAnalysisView() {
               <CardTitle>
                 {isCurrentMonth ? "이번 달 예산" : `${formatMonth(month)} 예산`}
               </CardTitle>
-              <CardDescription>
-                {isCurrentMonth
-                  ? "사용률이 높은 예산부터 보여드려요"
-                  : "그 달의 예산 달성률이에요"}
-              </CardDescription>
               <CardAction>
                 <SeeAllLink
                   href={`/budgets?month=${encodeURIComponent(month)}`}
@@ -695,10 +663,6 @@ function LedgerAnalysisView() {
               <Card className="finance-panel">
                 <CardHeader>
                   <CardTitle>자주 간 곳은 어디인가요?</CardTitle>
-                  <CardDescription>
-                    {isCurrentMonth ? "이번 달" : formatMonth(month)} 가맹점별
-                    지출 상위예요
-                  </CardDescription>
                 </CardHeader>
                 <CardContent>
                   {merchantsQuery.isLoading || merchantsQuery.isError ? (
@@ -720,9 +684,6 @@ function LedgerAnalysisView() {
               <Card className="finance-panel">
                 <CardHeader>
                   <CardTitle>누가, 어떤 카드로 썼나요?</CardTitle>
-                  <CardDescription>
-                    구성원과 카드별로 모아봤어요
-                  </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-5">
                   <section className="flex flex-col gap-1">
@@ -821,7 +782,6 @@ function LedgerAnalysisView() {
               <Card className="finance-panel">
                 <CardHeader>
                   <CardTitle>최근 거래</CardTitle>
-                  <CardDescription>가장 최근에 기록된 거래예요</CardDescription>
                   <CardAction>
                     <SeeAllLink href="/transactions" />
                   </CardAction>

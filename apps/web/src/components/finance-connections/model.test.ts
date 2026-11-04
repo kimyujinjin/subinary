@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { connectionFixture as item } from "./fixtures.test-support";
-import { canRefreshOnOpen, connectionDecimal, connectionFailureMessage, connectionTime, createConnectionSession, hasPreviousSnapshot, reconcileConnectionOperation, type ConnectionOperation } from "./model";
+import { canRefreshOnOpen, connectionDecimal, connectionMoney, connectionFailureMessage, connectionTime, createConnectionSession, hasPreviousSnapshot, reconcileConnectionOperation, type ConnectionOperation } from "./model";
 
 describe("connection display and refresh decisions", () => {
   it("preserves large integers and fractional precision without a currency conversion", () => {
@@ -80,5 +80,17 @@ describe("uncached connection task session", () => {
   it("does not treat another owner's/record's result as reconciliation", () => {
     const operation: ConnectionOperation = { kind: "register", id: "44444444-4444-4444-8444-444444444444", version: 0 };
     expect(reconcileConnectionOperation(operation, [item])).toBe(operation);
+  });
+});
+
+describe("connectionMoney", () => {
+  it("keeps won exact and rounds dollars to cents without passing through Number", () => {
+    expect(connectionMoney("123456.75", "KRW")).toBe("123,456.75원");
+    expect(connectionMoney("10294.660625", "USD")).toBe("$10,294.66");
+    expect(connectionMoney("98.005", "USD")).toBe("$98.01");
+    expect(connectionMoney("0.004", "USD")).toBe("$0.00");
+    expect(connectionMoney("99.999", "USD")).toBe("$100.00");
+    expect(connectionMoney("90071992547409931234.5", "USD")).toBe("$90,071,992,547,409,931,234.50");
+    expect(connectionMoney("-1.234", "USD")).toBe("-$1.23");
   });
 });

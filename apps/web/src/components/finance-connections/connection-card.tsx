@@ -1,10 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Landmark } from "lucide-react";
 import type { FinanceConnection } from "@family/contracts";
 import { Button } from "@/components/ui/button";
-import { CONNECTION_ERROR, CONNECTION_STATUS, connectionDecimal, connectionTime, hasPreviousSnapshot } from "./model";
+import { BottomSheet } from "@/components/widgets/bottom-sheet";
+import { OverflowMenu } from "@/components/widgets/overflow-menu";
+import { StatusChip, type ChipTone } from "@/components/widgets/status-chip";
+import { CONNECTION_ERROR, CONNECTION_STATUS, connectionDecimal, connectionMoney, connectionTime, hasPreviousSnapshot } from "./model";
+
+const CURRENCY_LABEL = { KRW: "국내 주식", USD: "미국 주식" } as const;
 
 export function ConnectionCard({ item, disabled, unconfirmed = false, canManage, enabled, onSelect, onRefresh, onDisconnect }: {
   item: FinanceConnection; disabled: boolean; unconfirmed?: boolean; canManage: boolean; enabled: boolean;
@@ -16,82 +20,73 @@ export function ConnectionCard({ item, disabled, unconfirmed = false, canManage,
   const selected = item.accountOptions.find((account) => account.id === item.selectedAccountId);
   const stale = hasPreviousSnapshot(item) || unconfirmed || !enabled;
   const settled = item.status !== "connecting" && item.status !== "refreshing";
+  const fresh = item.status === "ready" && item.snapshot && !stale;
+  const chip: [ChipTone, string] | null = unconfirmed
+    ? ["attention", "조회 확인 필요"]
+    : fresh ? null
+    : item.status === "ready" && !item.snapshot ? ["neutral", "조회 전"]
+    // 이전 값은 본문의 `이전 조회 내역` 줄이 이미 말한다 — 칩에 '조회 완료'를 달면 지금 값처럼 읽힌다.
+    : item.status === "ready" ? null
+    : item.status === "error" || item.status === "reauth_required" ? ["error", CONNECTION_STATUS[item.status]]
+    : ["pending", CONNECTION_STATUS[item.status]];
   return (
-    <article className="min-w-0 space-y-4 rounded-xl border bg-card p-4" aria-label="토스증권 연결 정보">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-1 basis-32 gap-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent text-primary"><Landmark className="size-5" aria-hidden="true" /></span>
-          <div className="min-w-0"><h2 className="font-semibold">토스증권</h2>{selected ? <p className="mt-1 break-words text-sm leading-relaxed text-muted-foreground">{selected.label}</p> : null}</div>
+    <article className="finance-panel min-w-0 space-y-4 p-5" aria-label="토스증권 연결 정보">
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h2 className="text-body font-semibold">{selected?.label ?? "토스증권"}</h2>
+          <p className="text-micro text-muted-foreground">마지막 조회 성공: {connectionTime(item.lastSuccessAt)}</p>
         </div>
-        <span className={`rounded-full px-3 py-1.5 text-xs font-medium ${item.status === "ready" && item.snapshot && !stale ? "bg-accent text-accent-foreground" : "bg-muted text-muted-foreground"}`}>{unconfirmed ? "조회 확인 필요" : item.status === "ready" && !item.snapshot ? "조회 전" : CONNECTION_STATUS[item.status]}</span>
+        <div className="flex shrink-0 items-center gap-1">
+          {chip ? <StatusChip tone={chip[0]}>{chip[1]}</StatusChip> : null}
+          {canManage ? <OverflowMenu label="토스증권 연결 메뉴" actions={[{ label: "연결 해제", destructive: true, disabled, onSelect: () => setConfirmDelete(true) }]} /> : null}
+        </div>
       </div>
-      {item.errorCode ? <p role="status" className="rounded-lg bg-muted p-3 text-sm leading-relaxed">{CONNECTION_ERROR[item.errorCode]}</p> : null}
-      {item.status === "connecting" || item.status === "refreshing" ? <p role="status" className="text-sm text-muted-foreground">처리 중이에요. 아래 ‘연결 상태 확인’으로 결과를 확인할 수 있어요.</p> : null}
+      {item.errorCode ? <p role="status" className="text-caption text-muted-foreground">{CONNECTION_ERROR[item.errorCode]}</p> : null}
       {!item.selectedAccountId && item.status === "select_account" ? (
-        <form className="space-y-3 border-t pt-4" onSubmit={(event) => { event.preventDefault(); if (!disabled && item.accountOptions.some((option) => option.id === selection)) onSelect(selection); }}>
-          <div>
-            <h3 className="text-sm font-semibold">2. 계좌 선택</h3>
-            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">키를 확인했어요. 계좌를 선택하면 보유 주식 조회를 진행해요.</p>
-          </div>
-          {item.accountOptions.length === 0 ? <p className="text-sm text-muted-foreground">조회할 수 있는 종합매매 계좌가 없어요.</p> : null}
-          <label className="block space-y-2 text-sm font-medium">
-            <span>조회할 계좌</span>
-            <select value={selection} onChange={(event) => setSelection(event.target.value)} required disabled={disabled || !canManage || !enabled} className="min-h-12 w-full min-w-0 rounded-xl border bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
-              <option value="">계좌를 선택해 주세요</option>
+        <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); if (!disabled && item.accountOptions.some((option) => option.id === selection)) onSelect(selection); }}>
+          <p className="text-body">조회할 계좌를 선택해 주세요.</p>
+          {item.accountOptions.length === 0 ? <p className="text-caption text-muted-foreground">조회할 수 있는 종합매매 계좌가 없어요.</p> : null}
+          <label className="block">
+            <span className="sr-only">조회할 계좌</span>
+            <select value={selection} onChange={(event) => setSelection(event.target.value)} required disabled={disabled || !canManage || !enabled} className="text-body min-h-12 w-full min-w-0 rounded-control border bg-background px-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+              <option value="">계좌 선택</option>
               {item.accountOptions.map((account) => <option key={account.id} value={account.id}>{account.label}</option>)}
             </select>
           </label>
-          <Button type="submit" disabled={disabled || !canManage || !enabled || !selection} className="min-h-12 w-full rounded-xl">이 계좌 조회하기</Button>
+          <Button type="submit" size="lg" disabled={disabled || !canManage || !enabled || !selection} className="w-full">이 계좌 조회하기</Button>
         </form>
       ) : null}
       {item.snapshot ? (
-        <section className="space-y-4 border-t pt-4" aria-label="보유 주식 조회 내역">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold">보유 주식 평가금액</h3>
-            {stale ? <span className="text-xs font-medium text-muted-foreground">이전 조회 내역</span> : null}
-          </div>
-          <dl className="space-y-3">
+        <section className="space-y-3" aria-label="보유 주식 조회 내역">
+          {stale ? <p className="text-caption text-muted-foreground">이전 조회 내역 · {connectionTime(item.snapshot.observedAt)}</p> : null}
+          <dl className="space-y-2">
             {(["KRW", "USD"] as const).map((currency) => {
               const total = item.snapshot!.totals.find((value) => value.currency === currency);
-              return <div key={currency} className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                <dt className="text-sm text-muted-foreground">{currency === "KRW" ? "원화 평가금액" : "달러 평가금액"}</dt>
-                <dd className={`ml-auto min-w-0 max-w-full break-all text-right font-semibold tabular-nums ${total ? "text-xl tracking-tight" : "text-sm text-muted-foreground"}`}>{total ? `${connectionDecimal(total.marketValue)} ${currency === "KRW" ? "원" : "USD"}` : "조회 내역 없음"}</dd>
+              return <div key={currency} className="flex min-w-0 items-baseline justify-between gap-3">
+                <dt className="text-body text-muted-foreground shrink-0">{CURRENCY_LABEL[currency]}</dt>
+                <dd className={`min-w-0 break-all text-right tabular-nums ${total ? "text-heading" : "text-body text-muted-foreground"}`}>{total ? connectionMoney(total.marketValue, currency) : "조회 내역 없음"}</dd>
               </div>;
             })}
           </dl>
-          <dl className="space-y-1 text-xs leading-relaxed text-muted-foreground">
-            <div><dt className="inline">정보를 가져온 시각: </dt><dd className="inline">{connectionTime(item.snapshot.observedAt)} (한국 시간)</dd></div>
-            <div><dt className="inline">증권사 평가 기준 시각: </dt><dd className="inline">제공되지 않음</dd></div>
-          </dl>
-          <p className="text-xs leading-relaxed text-muted-foreground">원화와 달러는 합산하거나 환산하지 않아요. 은행 잔액은 포함하지 않아요.</p>
-          {item.snapshot.items.length === 0 ? <p className="py-2 text-sm text-muted-foreground">조회된 보유 주식이 없어요.</p> : (
-            <ul className="divide-y border-t" aria-label="보유 주식">
+          {item.snapshot.items.length === 0 ? <p className="text-caption text-muted-foreground">조회된 보유 주식이 없어요.</p> : (
+            <ul className="divide-y divide-border/60 border-t border-border/60" aria-label="보유 주식">
               {item.snapshot.items.slice(0, visibleCount).map((holding, index) => (
-                <li key={`${holding.symbol}/${holding.currency}/${index}`} className="flex flex-wrap items-start justify-between gap-3 py-4 text-sm">
-                  <div className="min-w-0 flex-1 basis-28"><p className="break-words font-medium">{holding.name || holding.symbol}</p><p className="mt-1 break-all text-xs text-muted-foreground">{holding.symbol} · {connectionDecimal(holding.quantity)}주</p></div>
-                  <p className="ml-auto min-w-0 max-w-full break-all text-right font-semibold tabular-nums">{connectionDecimal(holding.marketValue)} {holding.currency === "KRW" ? "원" : "USD"}</p>
+                <li key={`${holding.symbol}/${holding.currency}/${index}`} className="flex items-center justify-between gap-3 py-3">
+                  <div className="min-w-0 flex-1"><p className="text-body break-words font-medium">{holding.name || holding.symbol}</p><p className="text-caption text-muted-foreground break-all">{holding.symbol} · {connectionDecimal(holding.quantity)}주</p></div>
+                  <p className="text-body min-w-0 break-all text-right font-semibold tabular-nums">{connectionMoney(holding.marketValue, holding.currency)}</p>
                 </li>
               ))}
             </ul>
           )}
-          {visibleCount < item.snapshot.items.length ? <Button variant="outline" className="min-h-11 w-full" onClick={() => setVisibleCount((count) => count + 20)}>보유 주식 더 보기</Button> : null}
+          {visibleCount < item.snapshot.items.length ? <Button variant="ghost" className="w-full" onClick={() => setVisibleCount((count) => count + 20)}>보유 주식 더 보기</Button> : null}
         </section>
-      ) : item.selectedAccountId && settled ? <div className="space-y-2 border-t pt-5"><h3 className="text-sm font-semibold">3. 조회</h3><p className="text-sm leading-relaxed text-muted-foreground">아직 보유 주식을 가져오지 못했어요. 조회 전 금액은 합계로 표시하지 않아요.</p></div> : null}
-      <p className="text-xs leading-relaxed text-muted-foreground">마지막 조회 성공: {connectionTime(item.lastSuccessAt)}</p>
-      {item.nextRefreshAt && !item.canRefresh && settled && item.selectedAccountId ? <p className="text-xs leading-relaxed text-muted-foreground">다음 조회 가능: {connectionTime(item.nextRefreshAt)} 이후 · 연결 상태를 확인해 주세요.</p> : null}
-      {canManage ? <div className="flex flex-wrap gap-2 border-t pt-4">
-        {item.selectedAccountId ? <Button variant="tint" className="min-h-12 flex-1 rounded-xl" disabled={disabled || !enabled || !item.canRefresh} onClick={onRefresh}>새로 조회</Button> : null}
-        <Button variant="ghost" className="min-h-12 rounded-xl text-muted-foreground" disabled={disabled} onClick={() => setConfirmDelete(true)}>연결 해제</Button>
-      </div> : null}
-      {confirmDelete ? <section aria-label="연결 해제 확인" className="space-y-3 rounded-xl border p-3">
-        <h3 className="text-sm font-semibold">연결을 해제할까요?</h3>
-        <p className="text-sm leading-relaxed text-muted-foreground">모아에 저장한 연결 키를 삭제하고 앞으로의 조회를 중단해요. 토스증권의 API 키 자체는 폐기되지 않아요.</p>
-        <p className="text-xs leading-relaxed text-muted-foreground">이전에 조회한 기록은 보관되며, 연결 해제 뒤 이 화면에 표시되지 않아요.</p>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="destructive" className="min-h-11 flex-1" disabled={disabled} onClick={() => { setConfirmDelete(false); onDisconnect(); }}>삭제하고 연결 해제</Button>
-          <Button variant="outline" className="min-h-11" onClick={() => setConfirmDelete(false)}>취소</Button>
-        </div>
-      </section> : null}
+      ) : item.selectedAccountId && settled ? <p className="text-body text-muted-foreground">아직 보유 주식을 가져오지 못했어요.</p> : null}
+      {enabled && item.nextRefreshAt && !item.canRefresh && settled && item.selectedAccountId ? <p className="text-caption text-muted-foreground">다음 조회 가능: {connectionTime(item.nextRefreshAt)} 이후</p> : null}
+      {canManage && enabled && item.selectedAccountId ? <Button variant="weak" className="w-full" disabled={disabled || !enabled || !item.canRefresh} onClick={onRefresh}>새로 조회</Button> : null}
+      <BottomSheet open={confirmDelete} onOpenChange={setConfirmDelete} title="연결을 해제할까요?">
+        <p className="text-body text-muted-foreground pb-3">모아에 저장한 연결 키를 삭제하고 조회를 멈춰요. 토스증권의 API 키 자체는 폐기되지 않고, 이전 조회 기록은 보관돼요.</p>
+        <Button variant="destructive" size="lg" className="w-full" disabled={disabled} onClick={() => { setConfirmDelete(false); onDisconnect(); }}>삭제하고 연결 해제</Button>
+      </BottomSheet>
     </article>
   );
 }

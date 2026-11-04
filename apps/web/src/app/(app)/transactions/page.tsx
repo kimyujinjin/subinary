@@ -27,7 +27,7 @@ import type {
   TransactionUpdateRequest,
 } from "@family/contracts";
 import { DEFAULT_TIMEZONE } from "@family/shared";
-import { Search, X } from "lucide-react";
+import { Plus, Search, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -60,7 +60,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ListRow, Money, StatusBadge } from "@/components/widgets";
+import { ListRow, Money, StatusBadge, StatusChip, type ChipTone } from "@/components/widgets";
+import { LedgerHeader } from "@/components/ledger-header";
 import { ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { categoryIcon } from "@/lib/category-icon";
@@ -107,7 +108,6 @@ import {
 import { registerTransactionDetailBack, type TransactionDetailBackSource } from "@/lib/transaction-detail-back";
 import { AddTransactionDialog } from "./add-transaction-dialog";
 import { TransactionFxDetails } from "@/components/transaction-fx-details";
-import { LedgerNav } from "@/components/ledger-nav";
 import { TransactionFilters } from "./transaction-filters";
 import type { ActiveTransactionFilter, TransactionFilterKey } from "./filter-summary";
 import { initialTransactionMonth, transactionReviewPeriodQuery } from "@/lib/transaction-review-filter";
@@ -213,6 +213,18 @@ function errorMessage(error: unknown): string {
 }
 
 /** 거래 발생 시각(승인 → 취소 → 수신 순 fallback). */
+const TXN_STATUS_CHIP: Record<string, [ChipTone, string]> = {
+  partially_cancelled: ["attention", "부분취소"],
+  cancelled: ["neutral", "취소"],
+  pending_review: ["attention", "확인 필요"],
+  duplicate_suspected: ["error", "중복 의심"],
+};
+
+function TxnStatusChip({ status }: { status: string }) {
+  const [tone, label] = TXN_STATUS_CHIP[status] ?? ["neutral", status];
+  return <StatusChip tone={tone}>{label}</StatusChip>;
+}
+
 function occurredAt(txn: TransactionSummary): string {
   return txn.approvedAt ?? txn.cancelledAt ?? txn.createdAt;
 }
@@ -555,7 +567,14 @@ function TransactionsView() {
         group.total += txn.netAmount;
       }
     }
-    return [...map.values()];
+    // 서버 정렬 키와 화면의 날짜(approvedAt ?? cancelledAt ?? createdAt)가 다를 수 있어
+    // 첫 등장 순서를 그대로 쓰면 11월 4일 → 2일 → 3일처럼 섞였다. 날짜 키로 다시 정렬한다.
+    return [...map.values()]
+      .map((group) => ({
+        ...group,
+        items: [...group.items].sort((a, b) => occurredAt(b).localeCompare(occurredAt(a))),
+      }))
+      .sort((a, b) => (a.key === "unknown" ? 1 : b.key === "unknown" ? -1 : b.key.localeCompare(a.key)));
   }, [items]);
 
   // --- 뮤테이션(행 작업) ---
@@ -768,7 +787,8 @@ function TransactionsView() {
       memberNameOf(txn),
       categoryNameOf(txn) ?? "미분류",
     ];
-    if (txn.installmentMonths) parts.push(`${txn.installmentMonths}개월 할부`);
+    // 1개월은 일시불이다 — `1개월 할부`로 쓰면 할부로 오해한다.
+    if (txn.installmentMonths && txn.installmentMonths > 1) parts.push(`${txn.installmentMonths}개월 할부`);
     return parts.join(" · ");
   };
 
@@ -777,14 +797,15 @@ function TransactionsView() {
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
-      <header className="flex min-h-11 items-center justify-between gap-3">
-        <h1 className="text-[28px] font-bold tracking-tight">가계부</h1>
-        <Button size="sm" variant="ghost" className="bg-finance-highlight text-finance-highlight-foreground hover:bg-finance-highlight/80 min-h-11 rounded-xl px-4" onClick={() => setAddOpen(true)}>
-          거래 추가
-        </Button>
-      </header>
-
-      <LedgerNav active="transactions" month={month} />
+      <LedgerHeader
+        active="transactions"
+        month={month}
+        action={
+          <Button size="icon" variant="ghost" className="-mr-2" aria-label="거래 추가" onClick={() => setAddOpen(true)}>
+            <Plus />
+          </Button>
+        }
+      />
 
       <TransactionFilters
         month={month}
@@ -811,7 +832,7 @@ function TransactionsView() {
             maxLength={SEARCH_MAX_LENGTH}
             placeholder="가맹점이나 메모로 찾기"
             aria-label="거래 검색"
-            className="min-h-12 rounded-2xl border-border/70 bg-card pl-11 pr-12 shadow-none"
+            className="min-h-12 rounded-control border-transparent bg-card pl-11 pr-12 shadow-none"
           />
           {qInput ? (
             <button
@@ -891,12 +912,13 @@ function TransactionsView() {
             <>
               {groups.map((group) => (
                 <section key={group.key} className="finance-panel flex min-w-0 flex-col px-3 py-2 sm:px-5">
-                  <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-border/70 px-1 py-3 sm:px-2">
-                    <h2 className="text-foreground text-[13px] font-semibold">
+                  <div className="flex min-w-0 items-baseline justify-between gap-3 px-1 pt-3 pb-1 sm:px-2">
+                    <h2 className="text-caption text-muted-foreground font-semibold">
                       {group.label}
                     </h2>
-                    <p className="text-muted-foreground ml-auto min-w-0 text-right text-xs [overflow-wrap:anywhere]">
-                      원화 승인 소계 <Money amount={group.total} className="ml-1 text-foreground font-semibold" />
+                    <p className="text-caption text-muted-foreground min-w-0 text-right" title="원화 승인 소계(외화·제외 거래 빼고)">
+                      <span className="sr-only">원화 승인 소계 </span>
+                      <Money amount={group.total} />
                     </p>
                   </div>
                   <div className="flex flex-col">
@@ -952,19 +974,18 @@ function TransactionsView() {
                                 </span>
                               ) : null}
                               {excluded ? (
-                                <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-[11px] font-medium">
-                                  제외됨
-                                </span>
-                              ) : (
-                                <StatusBadge status={txn.status} />
-                              )}
+                                <StatusChip>제외됨</StatusChip>
+                              ) : txn.status !== "approved" ? (
+                                // 승인은 기본 상태라 표시하지 않는다(§5 가계부) — 취소·확인 필요만 칩으로.
+                                <TxnStatusChip status={txn.status} />
+                              ) : null}
                             </span>
                           }
                           onClick={
                             txn.masked ? undefined : () => setDetailId(txn.id)
                           }
                           className={cn(
-                            "rounded-xl border-b border-border/50 py-4 last:border-b-0 hover:bg-muted/60",
+                            "rounded-control py-3 hover:bg-muted/60",
                             busyId === txn.id
                               ? "pointer-events-none opacity-60"
                               : undefined
@@ -1428,7 +1449,7 @@ function TransactionDetailDialog({
                   </span>
                 ) : null}
                 <StatusBadge status={txn.status} />
-                {txn.installmentMonths ? (
+                {txn.installmentMonths && txn.installmentMonths > 1 ? (
                   <span className="text-muted-foreground text-xs">
                     {txn.installmentMonths}개월 할부
                   </span>

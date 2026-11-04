@@ -47,7 +47,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { BudgetCardPicker } from "@/components/budget-card-picker";
-import { LedgerNav } from "@/components/ledger-nav";
+import { LedgerHeader } from "@/components/ledger-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -574,34 +574,23 @@ function BudgetsView() {
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
-      <header className="flex min-w-0 items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-col gap-1.5">
-          <h1 className="text-[28px] font-bold tracking-tight">예산</h1>
-          <p className="text-muted-foreground text-sm">
-            {isCurrentMonth
-              ? "이번 달 얼마나 썼는지 한눈에 확인해요"
-              : isFutureMonth
-              ? "앞으로 쓸 계획을 미리 세워요"
-              : "그 달에 세운 계획을 그대로 확인해요"}
-          </p>
-        </div>
-          {canEdit && items.length > 0 ? (
-            <Button type="button" className="min-h-11 shrink-0 rounded-xl" onClick={() => setCreateOpen(true)}>
+      <LedgerHeader
+        active="budgets"
+        month={month}
+        action={
+          canEdit && items.length > 0 ? (
+            <Button type="button" variant="ghost" size="icon" className="-mr-2" aria-label="예산 만들기" onClick={() => setCreateOpen(true)}>
               <Plus />
-              예산 만들기
             </Button>
-          ) : null}
-      </header>
-      <LedgerNav active="budgets" month={month} />
+          ) : null
+        }
+      />
       <div className="flex min-w-0 items-center justify-start">
-        <MonthSwitcher month={month} months={availableMonths} onChange={setMonth} className="-ml-2 [&>button]:size-11 [&>span]:text-2xl [&>span]:font-bold [&>span]:tracking-tight" />
+        <MonthSwitcher month={month} months={availableMonths} onChange={setMonth} className="-ml-2" />
       </div>
 
       {/* 목록 ------------------------------------------------------------- */}
-      <section className="flex flex-col gap-4">
-        <h2 className="text-muted-foreground text-[13px] font-semibold">
-          {isCurrentMonth ? "이번 달 예산" : `${formatMonth(month)} 예산`}
-        </h2>
+      <section className="flex flex-col gap-3" aria-label={isCurrentMonth ? "이번 달 예산" : `${formatMonth(month)} 예산`}>
 
         {budgetsQuery.isLoading ? (
           [0, 1].map((i) => (
@@ -667,8 +656,8 @@ function BudgetsView() {
               month
             );
             return (
-              <Card key={budget.id} className="finance-panel">
-                <CardContent className="flex flex-col gap-4">
+              <Card key={budget.id} className="finance-panel border-0 py-5 shadow-none">
+                <CardContent className="flex flex-col gap-3">
                   <UsageBar
                     label={budget.name ?? (budget.scopeType === "card_group" ? "카드 묶음 예산" : budget.scopeLabel)}
                     spent={budget.spent}
@@ -683,7 +672,7 @@ function BudgetsView() {
                         : SCOPE_TYPE_LABEL[budget.scopeType]
                     }
                   />
-                  {budget.scopeType === "card_group" ? <p className="text-muted-foreground break-words text-[13px]">{budget.scopeLabel}</p> : null}
+                  {budget.scopeType === "card_group" ? <p className="text-caption text-muted-foreground -mt-2 break-words">{budget.scopeLabel}</p> : null}
                   <BudgetStatusLine budget={budget} />
                   {/* 넘기 전에 알린다 — P1-22를 정보로 푸는 한 줄(D7). */}
                   <ProjectedOverLine
@@ -696,26 +685,22 @@ function BudgetsView() {
                     최악의 조언을 하는 셈이다 — 수정·삭제는 ⋯로 내린다.
                     딥링크에는 지금 보고 있는 달을 함께 싣는다. 카드 묶음은
                     단일 카드 필터 링크를 각각 제공해 다른 지출이 섞이지 않게 한다. */}
-                  <div className="flex items-center gap-2 border-t border-border/60 pt-4">
+                  <div className="-mb-2 flex items-start gap-2">
                     {spentHref ? (
-                      <Button
-                        asChild
-                        variant="tint"
-                        size="sm"
-                        className="h-11 flex-1"
-                      >
-                        <Link href={spentHref}>어디서 썼는지 보기</Link>
-                      </Button>
+                      <Link href={spentHref} className="text-caption text-muted-foreground hover:text-foreground inline-flex min-h-11 flex-1 items-center font-medium">
+                        어디서 썼는지 보기 ›
+                      </Link>
                     ) : budget.scopeType === "card_group" ? (
-                      <div className="flex min-w-0 flex-1 flex-col gap-2">
-                        <p className="text-muted-foreground text-[12px]">카드별 사용 내역</p>
-                        {budget.cardIds.map((id) => {
-                          const card = cardsQuery.data?.find((item) => item.id === id);
-                          return <Button key={id} asChild variant="tint" size="sm" className="h-auto min-h-11 justify-start whitespace-normal py-2 text-left">
-                            <Link href={transactionsHref({ month, cardId: id })}>{card ? cardIdentityLabel(card, memberNames) : "등록 카드 내역 확인"}</Link>
-                          </Button>;
-                        })}
-                      </div>
+                      // 카드 구성(소유자·끝 4자리)은 기본으로 펼치지 않는다(§5 예산) — 필요할 때만 연다.
+                      <details className="min-w-0 flex-1">
+                        <summary className="text-caption text-muted-foreground hover:text-foreground flex min-h-11 cursor-pointer items-center font-medium">카드별로 어디서 썼는지 보기</summary>
+                        <div className="flex flex-col pb-2">
+                          {budget.cardIds.map((id) => {
+                            const card = cardsQuery.data?.find((item) => item.id === id);
+                            return <Link key={id} href={transactionsHref({ month, cardId: id })} className="text-body hover:bg-muted/50 -mx-2 flex min-h-11 items-center rounded-control px-2">{card ? cardIdentityLabel(card, memberNames) : "등록 카드 내역 확인"} ›</Link>;
+                          })}
+                        </div>
+                      </details>
                     ) : (
                       <span className="flex-1" />
                     )}
@@ -771,21 +756,9 @@ function BudgetsView() {
         ) : null}
 
         {canManage && !isPastMonth && items.length > 0 ? (
-          <Card className="finance-panel">
-            <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex flex-col gap-1">
-                <p className="text-sm font-semibold">
-                  {formatMonth(addMonths(month, 1))} 계획을 만들까요?
-                </p>
-                <p className="text-muted-foreground text-[13px]">
-                  지금 계획을 복사한 뒤 다음 달 금액을 따로 조정할 수 있어요
-                </p>
-              </div>
-              <Button type="button" variant="tint" onClick={openCopy}>
-                다음 달 계획 만들기
-              </Button>
-            </CardContent>
-          </Card>
+          <Button type="button" variant="weak" className="w-full" onClick={openCopy}>
+            {formatMonth(addMonths(month, 1))} 계획 미리 만들기
+          </Button>
         ) : null}
       </section>
 

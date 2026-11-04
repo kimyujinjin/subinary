@@ -40,33 +40,38 @@ export function BankCredentialForm({ householdId, runnerId, credentials, storage
         await authedFetch(token => macBankRunnerApi.saveCredentials(token, { ...scope,
           loginId: fields.get("loginId"), password: fields.get("password"), consentVersion: MAC_BANK_CREDENTIAL_CONSENT_VERSION }, request.signal));
       } else await authedFetch(token => macBankRunnerApi.deleteCredentials(token, scope, request.signal));
-      if (mounted.current && !request.signal.aborted) setNotice(action === "save" ? "로그인 정보를 암호화해 저장했어요. 조회 시작을 누르면 Mac이 자동 로그인해요." : "저장한 로그인 정보를 삭제했어요.");
+      if (mounted.current && !request.signal.aborted) setNotice(action === "save" ? "로그인 정보를 저장했어요." : "저장한 로그인 정보를 삭제했어요.");
     } catch {
-      if (mounted.current && !request.signal.aborted) setNotice("설정 결과를 확인하지 못했어요. 연결 상태를 다시 확인한 뒤 로그인 정보를 다시 입력해 주세요.");
+      if (mounted.current && !request.signal.aborted) setNotice("저장 결과를 확인하지 못했어요. 로그인 정보를 다시 입력해 주세요.");
     } finally {
       element.reset(); submitting.current = false;
       if (mounted.current && !request.signal.aborted) { setBusy(false); onChanged(); }
     }
   }
-  return <section className="space-y-3 rounded-xl border p-4" aria-label="신한은행 자동 로그인 설정">
-    <h3 className="font-semibold">신한은행 로그인 정보</h3>
-    <p className="text-sm">{stored ? "암호화 저장됨 · 연결한 Mac에서 자동 로그인에 사용해요." : "아이디와 비밀번호를 설정하면 Mac이 자동으로 로그인해요."}</p>
-    {!storageAvailable ? <p role="alert" className="text-sm">암호화 저장을 사용할 수 없어요. 연결 상태를 확인해 주세요.</p> : null}
-    <form ref={form} method="post" autoComplete="off" onSubmit={event => { void change("save", event); }} className="space-y-3">
-      <fieldset disabled={disabled || busy || !storageAvailable} className="space-y-3">
-        <label className="block space-y-1 text-sm"><span>신한은행 이용자 ID</span>
+  return <section className="space-y-4" aria-label="신한은행 자동 로그인 설정">
+    <p className="text-caption text-muted-foreground">{stored ? "암호화 저장됨 · 조회할 때 내 Mac이 자동으로 로그인해요." : "암호화해 저장하고, 조회할 때 내 Mac이 자동으로 로그인해요."}</p>
+    {!storageAvailable ? <p role="alert" className="text-caption text-destructive">암호화 저장을 사용할 수 없어요. 잠시 후 다시 시도해 주세요.</p> : null}
+    <form ref={form} method="post" autoComplete="off" onSubmit={event => { void change("save", event); }} className="space-y-4">
+      <fieldset disabled={disabled || busy || !storageAvailable} className="space-y-4">
+        <label className="text-caption block space-y-1.5 font-medium"><span>이용자 ID</span>
           <input name="loginId" type="text" required maxLength={100} autoComplete="off" autoCapitalize="none" spellCheck={false}
-            className="min-h-11 w-full rounded-lg border bg-background px-3" /></label>
-        <label className="block space-y-1 text-sm"><span>신한은행 비밀번호</span>
+            className="text-body min-h-12 w-full rounded-control border bg-background px-3" /></label>
+        <label className="text-caption block space-y-1.5 font-medium"><span>비밀번호</span>
           <input name="password" type="password" required maxLength={200} autoComplete="off"
-            className="min-h-11 w-full rounded-lg border bg-background px-3" /></label>
-        <label className="flex items-start gap-2 text-xs leading-relaxed"><input name="consent" type="checkbox" required className="mt-1" />
-          <span>{MAC_BANK_CREDENTIAL_CONSENT_TEXT}</span></label>
-        <Button type="submit" className="min-h-11 w-full">{busy ? "설정 중…" : stored ? "로그인 정보 변경" : "로그인 정보 저장"}</Button>
+            className="text-body min-h-12 w-full rounded-control border bg-background px-3" /></label>
+        <div>
+          <label className="text-body flex min-h-11 items-start gap-3"><input name="consent" type="checkbox" required className="accent-primary mt-0.5 size-5 shrink-0" />
+            <span>로그인 정보 저장과 내 Mac 전달에 동의해요</span></label>
+          <details className="text-caption text-muted-foreground pl-8">
+            <summary className="min-h-9 cursor-pointer py-2">자세히</summary>
+            <p className="pb-1">{MAC_BANK_CREDENTIAL_CONSENT_TEXT}</p>
+          </details>
+        </div>
+        <Button type="submit" size="lg" className="w-full">{busy ? "저장 중…" : stored ? "로그인 정보 변경" : "로그인 정보 저장"}</Button>
       </fieldset>
     </form>
-    {disabled ? <p className="text-xs text-muted-foreground">조회가 진행 중일 때는 로그인 정보를 변경할 수 없어요.</p> : null}
-    {stored ? <Button type="button" variant="ghost" disabled={disabled || busy || !storageAvailable} onClick={() => { void change("delete"); }}>로그인 정보 삭제</Button> : null}
-    {notice ? <p role="alert" className="text-sm">{notice}</p> : null}
+    {disabled ? <p className="text-caption text-muted-foreground">조회가 진행 중일 때는 바꿀 수 없어요.</p> : null}
+    {stored ? <Button type="button" variant="ghost" className="text-destructive w-full" disabled={disabled || busy || !storageAvailable} onClick={() => { void change("delete"); }}>로그인 정보 삭제</Button> : null}
+    {notice ? <p role="alert" className="text-caption">{notice}</p> : null}
   </section>;
 }

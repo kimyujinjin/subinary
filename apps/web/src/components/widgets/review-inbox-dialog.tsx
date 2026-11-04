@@ -109,7 +109,7 @@ export function ReviewInboxDialog({
             {details.map((d) => d.parseStatus === "ignored" ? (
               <div key={d.id} className="bg-muted space-y-2 rounded-lg p-3">
                 <p className="text-sm font-medium">결제 내역이 아닌 안내 문자예요</p>
-                <p className="text-muted-foreground text-sm">거래 금액에 반영하지 않았어요. 원문은 보관돼 있어요.</p>
+                <p className="text-muted-foreground text-sm">거래 금액에 반영하지 않았어요. 문자는 보관돼 있어요.</p>
                 <p className="text-sm break-words whitespace-pre-wrap">{d.rawContent}</p>
               </div>
             ) : d.parseStatus === "parse_failed" || d.parseStatus === "quarantined" ? (

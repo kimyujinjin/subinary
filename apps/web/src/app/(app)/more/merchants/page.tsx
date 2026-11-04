@@ -273,7 +273,6 @@ export default function MerchantsPage() {
     <div className="mx-auto w-full max-w-2xl space-y-5">
       <PageBackHeader
         title="가맹점 정리"
-        subtitle="같은 가게가 여러 이름으로 나뉘어 있으면 하나로 묶어요"
       />
 
       {isLoading ? (

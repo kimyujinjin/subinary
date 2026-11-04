@@ -41,7 +41,7 @@ export function LedgerNav({
   return (
     <nav
       aria-label="가계부 메뉴"
-      className="grid min-w-0 grid-cols-4 gap-1 rounded-2xl bg-muted/80 p-1"
+      className="grid min-w-0 grid-cols-4 gap-1 rounded-control bg-muted p-1"
     >
       {ledgerNavItems(month).map((item) => {
         const badge = item.key === "todo" && pending > 0;
@@ -56,9 +56,9 @@ export function LedgerNav({
                 : undefined
             }
             className={cn(
-              "flex min-h-11 min-w-0 items-center justify-center gap-1 rounded-xl px-1.5 py-2.5 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:px-2",
+              "text-body flex min-h-10 min-w-0 items-center justify-center gap-1 rounded-sm px-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:px-2",
               active === item.key
-                ? "bg-card text-foreground font-semibold shadow-sm"
+                ? "bg-card text-foreground font-semibold"
                 : "text-muted-foreground hover:text-foreground hover:bg-card/50 font-medium"
             )}
           >
@@ -66,7 +66,7 @@ export function LedgerNav({
             {badge ? (
               <span
                 aria-hidden="true"
-                className="bg-destructive text-destructive-foreground flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums"
+                className="bg-destructive text-destructive-foreground flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1 text-micro font-semibold tabular-nums"
               >
                 {pending > 99 ? "99+" : pending}
               </span>

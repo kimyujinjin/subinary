@@ -338,20 +338,12 @@ export default function HouseholdPage() {
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <PageBackHeader
         title="가족"
-        subtitle={
-          activeMembership?.name
-            ? `${activeMembership.name} 가족의 구성원과 초대를 관리해요.`
-            : "가족 구성원과 초대를 관리해요."
-        }
       />
 
       {/* 구성원 */}
       <Card>
         <CardHeader>
           <CardTitle>구성원</CardTitle>
-          <CardDescription>
-            함께 쓰는 가족의 역할과 상태를 한눈에 볼 수 있어요.
-          </CardDescription>
         </CardHeader>
         <CardContent>
           {membersQuery.isLoading ? (
@@ -547,8 +539,7 @@ export default function HouseholdPage() {
           <CardHeader>
             <CardTitle>공용 카드 색상</CardTitle>
             <CardDescription>
-              함께 쓰는 카드로 결제한 내역에 쓸 색이에요. 고르지 않으면 회색으로
-              보여요.
+              고르지 않으면 회색으로 보여요.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -620,7 +611,6 @@ export default function HouseholdPage() {
         <Card>
           <CardHeader>
             <CardTitle>초대 현황</CardTitle>
-            <CardDescription>보낸 초대의 상태를 확인해요.</CardDescription>
           </CardHeader>
           <CardContent>
             {invitationsQuery.isLoading ? (

@@ -96,8 +96,8 @@ describe("decideBackAction — 하위 화면", () => {
 
 
 describe("V2 route hierarchy and native back", () => {
-  it("only the three primary destinations offer exit confirmation", () => {
-    expect(TAB_ROOTS).toHaveLength(3);
+  it("only the four primary destinations offer exit confirmation (ADR-0037)", () => {
+    expect(TAB_ROOTS).toHaveLength(4);
     for (const path of TAB_ROOTS) {
       expect(decideBackAction({ ...base, atTabRoot: isTabRoot(path) })).toBe("confirm-exit");
     }

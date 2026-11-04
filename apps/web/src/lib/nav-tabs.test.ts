@@ -21,9 +21,9 @@ describe("path boundaries", () => {
 describe("simplified primary destinations", () => {
   it("keeps the agreed order, routes and labels", () => {
     expect(PRIMARY_TABS.map(({ href, label }) => [href, label])).toEqual([
-      ["/dashboard", "홈"], ["/transactions", "가계부"], ["/assets", "자산"],
+      ["/dashboard", "홈"], ["/transactions", "가계부"], ["/assets", "자산"], ["/more", "전체"],
     ]);
-    expect(TAB_ROOTS).toHaveLength(3);
+    expect(TAB_ROOTS).toHaveLength(4);
     for (const tab of PRIMARY_TABS) {
       expect(activeTabFor(tab.href)).toBe(tab.key);
       expect(isTabRoot(tab.href + "/")).toBe(true);
@@ -35,12 +35,12 @@ describe("simplified primary destinations", () => {
     ["/assets/loan-import/", "assets"],
     ["/budgets", "ledger"], ["/ledger/analysis/", "ledger"], ["/transactions/abc", "ledger"],
     ["/plan/housing", "assets"], ["/plan/funding/", "assets"],
-    ["/todo", "ledger"], ["/declines", "ledger"], ["/ai/", null],
-    ["/ai-operations", null], ["/household", null],
-    ["/devices", null], ["/categories", null], ["/notifications", null],
-    ["/more/merchants", null], ["/more/recurring", "ledger"],
-    ["/more/category-rules", null], ["/more/privacy/", null],
-    ["/more/notifications", null], ["/more/password", null],
+    ["/todo", "ledger"], ["/declines", "ledger"], ["/ai/", "all"],
+    ["/ai-operations", "all"], ["/household", "all"],
+    ["/devices", "all"], ["/categories", "all"], ["/notifications", null],
+    ["/more/merchants", "all"], ["/more/recurring", "ledger"],
+    ["/more/category-rules", "all"], ["/more/privacy/", "all"],
+    ["/more/notifications", "all"], ["/more/password", "all"],
   ])("preserves legacy route %s under %s", (path, expected) => {
     expect(activeTabFor(path)).toBe(expected);
     expect(isTabRoot(path)).toBe(false);
@@ -53,12 +53,13 @@ describe("cold-entry parent destinations", () => {
     expect(parentTabHref("/todo")).toBe("/transactions");
   });
 
-  it("keeps settings and housing as secondary destinations", () => {
-    expect(isTabRoot("/more")).toBe(false);
+  it("makes 전체 a tab root and keeps housing secondary (ADR-0037)", () => {
+    expect(isTabRoot("/more")).toBe(true);
     expect(isTabRoot("/plan")).toBe(false);
     expect(parentTabHref("/plan")).toBe("/assets");
     expect(parentTabHref("/more/privacy")).toBe("/more");
-    expect(parentTabHref("/more")).toBe("/dashboard");
+    expect(parentTabHref("/household")).toBe("/more");
+    expect(parentTabHref("/notifications")).toBe("/dashboard");
   });
 
   it("returns a cold loan-import deep link to assets without making it an exit root", () => {

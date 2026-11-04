@@ -125,7 +125,7 @@ export default function DeclinesPage() {
     <div className="mx-auto w-full max-w-2xl space-y-5">
       <PageBackHeader
         title="실패한 결제"
-        subtitle="거절된 결제는 거래 목록에 잡히지 않아 여기서 따로 보여줘요"
+        subtitle="지출에는 포함하지 않아요"
       />
 
       {isLoading ? (

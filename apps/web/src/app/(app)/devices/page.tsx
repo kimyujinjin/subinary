@@ -40,7 +40,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -229,7 +228,6 @@ export default function DevicesPage() {
       <div className="pl-2.5">
         <PageBackHeader
           title="문자 연동"
-          subtitle="기기를 등록한 뒤 문자 전송 설정을 이어가요."
         />
       </div>
 
@@ -237,9 +235,6 @@ export default function DevicesPage() {
       <Card>
         <CardHeader>
           <CardTitle>등록한 기기</CardTitle>
-          <CardDescription>
-            연결 확인과 카드 문자 수신 상태를 따로 확인해요.
-          </CardDescription>
         </CardHeader>
         <CardContent>
           {devicesQuery.isLoading ? (

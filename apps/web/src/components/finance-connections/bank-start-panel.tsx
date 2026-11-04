@@ -7,11 +7,15 @@ import {
   type MacBankRunnerState,
 } from "@family/contracts";
 import { Button } from "@/components/ui/button";
+import { BottomSheet } from "@/components/widgets/bottom-sheet";
+import { OverflowMenu, type OverflowAction } from "@/components/widgets/overflow-menu";
+import { StatusChip } from "@/components/widgets/status-chip";
 import { useAuth } from "@/lib/auth-context";
 import { macBankRunnerApi } from "@/lib/mac-bank-runner-client";
 import { connectionDecimal, connectionTime } from "./model";
 import { BankCredentialForm } from "./bank-credential-form";
 
+const READ_FAILED = "Mac 상태를 불러오지 못했어요. 잠시 후 자동으로 다시 확인해요.";
 const activeStates = new Set([
   "queued",
   "claimed",
@@ -20,12 +24,12 @@ const activeStates = new Set([
   "reading",
   "logging_out",
 ]);
-/** "Codex"는 제품 안에서 설명되지 않는 고유명사라 사용자 문구에 쓰지 않는다 — 이미
- *  다른 안내가 쓰고 있는 "실행기"로 통일한다. Mac은 사용자 본인의 기기이므로 남긴다
+/** "Codex"·"실행기"는 제품 안에서 설명되지 않는 내부 용어라 사용자 문구에 쓰지 않는다
+ *  (docs/ux-renewal-2026-11.md §3.5) — 사용자에게는 "Mac"이라고만 말한다. Mac은 사용자 본인의 기기이므로 남긴다
  *  (켜져 있어야 조회가 된다는 전제를 숨기면 실패 원인을 알 수 없다). */
 const labels: Record<string, string> = {
   queued: "Mac에서 실행 대기",
-  claimed: "Mac 실행기 시작 중",
+  claimed: "Mac에서 시작하는 중",
   running: "Mac에서 은행 접속 중",
   authentication_required: "Mac에서 은행 인증이 필요해요",
   reading: "통장·대출 잔액 조회 중",
@@ -37,75 +41,43 @@ const labels: Record<string, string> = {
   expired: "요청 만료",
 };
 
+const failedStates = new Set(["failed", "operation_unknown", "cancelled", "expired"]);
+
 /** 대기·실행·인증·저장을 구분하며 본인 조회값만 표시한다. */
 export function BankMacJob({ job }: { job: MacBankJob }) {
+  const tone = job.state === "succeeded" ? "ok" : failedStates.has(job.state) ? "error" : job.state === "authentication_required" ? "attention" : "pending";
   return (
-    <div
-      className="space-y-3 rounded-xl border bg-card p-4"
-      aria-label="Mac 은행 조회 상태"
-    >
-      <p role="status" className="font-medium">
-        {labels[job.state] ?? "실행 상태 확인 필요"}
+    <section className="finance-panel min-w-0 px-5 py-4" aria-label="Mac 은행 조회 상태">
+      <p role="status" className="flex flex-wrap items-center gap-2">
+        <StatusChip tone={tone}>{labels[job.state] ?? "실행 상태 확인 필요"}</StatusChip>
+        {job.completedAt ? <span className="text-caption text-muted-foreground">{connectionTime(job.completedAt)}</span> : null}
       </p>
       {job.state === "authentication_required" ? (
-        <p className="text-sm leading-relaxed">
-          은행이 추가 인증을 요구했어요. Mac에 열린 신한은행에서 인증을 마친 뒤
-          ‘인증 완료, 계속 조회’를 눌러 주세요. 로그인 실패 시에는 저장한 로그인
-          정보도 확인해 주세요.
+        <p className="text-body mt-2">
+          은행이 추가 인증을 요구했어요. Mac의 신한은행 화면에서 인증을 마친 뒤 ‘인증 완료, 계속 조회’를 눌러 주세요.
         </p>
       ) : null}
       {job.state === "cancelled" && !job.logoutConfirmed ? (
-        <p className="text-sm leading-relaxed">
-          Mac의 은행 화면에서 정상 로그아웃 여부를 확인해 주세요.
-        </p>
+        <p className="text-caption text-muted-foreground mt-2">Mac의 은행 화면에서 로그아웃됐는지 확인해 주세요.</p>
       ) : null}
       {job.state === "failed" || job.state === "operation_unknown" ? (
-        <p className="text-sm leading-relaxed">
+        <p className="text-caption text-muted-foreground mt-2">
           {job.errorCode === "operation_unknown"
             ? "실행 결과를 확인하지 못했어요. 다시 로그인하지 않아요. Mac의 은행 화면과 로그아웃 상태를 확인해 주세요."
-            : "은행 조회를 완료하지 못했어요. 인증 상태와 Mac의 은행 화면을 확인해 주세요."}
+            : "은행 조회를 마치지 못했어요. Mac의 은행 화면과 인증 상태를 확인해 주세요."}
         </p>
       ) : null}
       {job.state === "succeeded" ? (
         <>
-          <p className="text-xs text-muted-foreground">
-            은행 로그아웃 확인 후 저장했어요. 가족 자산 합계에는 자동으로 더하지
-            않아요.
-          </p>
-          {job.observations.map((observation) => (
-            <div
-              key={observation.accountFingerprint}
-              className="space-y-1 border-t pt-3"
-            >
-              <p className="text-sm">
-                {observation.pageKind === "deposit_account_list"
-                  ? "통장 잔액"
-                  : observation.loanType === "jeonse"
-                  ? "전세대출 남은 원금"
-                  : "중도금대출 남은 원금"}{" "}
-                · 끝 {observation.accountLast4}
-              </p>
-              <p className="break-all text-xl font-semibold tabular-nums">
-                {connectionDecimal(
-                  observation.pageKind === "deposit_account_list"
-                    ? observation.balanceKrw
-                    : observation.outstandingPrincipalKrw
-                )}
-                원
-              </p>
-              {observation.pageKind === "loan_account_list" ? (
-                <p className="text-sm">
-                  만기 {observation.maturityDate ?? "미확인"}
-                </p>
-              ) : null}
-              <p className="text-xs text-muted-foreground">
-                화면 확인 {connectionTime(observation.capturedAt)}
-              </p>
-            </div>
-          ))}
+          <p className="text-caption text-muted-foreground mt-2">가족 자산 합계에는 자동으로 더하지 않아요.</p>
+          <div className="divide-y divide-border/60">
+            {job.observations.map((observation) => (
+              <ObservationRow key={observation.accountFingerprint} observation={observation} />
+            ))}
+          </div>
         </>
       ) : null}
-    </div>
+    </section>
   );
 }
 
@@ -133,6 +105,8 @@ export function BankStartPanel({
     [notice, setNotice] = useState<string | null>(null);
   const [uncertain, setUncertain] = useState(false),
     [paired, setPaired] = useState(false);
+  const [credentialOpen, setCredentialOpen] = useState(false),
+    [revokeOpen, setRevokeOpen] = useState(false);
   const mounted = useRef(false),
     writing = useRef(false),
     readController = useRef<AbortController | null>(null),
@@ -149,6 +123,7 @@ export function BankStartPanel({
       );
       if (!controller.signal.aborted && mounted.current) {
         setData(result);
+        setNotice((value) => (value === READ_FAILED ? null : value));
         if (result.job?.id === requestId.current) {
           setUncertain(false);
           requestId.current = null;
@@ -157,9 +132,7 @@ export function BankStartPanel({
     } catch {
       if (!controller.signal.aborted && mounted.current) {
         setData(null);
-        setNotice(
-          "Mac 연결 상태를 확인하지 못했어요. 연결 상태를 다시 확인해 주세요."
-        );
+        setNotice(READ_FAILED);
       }
     }
   }, [authedFetch, householdId, userId]);
@@ -200,7 +173,7 @@ export function BankStartPanel({
         if (mounted.current && !controller.signal.aborted) {
           setPaired(true);
           setNotice(
-            "이 Mac을 연결했어요. 실행기가 연결 상태를 확인하고 있어요."
+            "이 Mac을 연결했어요."
           );
         }
       } else if (action === "start") {
@@ -244,7 +217,7 @@ export function BankStartPanel({
       if (mounted.current && !controller.signal.aborted) {
         if (action === "start") setUncertain(true);
         setNotice(
-          "요청 결과를 확인하지 못했어요. 연결 상태를 확인해 주세요. 같은 요청으로만 다시 확인해요."
+          "요청 결과를 확인하지 못했어요. 아래 ‘같은 요청 결과 확인’으로 다시 확인해 주세요."
         );
       }
     } finally {
@@ -256,169 +229,142 @@ export function BankStartPanel({
     }
   }
   const active = !!data?.job && activeStates.has(data.job.state);
+  const runner = data?.runner ?? null;
+  const stored = !!data?.credentials?.stored;
+  const authRequired = data?.job?.state === "authentication_required";
+  const lastRun = data?.job?.state === "succeeded" ? data.job.completedAt : data?.previousResult?.completedAt ?? null;
+  const startDisabled = disabled || busy || active || !runner?.online || !stored || uncertain;
+  const menu: OverflowAction[] = runner
+    ? [
+        { label: stored ? "로그인 정보 변경" : "로그인 정보 입력", onSelect: () => setCredentialOpen(true), disabled: disabled || active },
+        { label: "Mac 연결 해제", onSelect: () => setRevokeOpen(true), destructive: true, disabled: busy || disabled },
+      ]
+    : [];
   return (
-    <div className="min-w-0 space-y-3">
-      <p className="text-sm leading-relaxed">
-        모아에서 요청하면 연결한 Mac의 실행기가 신한은행에 접속해 조회하고
-        결과를 저장해요. 조회하는 동안 Mac이 켜져 있고 실행기가 연결되어 있어야
-        해요.
-      </p>
+    <div className="min-w-0 space-y-5">
       {pairing && !paired ? (
-        <section
-          className="space-y-3 rounded-xl border p-4"
-          aria-label="Mac 실행기 연결 승인"
-        >
-          <h3 className="font-semibold">이 Mac의 실행기 연결</h3>
-          <p className="text-sm leading-relaxed">
-            연결을 해제할 때까지 이 Mac에서 내가 버튼으로 요청한 신한은행 조회와
-            본인 결과 저장을 허용해요. 저장한 로그인 정보는 Mac의 정상 은행
-            로그인에 사용해요. 추가 인증은 은행 화면에서 진행해요. 모아에서
-            언제든 연결을 해제할 수 있어요.
+        <section className="finance-panel space-y-3 p-5" aria-label="Mac 연결 승인">
+          <h3 className="text-heading">이 Mac 연결</h3>
+          <p className="text-caption text-muted-foreground">
+            연결을 해제할 때까지 이 Mac에서 내가 요청한 신한은행 조회를 허용해요. 모아에서 언제든 연결을 해제할 수 있어요.
           </p>
-          <Button
-            disabled={disabled || busy}
-            onClick={() => {
-              void write("approve");
-            }}
-          >
+          <Button className="w-full" disabled={disabled || busy} onClick={() => { void write("approve"); }}>
             연결 해제 전까지 허용
           </Button>
         </section>
       ) : null}
-      <p className="text-sm text-muted-foreground">
-        {data?.runner
-          ? `${data.runner.label} · ${
-              data.runner.online ? "연결됨" : "오프라인"
-            }`
-          : "연결된 Mac이 없어요. Mac 실행기에서 기기 연결을 진행해 주세요."}
-      </p>
-      {data?.runner ? (
-        <p className="text-xs text-muted-foreground">
-          {data.runner.expiresAt === null
-            ? "연결 해제 전까지 허용 · 버튼으로 요청할 때만 조회해요."
-            : `연결 허용 기한 ${connectionTime(data.runner.expiresAt)}`}
-        </p>
+      {data && !runner ? (
+        <section className="finance-panel p-5" aria-label="Mac 연결 상태">
+          <p className="text-heading">연결된 Mac이 없어요</p>
+          <p className="text-caption text-muted-foreground mt-1">Mac에서 모아 연결을 먼저 진행해 주세요.</p>
+        </section>
       ) : null}
-      {data?.runner ? (
-        <BankCredentialForm
-          key={data.runner.id}
-          householdId={householdId}
-          runnerId={data.runner.id}
-          credentials={data.credentials}
-          storageAvailable={data.credentialStorageAvailable}
-          disabled={disabled || busy || active}
-          onChanged={() => {
-            void read();
-          }}
-        />
+      {runner ? (
+        <div className="flex min-h-11 items-center justify-between gap-3">
+          <p className="text-caption text-muted-foreground flex min-w-0 flex-wrap items-center gap-2">
+            <StatusChip tone={runner.online ? "ok" : "attention"}>{runner.online ? "Mac 연결됨" : "Mac 꺼짐"}</StatusChip>
+            <span>마지막 조회 {lastRun ? connectionTime(lastRun) : "없음"}</span>
+            {runner.expiresAt !== null ? <span>· 허용 기한 {connectionTime(runner.expiresAt)}</span> : null}
+          </p>
+          <OverflowMenu actions={menu} label="신한 연결 메뉴" />
+        </div>
       ) : null}
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        {MAC_BANK_RUNNER_CONSENT_TEXT}
-      </p>
-      <Button
-        type="button"
-        className="min-h-12 w-full"
-        disabled={
-          disabled ||
-          busy ||
-          active ||
-          !data?.runner?.online ||
-          !data.credentials?.stored ||
-          uncertain
-        }
-        onClick={(event) => {
-          if (event.detail <= 1) void write("start");
-        }}
-      >
-        {busy ? "요청 중…" : active ? "Mac에서 진행 중" : "신한은행 조회 시작"}
-      </Button>
       {data?.job ? <BankMacJob job={data.job} /> : null}
       {data?.previousResult && data.job?.id !== data.previousResult.jobId ? (
-        <section
-          className="space-y-2 rounded-xl border p-4"
-          aria-label="이전 저장 내역"
-        >
-          <h3 className="text-sm font-medium">
-            이전 저장 내역 · {connectionTime(data.previousResult.completedAt)}
-          </h3>
+        <section className="finance-panel divide-y divide-border/60 px-5" aria-label="이전 저장 내역">
           {data.previousResult.observations.map((item) => (
-            <p key={item.accountFingerprint} className="text-sm tabular-nums">
-              {item.pageKind === "deposit_account_list"
-                ? "통장 잔액"
-                : "대출 남은 원금"}{" "}
-              · 끝 {item.accountLast4} ·{" "}
-              {connectionDecimal(
-                item.pageKind === "deposit_account_list"
-                  ? item.balanceKrw
-                  : item.outstandingPrincipalKrw
-              )}
-              원
-            </p>
+            <ObservationRow key={item.accountFingerprint} observation={item} />
           ))}
         </section>
       ) : null}
-      {data?.job?.state === "authentication_required" ? (
-        <Button
-          className="min-h-11 w-full"
-          disabled={disabled || busy || !data.runner?.online}
-          onClick={() => {
-            void write("continue");
-          }}
-        >
-          인증 완료, 계속 조회
-        </Button>
+      {notice ? <p role="alert" className="text-caption text-muted-foreground">{notice}</p> : null}
+      {!data || runner ? (
+        <div className="space-y-2">
+          {authRequired ? (
+            <Button size="lg" className="w-full" disabled={disabled || busy || !runner?.online} onClick={() => { void write("continue"); }}>
+              인증 완료, 계속 조회
+            </Button>
+          ) : runner && !stored ? (
+            <Button size="lg" className="w-full" disabled={disabled || busy} onClick={() => setCredentialOpen(true)}>
+              로그인 정보 입력
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="lg"
+              className="w-full"
+              disabled={startDisabled}
+              onClick={(event) => { if (event.detail <= 1) void write("start"); }}
+            >
+              {busy ? "요청 중…" : active ? "Mac에서 조회 중…" : "지금 조회하기"}
+            </Button>
+          )}
+          {active ? (
+            <Button variant="ghost" className="w-full" disabled={busy || disabled} onClick={() => { void write("cancel"); }}>
+              요청 취소
+            </Button>
+          ) : null}
+          {uncertain ? (
+            <Button variant="weak" className="w-full" disabled={busy || disabled} onClick={() => { void write("start"); }}>
+              같은 요청 결과 확인
+            </Button>
+          ) : null}
+          {runner && !runner.online && !active ? (
+            <p className="text-caption text-muted-foreground text-center">Mac을 켜면 조회할 수 있어요.</p>
+          ) : null}
+          <details className="text-caption text-muted-foreground">
+            <summary className="min-h-11 cursor-pointer py-3 text-center">조회하면 동의하는 내용</summary>
+            <p className="pb-2">{MAC_BANK_RUNNER_CONSENT_TEXT}</p>
+          </details>
+        </div>
       ) : null}
-      {active ? (
-        <Button
-          variant="outline"
-          className="min-h-11"
-          disabled={busy || disabled}
-          onClick={() => {
-            void write("cancel");
-          }}
-        >
-          요청 취소
-        </Button>
+      {runner ? (
+        <BottomSheet open={credentialOpen} onOpenChange={setCredentialOpen} title="신한은행 로그인 정보">
+          <BankCredentialForm
+            key={runner.id}
+            householdId={householdId}
+            runnerId={runner.id}
+            credentials={data?.credentials ?? null}
+            storageAvailable={!!data?.credentialStorageAvailable}
+            disabled={disabled || busy || active}
+            onChanged={() => { void read(); }}
+          />
+        </BottomSheet>
       ) : null}
-      {notice ? (
-        <p role="alert" className="text-sm leading-relaxed">
-          {notice}
+      <BottomSheet open={revokeOpen} onOpenChange={setRevokeOpen} title="Mac 연결을 해제할까요?">
+        <p className="text-body text-muted-foreground pb-3">
+          저장한 로그인 정보도 함께 폐기돼요. 다시 쓰려면 Mac에서 기기 연결을 새로 해야 해요.
         </p>
-      ) : null}
-      <div className="flex flex-wrap gap-2">
         <Button
-          variant="outline"
-          disabled={busy}
-          onClick={() => {
-            setNotice(null);
-            void read();
-          }}
+          variant="destructive"
+          size="lg"
+          className="w-full"
+          disabled={busy || disabled}
+          onClick={() => { setRevokeOpen(false); void write("revoke"); }}
         >
-          Mac 연결 상태 확인
+          연결 해제
         </Button>
-        {uncertain ? (
-          <Button
-            variant="outline"
-            disabled={busy || disabled}
-            onClick={() => {
-              void write("start");
-            }}
-          >
-            같은 요청 결과 확인
-          </Button>
-        ) : null}
-        {data?.runner ? (
-          <Button
-            variant="ghost"
-            disabled={busy || disabled}
-            onClick={() => {
-              void write("revoke");
-            }}
-          >
-            Mac 연결 해제
-          </Button>
-        ) : null}
+      </BottomSheet>
+    </div>
+  );
+}
+
+function ObservationRow({ observation }: { observation: MacBankJob["observations"][number] }) {
+  const deposit = observation.pageKind === "deposit_account_list";
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-3 py-4">
+      <div className="min-w-0">
+        <p className="text-body font-semibold">
+          {deposit ? "통장 잔액" : observation.loanType === "jeonse" ? "전세대출 남은 원금" : "중도금대출 남은 원금"}
+        </p>
+        <p className="text-caption text-muted-foreground">
+          끝 {observation.accountLast4}
+          {!deposit ? ` · 만기 ${observation.maturityDate ?? "미확인"}` : ""}
+        </p>
       </div>
+      <p className="text-heading min-w-0 break-all text-right tabular-nums">
+        {connectionDecimal(deposit ? observation.balanceKrw : observation.outstandingPrincipalKrw)}원
+      </p>
     </div>
   );
 }

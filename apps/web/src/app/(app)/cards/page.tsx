@@ -39,7 +39,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -413,7 +412,6 @@ export default function CardsPage() {
       <div className="pl-2.5">
         <PageBackHeader
           title="결제 카드"
-          subtitle="등록한 카드와 카드별 사용 내역을 관리해요."
         />
       </div>
 
@@ -421,9 +419,6 @@ export default function CardsPage() {
       <Card>
         <CardHeader>
           <CardTitle>등록된 카드</CardTitle>
-          <CardDescription>
-            소유자·카드사·뒤 4자리로 카드를 구분하고, 공개 범위를 카드별로 정해요.
-          </CardDescription>
         </CardHeader>
         <CardContent>
           {cardsQuery.isLoading ? (

@@ -46,7 +46,7 @@ describe("SMS posting feedback", () => {
     expect(shouldPollPosting(detail)).toBe(false);
     expect(postingMessage(detail)).toContain("반영되지 않았어요");
     expect(postingMessage(detail)).not.toContain("곧");
-    expect(postingMessage(detail)).toContain("처리 상태");
+    expect(postingMessage(detail)).toContain("다시 등록하지 않아도 돼요");
     expect(postingMessage(detail)).not.toContain("할 일");
   });
   it.each(["parse_failed", "quarantined", "pending_review", "ignored"])("explains %s without claiming a posting", (parseStatus) => {
@@ -59,7 +59,7 @@ describe("SMS posting feedback", () => {
   it("processing posting overrides a stale parsing review flag without asking for user approval", () => {
     const detail = { ...pending, parseStatus: "pending_review" };
     expect(smsPostingDisposition(detail)).toBe("processing");
-    expect(postingMessage(detail)).toContain("처리 중");
+    expect(postingMessage(detail)).toContain("반영하는 중");
     expect(postingMessage(detail)).not.toContain("할 일에서 확인");
   });
   it("preserves an explicit needs_review even when the parsed summary says success", () => {
@@ -87,6 +87,6 @@ describe("SMS posting feedback", () => {
   it("preserves acceptance when a status read fails", async () => {
     const result = await pollAcceptedPosting(async () => { throw Error("synthetic status timeout"); }, async () => {});
     expect(result).toEqual({ detail: null, statusUnavailable: true });
-    expect(postingMessage(result.detail)).toContain("다시 등록하지 말고");
+    expect(postingMessage(result.detail)).toContain("다시 등록하지 않아도");
   });
 });

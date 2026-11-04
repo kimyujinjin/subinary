@@ -22,3 +22,8 @@ export {
   type TodoCountBreakdown,
 } from "./todo-counts";
 export { useTodoCounts, type TodoCounts } from "./use-todo-counts";
+// 리뉴얼 공용 컴포넌트(docs/ux-renewal-2026-11.md §3.4)
+export { StatusChip, type ChipTone } from "./status-chip";
+export { SectionHeader } from "./section-header";
+export { BottomSheet, SheetOption } from "./bottom-sheet";
+export { OverflowMenu, type OverflowAction } from "./overflow-menu";

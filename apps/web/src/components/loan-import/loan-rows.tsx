@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ImportedLoanRecord } from "@family/contracts";
 import { displayManualKrw, visibilityLabel } from "@/components/manual-finance/model";
+import { StatusChip } from "@/components/widgets/status-chip";
 
 export function loanInclusionLabel(item: ImportedLoanRecord): string {
   if (item.includedInTotals) {
@@ -29,32 +30,33 @@ export function LoanOverviewRow({ item }: { item: ImportedLoanRecord }) {
     minute: "2-digit",
     hour12: false,
   }).format(new Date(item.capturedAt));
+  const included = item.includedInTotals;
   return (
-    <article className="min-h-20 min-w-0 border-b p-4 last:border-0" aria-label={`${item.label} 가져온 대출`}>
-      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 basis-28">
-          <h3 className="break-words text-sm font-semibold">{item.label}</h3>
-          <p className="text-muted-foreground mt-1 text-xs">
-            {item.loanType === "jeonse" ? "전세 대출" : "중도금 대출"} · {visibilityLabel(item.visibility)}
+    <article className="min-w-0 py-4" aria-label={`${item.label} 가져온 대출`}>
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <h3 className="text-body break-words font-semibold">{item.label}</h3>
+          <p className="text-caption text-muted-foreground">
+            {item.loanType === "jeonse" ? "전세 대출" : "중도금 대출"} · 끝 {item.accountLast4}
           </p>
         </div>
         <div className="min-w-0 text-right">
-          <strong className="block break-all text-base tabular-nums">{displayManualKrw(item.outstandingPrincipalKrw)}</strong>
-          <small className="text-muted-foreground text-xs">남은 원금</small>
+          <strong className="text-heading block break-all tabular-nums">{displayManualKrw(item.outstandingPrincipalKrw)}</strong>
+          <small className="text-caption text-muted-foreground">남은 원금</small>
         </div>
       </div>
-      <p className="text-muted-foreground mt-2 text-xs">은행 잔액 기준일 미확인</p>
-      <p className="mt-2 text-xs">{loanInclusionLabel(item)}</p>
-      <details className="min-w-0 text-xs">
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <StatusChip tone={included ? "neutral" : "attention"}>{loanInclusionLabel(item)}</StatusChip>
+      </div>
+      <details className="text-caption mt-1 min-w-0">
         <summary className="text-muted-foreground min-h-11 cursor-pointer py-3">대출 정보</summary>
         <dl className="text-muted-foreground grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2">
-          <dt>계좌</dt><dd className="min-w-0">끝 4자리 {item.accountLast4}</dd>
           <dt>만기일</dt><dd className="min-w-0">{item.maturityDate ?? "미확인"}</dd>
-          <dt>출처</dt><dd className="min-w-0 break-words">신한은행 대출계좌조회 화면</dd>
-          <dt>화면 확인</dt><dd className="min-w-0 break-words"><time dateTime={item.capturedAt}>{checkedAt}</time> (한국 시간)</dd>
+          <dt>출처</dt><dd className="min-w-0 break-words">신한은행 대출계좌조회 화면 · {visibilityLabel(item.visibility)}</dd>
+          <dt>화면 확인</dt><dd className="min-w-0 break-words"><time dateTime={item.capturedAt}>{checkedAt}</time> · 은행 잔액 기준일 미확인</dd>
         </dl>
         {item.canEdit ? (
-          <Link href="/assets/loan-import" className="text-primary mt-2 inline-flex min-h-11 items-center text-xs font-medium">가져온 기록 수정 →</Link>
+          <Link href="/assets/loan-import" className="text-primary mt-2 inline-flex min-h-11 items-center font-medium">가져온 기록 수정</Link>
         ) : null}
       </details>
     </article>

@@ -38,14 +38,14 @@ import type {
   TransactionSummary,
 } from "@family/contracts";
 
-import { Card } from "@/components/ui/card";
-import { LedgerNav } from "@/components/ledger-nav";
+import { LedgerHeader } from "@/components/ledger-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ListRow,
   Money,
   ReviewInboxDialog,
   StatusBadge,
+  StatusChip,
   declineGroupKey,
   declineReasonHint,
   pendingCountText,
@@ -62,6 +62,7 @@ import {
   formatDate,
   formatMoney,
   formatRelativeTime,
+  formatSender,
   formatWon,
 } from "@/lib/format";
 import { postingMessage } from "@/lib/sms-posting";
@@ -131,17 +132,8 @@ export default function TodoPage() {
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-5">
-      {/* `nav-tabs.ts`가 이 경로를 가계부 탭으로 판정하므로 같은 섹션 내비를 둔다 —
-          없으면 하단 탭만 가계부로 켜진 채 상단에는 현재 위치 표시가 없다. */}
-      <LedgerNav active="todo" />
-      {/* 직접 링크로 들어와도 위치를 알 수 있도록 화면 제목을 표시한다. */}
-      <div>
-        <h1 className="text-xl font-semibold">확인할 내역</h1>
-        <p className="text-muted-foreground text-sm">
-          결제 실패·거래 확인·문자 검토를 모았어요. 자동 처리 상태는 따로
-          보여드려요.
-        </p>
-      </div>
+      {/* `nav-tabs.ts`가 이 경로를 가계부 탭으로 판정하므로 같은 섹션 내비를 둔다. */}
+      <LedgerHeader active="todo" />
 
       {loading ? (
         <div className="space-y-2">
@@ -152,15 +144,10 @@ export default function TodoPage() {
       ) : null}
 
       {showEmpty ? (
-        <Card className="p-8 text-center">
-          <CheckCircle2 className="text-muted-foreground mx-auto mb-3 size-8" />
-          <p className="text-sm font-medium">
-            지금은 사용자 확인이 필요한 내역이 없어요
-          </p>
-          <p className="text-muted-foreground mt-1 text-sm">
-            문자 접수와 거래 반영의 처리 상태는 아래에서 따로 확인할 수 있어요.
-          </p>
-        </Card>
+        <div className="finance-panel flex items-center gap-3 p-5">
+          <CheckCircle2 className="text-success-strong size-6 shrink-0" aria-hidden="true" />
+          <p className="text-body font-medium">확인할 내역이 없어요</p>
+        </div>
       ) : null}
 
       {/* 1) 결제 실패 — 가장 위에 둔다. 셋 중 유일하게 **돈이 나가지 않은** 사고라
@@ -244,7 +231,6 @@ export default function TodoPage() {
       <Section
         show={todo.unpostedNeedsReview.length > 0}
         title="확인이 필요한 문자"
-        description="거래 반영 전에 사용자 판단이 필요하다고 확인된 문자예요. 자동 처리 대기와 구분해요."
         countText={pendingCountText(
           todo.unpostedLoading,
           todo.unpostedError,
@@ -259,7 +245,7 @@ export default function TodoPage() {
             key={event.id}
             onClick={() => setSelectedSms(event.id)}
             icon={<MailWarning />}
-            title={event.sender}
+            title={`${formatSender(event.sender)}에서 온 문자`}
             subtitle={postingMessage(event)}
             value={
               <span className="text-muted-foreground text-xs">
@@ -275,7 +261,6 @@ export default function TodoPage() {
       <Section
         show={smsGroups.isError || groups.length > 0}
         title="거래 반영 전 문자"
-        description="본인에게 온 문자를 같은 양식으로 모았어요. 대표 한 건을 확인하고, 원하면 같은 양식의 자동 정리도 선택할 수 있어요."
         countText={pendingCountText(
           smsGroups.isLoading,
           smsGroups.isError,
@@ -299,7 +284,7 @@ export default function TodoPage() {
             onClick={() => setSelectedSms(group.representativeEventId)}
             icon={<MailWarning />}
             iconClassName="bg-warning/15 text-warning-strong"
-            title={`${group.sender} · 같은 양식 ${group.count}건`}
+            title={`${formatSender(group.sender)}에서 온 문자 ${group.count}건`}
             subtitle={`읽지 못함 ${group.parseFailed}건 · 확인 대기 ${group.quarantined}건`}
             value={
               <span className="text-muted-foreground text-[13px]">
@@ -313,43 +298,37 @@ export default function TodoPage() {
 
       {policies.length > 0 ? (
         <section className="space-y-2">
-          <h2 className="px-1 text-[15px] font-semibold">
-            문자 자동 정리 설정
-          </h2>
-          <p className="text-muted-foreground px-1 text-[13px]">
-            허용한 양식은 약 5분 간격으로 확인해요. 중지하면 다음 자동 반영부터
-            멈추며, 이미 반영한 거래는 그대로 유지돼요.
-          </p>
-          <Card className="divide-y p-3">
+          <h2 className="text-heading px-1">문자 자동 정리</h2>
+          <div className="finance-panel divide-y divide-border/60 px-5">
             {policies.map((policy) => (
               <div
                 key={policy.id}
                 className="flex items-center justify-between gap-3 py-3"
               >
-                <div className="text-sm">
+                <div className="text-body">
                   <p>
                     {cardQuery.data?.find(
                       (card) => card.id === policy.approvedCardId
                     )?.alias ?? "선택한 카드"}{" "}
                     · {policy.enabled ? "자동 정리 중" : "중지됨"}
                   </p>
-                  <p className="text-muted-foreground text-xs">
-                    설정 시각 {formatDate(policy.createdAt)}
+                  <p className="text-caption text-muted-foreground">
+                    {formatDate(policy.createdAt)}부터 · 약 5분마다 확인
                   </p>
                 </div>
                 {policy.enabled ? (
                   <Button
-                    variant="outline"
+                    variant="weak"
                     size="sm"
                     disabled={stopPolicy.isPending}
                     onClick={() => stopPolicy.mutate(policy.id)}
                   >
-                    자동 정리 중지
+                    중지
                   </Button>
                 ) : null}
               </div>
             ))}
-          </Card>
+          </div>
           {stopPolicy.isError ? (
             <p role="alert" className="text-destructive text-sm">
               자동 정리 중지를 확인하지 못했어요. 다시 시도해 주세요.
@@ -365,8 +344,7 @@ export default function TodoPage() {
           todo.processingError ||
           todo.processing.length + todo.unpostedUnknown.length > 0
         }
-        title="처리 상태"
-        description="문자 접수·거래 반영 상태예요. 사용자 확인 건수에는 포함하지 않으며 같은 문자를 다시 등록할 필요는 없어요."
+        title="처리 대기"
         countText={pendingCountText(
           todo.processingLoading,
           todo.processingError,
@@ -374,7 +352,7 @@ export default function TodoPage() {
           todo.processingTruncated
         )}
         error={todo.processingError}
-        errorText="처리 상태를 확인하지 못했어요. 확인이 필요한 내역이 없다는 뜻은 아니에요."
+        errorText="대기 중인 문자를 불러오지 못했어요."
         footer={
           todo.processingTruncated ? (
             <p className="text-muted-foreground px-4 py-3 text-xs">
@@ -385,11 +363,14 @@ export default function TodoPage() {
       >
         {[...todo.processing, ...todo.unpostedUnknown].map((event) => (
           <div key={event.id} className="space-y-1 px-3 py-3">
-            <p className="text-sm font-medium">
-              {event.currency ?? "통화 확인 중"} ·{" "}
-              {formatRelativeTime(event.receivedAt)}
+            <p className="flex items-center justify-between gap-2">
+              <span className="text-body font-medium">
+                {event.currency ?? "통화 확인 중"} ·{" "}
+                {formatRelativeTime(event.receivedAt)}
+              </span>
+              <StatusChip tone="pending">대기 중</StatusChip>
             </p>
-            <p className="text-muted-foreground text-sm leading-relaxed">
+            <p className="text-caption text-muted-foreground">
               {postingMessage(event)}
             </p>
           </div>
@@ -434,24 +415,24 @@ function Section({
   return (
     <section id={id} className="space-y-2 scroll-mt-4">
       <div className="flex items-baseline justify-between gap-2 px-1">
-        <h2 className="text-[15px] font-semibold">{title}</h2>
-        <span className="text-muted-foreground text-[13px] tabular-nums">
+        <h2 className="text-heading">{title}</h2>
+        <span className="text-caption text-muted-foreground tabular-nums">
           {countText}
         </span>
       </div>
       {description ? (
-        <p className="text-muted-foreground px-1 text-[13px]">{description}</p>
+        <p className="text-caption text-muted-foreground px-1">{description}</p>
       ) : null}
-      <Card className="divide-border divide-y overflow-hidden p-0">
+      <div className="finance-panel divide-border/60 divide-y overflow-hidden">
         {error ? (
-          <p className="text-muted-foreground px-4 py-6 text-center text-sm">
+          <p className="text-body text-muted-foreground px-4 py-6 text-center">
             {errorText}
           </p>
         ) : (
           <div className="flex flex-col px-2 py-1">{children}</div>
         )}
         {footer}
-      </Card>
+      </div>
     </section>
   );
 }
@@ -464,7 +445,7 @@ function FooterLink({
   return (
     <Link
       href={href}
-      className="text-accent-foreground hover:bg-muted/70 block px-4 py-3 text-[13px] font-medium transition-colors"
+      className="text-caption text-muted-foreground hover:bg-muted/50 hover:text-foreground block px-5 py-3 font-medium transition-colors"
     >
       {children} ›
     </Link>
@@ -489,5 +470,5 @@ function smsSubtitle(e: CardSmsEventSummary): string {
     const merchant = e.merchantRaw ?? "가맹점 미상";
     return `${merchant}${amount ? ` ${amount}` : ""} · 확인만 하면 돼요`;
   }
-  return "자동으로 읽지 못했어요 · 원문을 보고 확정해 주세요";
+  return "자동으로 읽지 못했어요 · 문자를 보고 확정해 주세요";
 }

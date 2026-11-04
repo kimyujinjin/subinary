@@ -7,8 +7,8 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="card"
       className={cn(
-        // 읽는 내용별로 묶고, 배경과 경계로 구분한다.
-        "bg-card text-card-foreground flex flex-col gap-5 rounded-xl border py-5 shadow-none",
+        // 카드 구분은 테두리가 아니라 배경 톤으로 한다(docs/ux-renewal-2026-11.md §3.2) — .finance-panel과 같은 모양.
+        "bg-card text-card-foreground rounded-card flex flex-col gap-4 py-5 shadow-none",
         className,
       )}
       {...props}
@@ -33,7 +33,7 @@ function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-title"
-      className={cn("leading-none font-semibold", className)}
+      className={cn("text-heading", className)}
       {...props}
     />
   );
@@ -43,7 +43,7 @@ function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-description"
-      className={cn("text-muted-foreground text-sm", className)}
+      className={cn("text-caption text-muted-foreground", className)}
       {...props}
     />
   );

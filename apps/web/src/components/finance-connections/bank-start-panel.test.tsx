@@ -22,7 +22,7 @@ describe("모아 버튼에서 Mac 자동 실행 상태 표시", () => {
   });
   it("연결 상태를 받기 전에는 조회 버튼을 비활성화하고 복사·초안 링크를 제공하지 않는다", () => {
     const html = renderToStaticMarkup(<BankStartPanel householdId={fixture.householdId} userId={fixture.ownerUserId} />);
-    expect(html).toContain("신한은행 조회 시작"); expect(html).toMatch(/<button[^>]*disabled[^>]*>신한은행 조회 시작/);
+    expect(html).toContain("지금 조회하기"); expect(html).toMatch(/<button[^>]*disabled[^>]*>지금 조회하기/);
     expect(html).not.toContain("codex://"); expect(html).not.toContain("요청문 복사"); expect(html).not.toContain("textarea");
     expect(html).toContain("별도"); expect(html).toContain("이체");
   });
