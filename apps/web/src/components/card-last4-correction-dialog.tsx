@@ -114,7 +114,7 @@ export function CardLast4CorrectionDialog({ card, ownerLabelOf, canManage, readR
 
   return (
     <Dialog open onOpenChange={(open) => !open && requestClose()}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] grid-cols-[minmax(0,1fr)] overflow-y-auto p-4 [&>*]:min-w-0 [&>button]:top-1 [&>button]:right-1 [&>button]:inline-flex [&>button]:size-11 [&>button]:items-center [&>button]:justify-center sm:p-6">
+      <DialogContent className="grid-cols-[minmax(0,1fr)] overflow-y-auto p-4 [&>*]:min-w-0 [&>button]:top-1 [&>button]:right-1 [&>button]:inline-flex [&>button]:size-11 [&>button]:items-center [&>button]:justify-center sm:p-6">
         <DialogHeader className="pr-7">
           <DialogTitle>카드 뒤 4자리 정정</DialogTitle>
           <DialogDescription className="break-words">아래 카드가 맞는지 확인해 주세요. 별칭이나 소유자는 함께 변경하지 않아요.</DialogDescription>

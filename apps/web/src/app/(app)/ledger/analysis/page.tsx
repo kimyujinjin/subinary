@@ -651,7 +651,7 @@ function LedgerAnalysisView() {
             </CardContent>
           </Card>
 
-          <details className="min-w-0 rounded-2xl border border-border/70 bg-card/70 px-4 py-1">
+          <details className="finance-panel min-w-0 px-5 py-1">
             <summary className="min-h-11 cursor-pointer py-3 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-ring">
               세부 분석 · 가맹점, 구성원, 카드, 최근 거래
             </summary>

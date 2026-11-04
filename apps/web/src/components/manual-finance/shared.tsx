@@ -84,7 +84,7 @@ export function VisibilityField({
 }
 export function FinanceLoadError({ retry }: { retry: () => void }) {
   return (
-    <section role="alert" className="rounded-xl border p-5">
+    <section role="alert" className="finance-panel p-5">
       <h2 className="font-semibold">기록을 불러오지 못했어요</h2>
       <p className="text-muted-foreground mt-2 text-sm">
         잠시 후 다시 불러와 주세요.

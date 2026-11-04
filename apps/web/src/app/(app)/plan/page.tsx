@@ -145,7 +145,7 @@ function ScopedPlans({
         />
       ) : records.data ? (
         <>
-          {next ? <section className="bg-card min-w-0 rounded-2xl border p-5">
+          {next ? <section className="finance-panel min-w-0 p-5">
             <h2 className="font-semibold">다음 납부</h2>
             <p className="mt-3 break-all text-3xl font-bold tabular-nums">
               {displayManualKrw(next.remainingAmountKrw)}
@@ -179,7 +179,7 @@ function ScopedPlans({
             </p>
           ) : null}
           <section
-            className="bg-card min-w-0 rounded-2xl border"
+            className="finance-panel min-w-0"
             aria-label="주택 계획 목록"
           >
             {records.data.items.length ? (
@@ -244,11 +244,6 @@ function ScopedPlans({
           {openError}
         </p>
       ) : null}
-      <details className="text-muted-foreground text-xs leading-relaxed">
-        <summary className="min-h-11 cursor-pointer py-3">납부액 계산 기준</summary>
-        <p className="pb-3">입력한 납부 일정에서 이미 낸 금액을 빼서 보여줘요. 통장 잔액과 비교한 부족 금액은 아니에요. 자금 마련 메모는 계산에 반영되지 않으며, 자금 배정이나 현금 흐름 예측은 지원하지 않아요.</p>
-        <p className="pb-3">계약금액과 납부액은 자산 합계에 포함하지 않아요. 납부 여부는 입력한 내용에 따른 것이며, 실제 계약이나 이체 내역을 확인한 결과는 아니에요.</p>
-      </details>
       {editor && !editorIsUnavailable && (editor !== "new" || canCreate) ? (
         <PlanEditor
           householdId={householdId}

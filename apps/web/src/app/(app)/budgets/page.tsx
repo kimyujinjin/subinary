@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { BudgetCardPicker } from "@/components/budget-card-picker";
 import { LedgerHeader } from "@/components/ledger-header";
+import { Fab } from "@/components/widgets/fab";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -574,17 +575,12 @@ function BudgetsView() {
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
-      <LedgerHeader
-        active="budgets"
-        month={month}
-        action={
-          canEdit && items.length > 0 ? (
-            <Button type="button" variant="ghost" size="icon" className="-mr-2" aria-label="예산 만들기" onClick={() => setCreateOpen(true)}>
-              <Plus />
-            </Button>
-          ) : null
-        }
-      />
+      <LedgerHeader active="budgets" month={month} />
+      {canEdit && items.length > 0 ? (
+        <Fab label="예산 만들기" onClick={() => setCreateOpen(true)}>
+          <Plus />
+        </Fab>
+      ) : null}
       <div className="flex min-w-0 items-center justify-start">
         <MonthSwitcher month={month} months={availableMonths} onChange={setMonth} className="-ml-2" />
       </div>
@@ -846,7 +842,7 @@ function BudgetsView() {
           setCreateOpen(o);
         }}
       >
-        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <DialogContent className="overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{formatMonth(month)} 예산 만들기</DialogTitle>
             <DialogDescription>
@@ -975,7 +971,7 @@ function BudgetsView() {
         open={editing !== null}
         onOpenChange={(o) => !o && setEditing(null)}
       >
-        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <DialogContent className="overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{isPastMonth ? "포함 카드를 바로잡아요" : "예산을 수정해요"}</DialogTitle>
             <DialogDescription>

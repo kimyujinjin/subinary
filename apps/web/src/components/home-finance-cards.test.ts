@@ -24,25 +24,24 @@ describe("asset summary empty and partial states", () => {
     expect(html).not.toContain("— 원");
     expect(html).not.toContain("0원");
   });
-  it("keeps a partial total distinct from a complete net worth", () => {
+  it("computes net worth from entered values only and keeps blanks as 미입력", () => {
     const html = renderToStaticMarkup(createElement(ManualAssetsSummary, { summary: { ...empty, grossAssets: "100000", assetsCompleteness: "partial", completeness: "partial" }, scope: "private" }));
     expect(html).toContain("100,000원");
     expect(html).toContain("자산 (일부 입력)");
     expect(html).toContain("미입력");
-    expect(html).toContain("순자산은 아직 계산하지 않았어요");
+    expect(html).not.toContain("순자산은 아직 계산하지 않았어요");
     expect(html).not.toContain("— 원");
     expect(html).toContain("나만 보는 자산");
     expect(html).not.toContain("등록된 자산이 없어요");
   });
-  it("shows a known debt without assuming absent assets are zero or presenting a negative net worth", () => {
+  it("shows a debt-only household as a negative net worth while keeping assets 미입력 (user decision §8)", () => {
     const html = renderToStaticMarkup(createElement(ManualAssetsSummary, {
       summary: { ...empty, debt: "90071992547409931234", debtCompleteness: "complete", completeness: "partial" },
     }));
     expect(html).toContain("90,071,992,547,409,931,234원");
     expect(html).toContain("남은 대출");
     expect(html).toContain("미입력");
-    expect(html).toContain("순자산은 아직 계산하지 않았어요");
-    expect(html).not.toContain("-90,071");
+    expect(html).toContain("-90,071,992,547,409,931,234원");
     expect(html).not.toContain(">0원<");
     expect(html).not.toContain("— 원");
   });

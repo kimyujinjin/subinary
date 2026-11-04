@@ -9,3 +9,14 @@ describe("formatSender", () => {
     expect(formatSender("신한카드")).toBe("신한카드");
   });
 });
+
+import { convertToKrw } from "./fx-client";
+describe("convertToKrw", () => {
+  it("multiplies exact decimals and rounds to won", () => {
+    expect(convertToKrw("10294.660625", "1380.5")).toBe(14211779n);
+    expect(convertToKrw("0", "1380.5")).toBe(0n);
+    expect(convertToKrw("1.5", "1000")).toBe(1500n);
+    expect(convertToKrw("0.0004", "1000")).toBe(0n);
+    expect(convertToKrw("abc", "1000")).toBeNull();
+  });
+});

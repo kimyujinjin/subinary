@@ -51,7 +51,7 @@ export function LoanImportScreen({ householdId, userId, canCreate, recordsOnly =
   return (
     <div className="mx-auto w-full min-w-0 max-w-2xl space-y-5">
       <header className="pl-2.5"><PageBackHeader title={recordsOnly ? "이전에 저장한 대출" : "신한 대출 가져오기"} subtitle={recordsOnly ? "이전 기록의 이름·공유 범위·합계 반영 방법을 관리해요." : "전세·중도금 대출의 남은 원금과 만기일을 저장해요."} backHref="/assets" /></header>
-      {!recordsOnly ? <section className="bg-card grid min-w-0 grid-cols-1 gap-4 rounded-2xl border p-4 sm:p-5">
+      {!recordsOnly ? <section className="finance-panel grid min-w-0 grid-cols-1 gap-4 p-5">
         <div>
           <h2 className="font-semibold">대출 내역 파일</h2>
           <ol className="text-muted-foreground mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs" aria-label="가져오기 순서">
@@ -78,12 +78,12 @@ export function LoanImportScreen({ householdId, userId, canCreate, recordsOnly =
         {!canCreate ? <p role="status" className="text-sm">현재 가족 권한으로는 가져온 대출을 추가하거나 수정할 수 없어요.</p> : null}
         {reading ? <div className="flex flex-wrap items-center gap-3"><p role="status" className="text-sm">확인 파일을 읽고 있어요.</p><Button variant="outline" onClick={() => { session.current.invalidate(); setReading(false); setError(null); }}>불러오기 취소</Button></div> : null}
       </section> : null}
-      {!recordsOnly && error ? <section role="alert" className="space-y-3 rounded-xl border p-4">
+      {!recordsOnly && error ? <section role="alert" className="finance-panel space-y-3 p-5">
         <p className="text-destructive text-sm leading-relaxed">{error}</p>
         {canCreate ? <Button variant="outline" className="min-h-11 w-full" disabled={reading || Boolean(preview || editing)} onClick={() => fileInput.current?.click()}>파일 다시 선택</Button> : null}
       </section> : null}
       {notice ? <p role="status" className="text-sm">{notice}</p> : null}
-      <details open={showRecords} onToggle={(event) => setShowRecords(event.currentTarget.open)} className="min-w-0 rounded-xl border p-4">
+      <details open={showRecords} onToggle={(event) => setShowRecords(event.currentTarget.open)} className="finance-panel min-w-0 p-5">
         <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">가져온 기록</summary>
         <p className="text-muted-foreground mb-4 text-xs">이 가족에 내가 저장한 대출이에요. 공유하지 않은 기록도 볼 수 있어요.</p>
         {records.isPending ? <FinanceLoading /> : records.isError ? <FinanceLoadError retry={() => void records.refetch()} /> : records.data?.items.length ? (

@@ -413,17 +413,17 @@ function Section({
 }>) {
   if (!show) return null;
   return (
-    <section id={id} className="space-y-2 scroll-mt-4">
-      <div className="flex items-baseline justify-between gap-2 px-1">
+    <section id={id} className="finance-panel scroll-mt-4 overflow-hidden pt-4">
+      <div className="flex items-baseline justify-between gap-2 px-5">
         <h2 className="text-heading">{title}</h2>
         <span className="text-caption text-muted-foreground tabular-nums">
           {countText}
         </span>
       </div>
       {description ? (
-        <p className="text-caption text-muted-foreground px-1">{description}</p>
+        <p className="text-caption text-muted-foreground px-5">{description}</p>
       ) : null}
-      <div className="finance-panel divide-border/60 divide-y overflow-hidden">
+      <div className="divide-border/60 divide-y">
         {error ? (
           <p className="text-body text-muted-foreground px-4 py-6 text-center">
             {errorText}

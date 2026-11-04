@@ -14,8 +14,18 @@ import { ConnectionRegistrationForm, type ConnectionCredentials } from "./regist
 import { AssetConnectionsSummary } from "./asset-connections-summary";
 import { canRefreshOnOpen, connectionFailureMessage, connectionFailureStatus, createConnectionSession, reconcileConnectionOperation, type ConnectionOperation } from "./model";
 
-export function ConnectionScreen({ householdId, userId, canManage, presentation = "full" }: {
-  householdId: string; userId: string; canManage: boolean; presentation?: "full" | "asset-summary" | "embedded";
+/** headless 모드에서 부모(자산 목록)가 받는 값. 읽기·권한 확인·열 때 조회는 여전히 이 화면이 소유한다. */
+export interface ConnectionSnapshot {
+  data: FinanceConnectionList | null;
+  loading: boolean;
+  busy: boolean;
+  notice: string | null;
+  uncertainId: string | null;
+}
+
+export function ConnectionScreen({ householdId, userId, canManage, presentation = "full", onSnapshot }: {
+  householdId: string; userId: string; canManage: boolean; presentation?: "full" | "asset-summary" | "embedded" | "headless";
+  onSnapshot?: (snapshot: ConnectionSnapshot) => void;
 }) {
   const { authedFetch } = useAuth();
   const session = useRef(createConnectionSession()).current;
@@ -165,6 +175,12 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
         householdId, expectedVersion: item.version,
       }, userId, signal)));
   }
+  const snapshotLoading = !data && (busy || owned.isPending);
+  const uncertainId = uncertain?.id ?? null;
+  useEffect(() => {
+    if (presentation === "headless") onSnapshot?.({ data, loading: snapshotLoading, busy, notice, uncertainId });
+  }, [presentation, onSnapshot, data, snapshotLoading, busy, notice, uncertainId]);
+  if (presentation === "headless") return null;
   const items = data?.items.filter((item) => item.status !== "disconnected") ?? [];
   const pendingRegistration = items.some((item) => item.status === "connecting");
   if (presentation === "asset-summary") return <AssetConnectionsSummary data={data} busy={busy}

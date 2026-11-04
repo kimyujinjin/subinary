@@ -4,7 +4,6 @@ import Link from "next/link";
 import React from "react";
 
 import { MonthSwitcher } from "@/components/widgets/month-switcher";
-import { StatusChip } from "@/components/widgets/status-chip";
 import { formatMonth, formatWon } from "@/lib/format";
 import {
   HOME_REVIEW_HREF,
@@ -80,7 +79,7 @@ export function HomeConsumptionCard({
     : null;
   return (
     <section
-      className="finance-panel flex min-w-0 flex-col px-5 pt-3"
+      className="finance-panel panel-flush-top flex min-w-0 flex-col px-5 pt-1"
       aria-labelledby="home-consumption-heading"
     >
       <div className="flex min-w-0 items-center justify-between gap-2">
@@ -159,7 +158,6 @@ export function HomeConsumptionCard({
                 문자·환율 확인 대기 {processingCount.toLocaleString("ko-KR")}
                 {processing.truncated ? "+" : ""}건
               </span>
-              <StatusChip tone="pending">사용액 미포함</StatusChip>
               <ChevronRight
                 className="text-muted-foreground/60 size-5 shrink-0"
                 aria-hidden="true"
