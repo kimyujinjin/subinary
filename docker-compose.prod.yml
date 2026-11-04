@@ -350,6 +350,9 @@ services:
     env_file:
       - .env               # 기존 시크릿(DB/JWT/스토리지/AI) 상속
       - .env.production     # prod override(도메인·NODE_ENV·터널 토큰)
+      # 연결 계좌 금고 키(저장소 밖, docs/operations/finance-connections.md). 없으면 deploy.sh 재배포 때 기능이 조용히 꺼진다.
+      - path: ${HOME}/.config/family-memory-ai/finance-connections/vault.env
+        required: false
     environment:
       # worker와 **같은 anchor**에서 받는다(ADR-0027 5단계). 아래 worker와 대칭이어야 한다.
       <<: *money-contract-environment
