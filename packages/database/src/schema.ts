@@ -4879,6 +4879,19 @@ export const financeConnections = pgTable('finance_connections', {
   check('finance_connections_disconnected_check', sql`${table.disconnectedAt} IS NULL OR (${table.status} = 'disconnected' AND ${table.credentials} IS NULL AND ${table.token} IS NULL AND ${table.accounts} IS NULL AND ${table.operationId} IS NULL AND ${table.refreshOnOpen} = false)`),
 ]);
 
+/** 연결 계좌 가족 공유 동의(0070). 사람 단위이며 철회는 revoked_at으로 남긴다. */
+export const connectedAccountSharing = pgTable('connected_account_sharing', {
+  householdId: uuid('household_id').notNull().references(() => households.id),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  consentVersion: integer('consent_version').notNull(),
+  consentedAt: timestamp('consented_at', { withTimezone: true }).notNull().defaultNow(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.householdId, table.userId] }),
+  check('connected_account_sharing_version_check', sql`${table.consentVersion} > 0`),
+]);
+
 /** A request starts pending once and becomes terminal once; terminal observations cannot be rewritten. */
 export const financeConnectionSnapshots = pgTable('finance_connection_snapshots', {
   id: uuid('id').primaryKey(),

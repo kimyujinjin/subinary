@@ -8,9 +8,9 @@ import { displayManualKrw } from "@/components/manual-finance/model";
 import { SectionHeader } from "@/components/widgets/section-header";
 import { StatusChip } from "@/components/widgets/status-chip";
 import { formatWon } from "@/lib/format";
-import { useOwnedFinanceConnections } from "@/lib/finance-connections-client";
+import { useConnectedAccounts } from "@/lib/connected-accounts-client";
 import { useUsdKrwReference } from "@/lib/fx-client";
-import { computeNetWorth, connectedHoldings } from "@/lib/net-worth";
+import { computeNetWorth, toHoldings } from "@/lib/net-worth";
 
 /**
  * 자산 요약 한 줄(§5 홈 5). 아는 값만 말하고 모르는 값은 `미입력`이라고 말한다 —
@@ -32,8 +32,6 @@ export function assetOneLine(summary: ManualAssetSummary): string {
   return [...known, ...unknown].join(" · ");
 }
 
-const noop = () => {};
-
 /**
  * 홈 자산 섹션(§8): 순자산 숫자 + 자산·대출 한 줄. 자산 화면과 같은 계산(computeNetWorth)을 쓴다.
  * 연결 계좌는 **읽기만** 한다 — 새 조회는 동의 범위(자산·연결 화면을 열 때)에서만 일어난다.
@@ -53,9 +51,9 @@ export function HomeAssetSection({
   error: boolean;
   unresolvedLoans?: number;
 }) {
-  const connections = useOwnedFinanceConnections(householdId, userId, noop);
+  const connected = useConnectedAccounts();
   const fx = useUsdKrwReference();
-  const holdings = connectedHoldings(connections.data ?? null, fx.data);
+  const holdings = toHoldings(connected.data?.holdings, fx.data);
   const worth = computeNetWorth(summary, holdings);
   return (
     <Link

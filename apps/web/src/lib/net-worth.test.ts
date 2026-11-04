@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { assetBreakdown, type ConnectedHolding } from "./net-worth";
 
-const toss: ConnectedHolding = { id: "t", label: "토스증권", krw: "0", usd: "10294.66", usdInKrw: 13842124n, totalKrw: 13842124n, stale: false };
+const toss: ConnectedHolding = { id: "t", kind: "stock", provider: "toss_securities", ownerName: "이수빈", own: true, label: "토스증권", krw: "0", usd: "10294.66", usdInKrw: 13842124n, totalKrw: 13842124n, stale: false };
 
 describe("assetBreakdown", () => {
   it("groups assets by kind with connected holdings under 주식, and loans by item", () => {
@@ -31,6 +31,14 @@ describe("assetBreakdown", () => {
     );
     expect(result.debts.map((part) => part.label)).toEqual(["가져온 대출"]);
     expect(result.debtsTotal).toBe(90n);
+  });
+
+  it("puts a shared Shinhan deposit under 통장·현금 and its loan under 대출 with the owner's name", () => {
+    const deposit: ConnectedHolding = { ...toss, id: "d", kind: "account", provider: "shinhan_bank", label: "신한 통장 · 끝 9029", ownerName: "김유진", own: false, krw: "2612734", usd: null, usdInKrw: null, totalKrw: 2612734n };
+    const loan: ConnectedHolding = { ...deposit, id: "l", kind: "loan", label: "신한 중도금대출 · 끝 0444", krw: "111440000", totalKrw: 111440000n };
+    const result = assetBreakdown([], [], [deposit, loan]);
+    expect(result.assets).toEqual([{ key: "account", label: "통장·현금", amount: 2612734n, missing: 0 }]);
+    expect(result.debts).toEqual([{ key: "l", label: "신한 중도금대출 · 끝 0444 · 김유진", amount: 111440000n, missing: 0 }]);
   });
 
   it("keeps an all-blank group as null instead of zero", () => {

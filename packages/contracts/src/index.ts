@@ -623,3 +623,4 @@ export * from './finance-connections.js';
 export * from './bank-connections.js';
 export * from './mac-bank-runner.js';
 export * from './fx.js';
+export * from './connected-accounts.js';
