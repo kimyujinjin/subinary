@@ -11,7 +11,7 @@
  * - 타인 summary_only(masked) 항목은 가맹점을 '(비공개)'로 표기하고 편집을 막는다.
  * - 권한은 서버(서비스 계층)가 강제하며, 실패 시 배너로 메시지를 노출한다.
  * ------------------------------------------------------------------------- */
-import { Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -31,7 +31,6 @@ import { Plus, Search, X } from "lucide-react";
 
 import { ReviewRequestAction } from "@/components/review-request-action";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   AlertDialog,
@@ -62,6 +61,15 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Fab, ListRow, Money, StatusBadge, StatusChip, type ChipTone } from "@/components/widgets";
+import { OverflowMenu, type OverflowAction } from "@/components/widgets/overflow-menu";
+import { SectionHeader } from "@/components/widgets/section-header";
+import { toast } from "sonner";
+import {
+  merchantLabel,
+  merchantSearchTerm,
+  transactionOccurredAt as occurredAt,
+} from "@/lib/transaction-display";
+import { MerchantHistory } from "./merchant-history";
 import { LedgerHeader } from "@/components/ledger-header";
 import { ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
@@ -201,12 +209,6 @@ type RowAction =
 // monthRange/recentMonths는 `@/lib/month`로 승격했다(홈·예산 월 스위처가 같은 규칙을
 // 써야 하므로 — ADR-0026). 동작은 동일하다.
 
-/** 가맹점 표시명(masked → '(비공개)', 미확인 → '미확인 가맹점'). */
-function merchantLabel(txn: TransactionSummary): string {
-  if (txn.masked) return "(비공개)";
-  return txn.merchantNormalized ?? txn.merchantRaw ?? "미확인 가맹점";
-}
-
 /** ApiError면 서버 메시지를, 아니면 일반 메시지를 반환한다. */
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
@@ -224,10 +226,6 @@ const TXN_STATUS_CHIP: Record<string, [ChipTone, string]> = {
 function TxnStatusChip({ status }: { status: string }) {
   const [tone, label] = TXN_STATUS_CHIP[status] ?? ["neutral", status];
   return <StatusChip tone={tone}>{label}</StatusChip>;
-}
-
-function occurredAt(txn: TransactionSummary): string {
-  return txn.approvedAt ?? txn.cancelledAt ?? txn.createdAt;
 }
 
 /** ISO 인스턴트 → `<input type="datetime-local">` 로컬 값(`YYYY-MM-DDTHH:mm`). */
@@ -331,9 +329,6 @@ function TransactionsView() {
   const [sharedOnly, setSharedOnly] = useState<boolean>(
     () => searchParams.get("attribution") === "shared",
   );
-  /** 인라인 카테고리 변경 시 merchant_category_rules로 저장할지(applyRule). */
-  const [applyRule, setApplyRule] = useState(false);
-
   // 필터는 닫아도 유지한다. 표시 조건만 지울 때 기간·검색은 바꾸지 않는다.
   const filterSetters = { categoryId: setCategoryId, cardId: setCardId, memberId: setMemberId, type: setType, status: setStatus };
   const changeFilter = (key: TransactionFilterKey, value: string) => filterSetters[key](value);
@@ -676,9 +671,19 @@ function TransactionsView() {
     mutation.mutate({
       kind: "update",
       id: txn.id,
-      body: { categoryId: nextCategoryId, applyRule },
+      body: { categoryId: nextCategoryId },
     });
   };
+
+  // 카테고리를 바꾼 뒤 '앞으로도 이렇게 분류'를 고르면 같은 분류로 가맹점 규칙만 저장한다
+  // (서버가 merchant_category_rules를 upsert, 지난 거래는 그대로). 예전 체크박스는 분류를
+  // 고르기 **전에** 켜야만 적용돼, 고른 뒤 켜면 아무 일도 없었다.
+  const applyCategoryRule = (txn: TransactionSummary, categoryId: string) =>
+    mutation.mutateAsync({
+      kind: "update",
+      id: txn.id,
+      body: { categoryId, applyRule: true },
+    });
 
   // 금액·날짜 수정(변경된 필드만 PATCH). 빈 body면 no-op.
   const editFields = async (
@@ -696,6 +701,7 @@ function TransactionsView() {
     onMutate: (id: string) => ({ householdId, id }),
     onSuccess: (_result, id, context) => {
       setActionError(null);
+      toast.success("거래를 삭제했어요");
       queryClient.removeQueries({ queryKey: transactionDetailKey(context?.householdId ?? householdId, id) });
       setDetailId((current) => current === id ? null : current);
       invalidateTransactionScope(queryClient);
@@ -708,9 +714,10 @@ function TransactionsView() {
   const handleCreateCategory = async (
     txn: TransactionSummary,
     name: string,
-  ): Promise<void> => {
+  ): Promise<string> => {
     const created = await createCategoryMut.mutateAsync(name);
     changeCategory(txn, created.id);
+    return created.id;
   };
 
   const changeVisibility = (
@@ -1039,8 +1046,8 @@ function TransactionsView() {
             && detailCard.ownerMemberId !== detailTxn.memberId}
           cardOptions={cardOptions}
           categoryOptions={categoryFilterOptions}
-          applyRule={applyRule}
-          onApplyRuleChange={setApplyRule}
+          onApplyCategoryRule={(categoryId) => applyCategoryRule(detailTxn, categoryId)}
+          onOpenTransaction={(id) => setDetailId(id)}
           onChangeCard={(v) => changeCard(detailTxn, v)}
           onChangeCategory={(v) => changeCategory(detailTxn, v)}
           onCreateCategory={(name) => handleCreateCategory(detailTxn, name)}
@@ -1138,8 +1145,8 @@ function TransactionDetailDialog({
   ownershipMismatch,
   cardOptions,
   categoryOptions,
-  applyRule,
-  onApplyRuleChange,
+  onApplyCategoryRule,
+  onOpenTransaction,
   onChangeCard,
   onChangeCategory,
   onCreateCategory,
@@ -1162,11 +1169,11 @@ function TransactionDetailDialog({
   ownershipMismatch: boolean;
   cardOptions: ReadonlyArray<Option>;
   categoryOptions: ReadonlyArray<Option>;
-  applyRule: boolean;
-  onApplyRuleChange: (value: boolean) => void;
+  onApplyCategoryRule: (categoryId: string) => Promise<unknown>;
+  onOpenTransaction: (id: string) => void;
   onChangeCard: (cardId: string) => void;
   onChangeCategory: (categoryId: string) => void;
-  onCreateCategory: (name: string) => Promise<void>;
+  onCreateCategory: (name: string) => Promise<string>;
   onChangeVisibility: (visibility: string) => void;
   onEditFields: (body: TransactionEditPatch) => Promise<TransactionSummary>;
   onOpenMemo: () => void;
@@ -1271,7 +1278,6 @@ function TransactionDetailDialog({
       () => {
         setEditSaving(false);
         setEditing(false);
-        setEditNotice("수정 내용을 저장했어요.");
       },
       (error) => {
         setEditSaving(false);
@@ -1282,6 +1288,29 @@ function TransactionDetailDialog({
       },
     );
   };
+
+  // 카테고리를 이 시트에서 바꾼 뒤에만 '앞으로도 이렇게 분류'를 묻는다.
+  const [ruleFor, setRuleFor] = useState<{ id: string; name: string } | null>(null);
+  const [ruleState, setRuleState] = useState<"offered" | "saving" | "applied">("offered");
+  // 분류 변경이 저장된 뒤(txn.categoryId가 바뀐 뒤)에만 규칙을 저장할 수 있다.
+  const ruleReady = ruleFor != null && txn.categoryId === ruleFor.id;
+  const applyRuleForMerchant = async () => {
+    if (!ruleFor || !ruleReady || busy || ruleState === "saving") return;
+    setRuleState("saving");
+    try {
+      await onApplyCategoryRule(ruleFor.id);
+      setRuleState("applied");
+    } catch {
+      // 오류 문구는 위쪽 인라인(actionError)이 말한다.
+      setRuleState("offered");
+    }
+  };
+  // 저장 성공은 시트 어디에서 바꿨든 보이게 토스트로 알린다(오류는 위쪽 인라인).
+  const lastStatus = useRef(actionStatus);
+  useEffect(() => {
+    if (lastStatus.current !== "success" && actionStatus === "success") toast.success("저장했어요");
+    lastStatus.current = actionStatus;
+  }, [actionStatus]);
 
   // 인라인 '새 카테고리 만들기' 상태.
   const [creatingCategory, setCreatingCategory] = useState(false);
@@ -1295,9 +1324,13 @@ function TransactionDetailDialog({
     setCategorySaving(true);
     setCategoryError(null);
     try {
-      await onCreateCategory(name);
+      const createdId = await onCreateCategory(name);
       setCreatingCategory(false);
       setNewCategoryName("");
+      if (merchantSearchTerm(txn)) {
+        setRuleFor({ id: createdId, name });
+        setRuleState("offered");
+      }
     } catch (err) {
       setCategoryError(
         err instanceof Error ? err.message : "카테고리를 만들지 못했어요.",
@@ -1307,153 +1340,183 @@ function TransactionDetailDialog({
     }
   };
 
+  const merchant = merchantLabel(txn);
+  const searchTerm = merchantSearchTerm(txn);
+  const installment =
+    txn.installmentMonths && txn.installmentMonths > 1 ? txn.installmentMonths : null;
+  const foreign = txn.originalCurrency != null && txn.originalAmount != null;
+  const partiallyCancelled = !isCancellation && txn.netAmount !== txn.amount;
+  // 자주 쓰지 않거나 되돌리기 어려운 행동은 ⋯ 메뉴에만 둔다(리뉴얼 §3.3 — 위험 행동은 메뉴 안).
+  const overflowActions: OverflowAction[] = [
+    { label: "금액·날짜 수정", onSelect: startEdit, disabled: busy },
+    ...(!isCancellation && !excluded
+      ? [{ label: "중복이에요 · 합계에서 빼기", onSelect: onExclude, disabled: busy }]
+      : []),
+    {
+      label: "거래 삭제",
+      onSelect: () => setDeleteConfirmOpen(true),
+      destructive: true,
+      disabled: busy,
+    },
+  ];
+
   return (
     <Dialog open onOpenChange={(v) => !v && requestClose()}>
-      <DialogContent className="grid-cols-[minmax(0,1fr)] gap-3 [&>*]:min-w-0">
-        <DialogHeader>
-          <DialogTitle className="break-words pr-6">{merchantLabel(txn)}</DialogTitle>
-          <DialogDescription className="break-words">
-            {formatDate(occurredAt(txn))} · 지출 구분: {memberName}
+      <DialogContent className="grid-cols-[minmax(0,1fr)] gap-5 [&>*]:min-w-0">
+        <DialogHeader className="gap-1 text-left">
+          <div className="flex min-w-0 items-start gap-1 pr-8">
+            <DialogTitle className="text-heading min-w-0 flex-1 break-words">
+              {merchant}
+            </DialogTitle>
+            {!editing ? (
+              <OverflowMenu
+                label="거래 메뉴"
+                actions={overflowActions}
+                className="-my-2 shrink-0"
+              />
+            ) : null}
+          </div>
+          <DialogDescription className="text-caption break-words">
+            {formatDate(occurredAt(txn))}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-1 text-sm break-words">
-          <p className="text-muted-foreground">연결 카드: {cardLabel}</p>
-          {ownershipMismatch ? (
-            <p className="text-warning-strong" role="status">
-              거래 구성원과 카드 소유자가 달라요. 아래 카드 선택에서 올바른 카드에 연결됐는지 확인해 주세요.
-            </p>
-          ) : null}
-        </div>
-
-        {/* 금액 요약 — 평소엔 읽기 뷰, '수정' 탭 시 인라인 편집으로 전환 */}
-        <div className="bg-muted relative flex min-w-0 max-w-full flex-col items-center gap-1 rounded-xl px-4 py-4">
-          {editing ? (
-            <div className="flex w-full flex-col gap-2">
-              <span className="text-muted-foreground text-[13px]" id={`${inputId}-heading`}>
-                금액·날짜 수정 · 저장을 눌러야 반영돼요
-              </span>
-              <div className="flex flex-col gap-2">
-                <Label htmlFor={`${inputId}-amount`}>금액</Label>
-                <Input
-                  id={`${inputId}-amount`}
-                  ref={amountInput}
-                  inputMode="numeric"
-                  aria-invalid={Boolean(editErrors.amount)}
-                  aria-describedby={editErrors.amount ? `${inputId}-amount-error` : undefined}
-                  value={editAmount}
-                  disabled={busy || !canEditAmount}
-                  className="min-h-11"
-                  onChange={(e) => {
-                    setEditAmount(e.target.value);
-                    setEditErrors((errors) => ({ ...errors, amount: undefined }));
-                    setEditError(null);
-                  }}
-                />
-                {editErrors.amount ? <p id={`${inputId}-amount-error`} role="alert" className="text-destructive text-sm">{editErrors.amount}</p> : null}
-                <Label htmlFor={`${inputId}-date`}>날짜/시각 (이 기기의 시간)</Label>
-                <Input
-                  id={`${inputId}-date`}
-                  ref={dateInput}
-                  type="datetime-local"
-                  aria-invalid={Boolean(editErrors.occurredAt)}
-                  aria-describedby={editErrors.occurredAt ? `${inputId}-date-error` : undefined}
-                  value={editDate}
-                  disabled={busy}
-                  className="min-h-11 min-w-0 w-full"
-                  onChange={(e) => {
-                    setEditDate(e.target.value);
-                    setEditErrors((errors) => ({ ...errors, occurredAt: undefined }));
-                    setEditError(null);
-                  }}
-                />
-                {editErrors.occurredAt ? <p id={`${inputId}-date-error`} role="alert" className="text-destructive text-sm">{editErrors.occurredAt}</p> : null}
-              </div>
-              {editError ? <p role="alert" className="text-destructive text-sm">{editError}</p> : null}
-              {!canEditAmount ? (
-                <p className="text-muted-foreground text-[12px]">
-                  취소가 연결된 거래는 금액을 바꿀 수 없어요. 날짜만 수정돼요.
-                </p>
-              ) : null}
-              <div className="sticky bottom-0 flex justify-end gap-2 bg-muted py-2" aria-busy={editSaving}>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="min-h-11 min-w-20"
-                  disabled={busy}
-                  onClick={cancelEdit}
-                >
-                  취소
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="min-h-11 min-w-20"
-                  disabled={busy || !editDirty}
-                  onClick={() => void saveEdits()}
-                >
-                  {editSaving ? "저장 중…" : "저장"}
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <>
-              {!txn.masked ? (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={startEdit}
-                  className="text-accent-foreground absolute top-1 right-1 min-h-11 min-w-11 px-2 text-[13px] font-medium disabled:opacity-50"
-                >
-                  수정
-                </button>
-              ) : null}
-              <span className="text-muted-foreground text-[13px]">
-                {isCancellation ? "취소 금액" : "결제 금액"}
-              </span>
-              <span
-                className={cn(
-                  "text-2xl font-bold tabular-nums",
-                  excluded && "text-muted-foreground line-through",
-                )}
+        {/* 금액이 먼저 — 무엇을 얼마에 결제했나. 확인이 필요한 거래는 할 일을 바로 아래에 둔다. */}
+        {editing ? (
+          <section
+            aria-labelledby={`${inputId}-heading`}
+            className="bg-muted flex min-w-0 flex-col gap-2 rounded-card p-4"
+          >
+            <h3 className="text-caption text-muted-foreground" id={`${inputId}-heading`}>
+              금액·날짜 수정 · 저장을 눌러야 반영돼요
+            </h3>
+            <Label htmlFor={`${inputId}-amount`}>금액</Label>
+            <Input
+              id={`${inputId}-amount`}
+              ref={amountInput}
+              inputMode="numeric"
+              aria-invalid={Boolean(editErrors.amount)}
+              aria-describedby={editErrors.amount ? `${inputId}-amount-error` : undefined}
+              value={editAmount}
+              disabled={busy || !canEditAmount}
+              className="min-h-11 bg-background"
+              onChange={(e) => {
+                setEditAmount(e.target.value);
+                setEditErrors((errors) => ({ ...errors, amount: undefined }));
+                setEditError(null);
+              }}
+            />
+            {editErrors.amount ? <p id={`${inputId}-amount-error`} role="alert" className="text-destructive text-caption">{editErrors.amount}</p> : null}
+            <Label htmlFor={`${inputId}-date`}>날짜/시각 (이 기기의 시간)</Label>
+            <Input
+              id={`${inputId}-date`}
+              ref={dateInput}
+              type="datetime-local"
+              aria-invalid={Boolean(editErrors.occurredAt)}
+              aria-describedby={editErrors.occurredAt ? `${inputId}-date-error` : undefined}
+              value={editDate}
+              disabled={busy}
+              className="min-h-11 min-w-0 w-full bg-background"
+              onChange={(e) => {
+                setEditDate(e.target.value);
+                setEditErrors((errors) => ({ ...errors, occurredAt: undefined }));
+                setEditError(null);
+              }}
+            />
+            {editErrors.occurredAt ? <p id={`${inputId}-date-error`} role="alert" className="text-destructive text-caption">{editErrors.occurredAt}</p> : null}
+            {editError ? <p role="alert" className="text-destructive text-caption">{editError}</p> : null}
+            {!canEditAmount ? (
+              <p className="text-muted-foreground text-caption">
+                취소가 연결된 거래는 금액을 바꿀 수 없어요. 날짜만 수정돼요.
+              </p>
+            ) : null}
+            <div className="sticky bottom-0 flex justify-end gap-2 bg-muted py-2" aria-busy={editSaving}>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="min-h-11 min-w-20"
+                disabled={busy}
+                onClick={cancelEdit}
               >
-                {isCancellation ? (
-                  <Money amount={-txn.amount} currency={txn.currency} />
-                ) : (
-                  <Money amount={txn.netAmount} currency={txn.currency} />
-                )}
+                취소
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="min-h-11 min-w-20"
+                disabled={busy || !editDirty}
+                onClick={() => void saveEdits()}
+              >
+                {editSaving ? "저장 중…" : "저장"}
+              </Button>
+            </div>
+          </section>
+        ) : (
+          <section
+            aria-label={isCancellation ? "취소 금액" : "결제 금액"}
+            className="flex min-w-0 flex-col gap-3"
+          >
+            <p
+              className={cn(
+                "text-display break-all tabular-nums",
+                excluded && "text-muted-foreground line-through",
+              )}
+            >
+              {isCancellation ? (
+                <Money amount={-txn.amount} currency={txn.currency} />
+              ) : (
+                <Money amount={txn.netAmount} currency={txn.currency} />
+              )}
+            </p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {isCancellation ? (
+                <StatusChip tone="neutral">{TYPE_LABELS[txn.transactionType]} 거래</StatusChip>
+              ) : null}
+              <StatusBadge status={txn.status} />
+              {installment ? <StatusChip tone="neutral">{installment}개월 할부</StatusChip> : null}
+              {foreign ? <StatusChip tone="neutral">해외 결제</StatusChip> : null}
+              {excluded ? <StatusChip tone="neutral">합계에서 제외됨</StatusChip> : null}
+            </div>
+            {isPending ? (
+              <Button className="h-11 w-full" disabled={busy} onClick={onMarkValid}>
+                정상 거래로 확인하기
+              </Button>
+            ) : null}
+            {canLink ? (
+              <Button variant="tint" className="h-11 w-full" disabled={busy} onClick={onOpenLink}>
+                원래 결제와 연결하기
+              </Button>
+            ) : null}
+            {!isCancellation && excluded ? (
+              <Button variant="tint" className="h-11 w-full" disabled={busy} onClick={onInclude}>
+                다시 합계에 포함하기
+              </Button>
+            ) : null}
+          </section>
+        )}
+
+        {editNotice ? <p role="status" aria-live="polite" className="text-muted-foreground text-caption">{editNotice}</p> : null}
+        {actionBusy ? (
+          <p role="status" className="text-muted-foreground text-caption">변경 내용을 처리하고 있어요.</p>
+        ) : actionError && !editing ? (
+          <p role="alert" className="text-destructive text-caption">{actionError}</p>
+        ) : null}
+
+        {/* 결제 정보 — 문장 대신 훑어보는 키-값 */}
+        <dl className="border-border/60 divide-border/60 divide-y border-y">
+          <InfoRow label="결제자">{memberName}</InfoRow>
+          <InfoRow label="카드">
+            {cardLabel}
+            {ownershipMismatch ? (
+              <span role="status" className="text-warning-strong text-caption mt-1 block">
+                거래 구성원과 카드 소유자가 달라요. 아래 &lsquo;카드&rsquo;에서 올바른 카드인지 확인해 주세요.
               </span>
-              {txn.originalCurrency && txn.originalAmount != null ? (
-                <div className="w-full text-center">
-                  <p className="text-muted-foreground text-[13px]">해외 결제 {formatMoney(txn.originalAmount, txn.originalCurrency)}</p>
-                  <TransactionFxDetails currency={txn.originalCurrency} exchangeRate={txn.exchangeRate} fx={txn.fx} />
-                </div>
-              ) : null}
-              {excluded ? (
-                <span className="bg-background text-muted-foreground mt-1 rounded-full px-2 py-0.5 text-xs font-medium">
-                  합계에서 제외됨
-                </span>
-              ) : null}
-              {!isCancellation && txn.netAmount !== txn.amount ? (
-                <span className="text-muted-foreground text-[13px]">
-                  원래 {formatMoney(txn.amount, txn.currency)}에서 취소{" "}
-                  {formatMoney(txn.cancelledAmount, txn.currency)}이 반영됐어요
-                </span>
-              ) : null}
-              <span className="flex items-center gap-1.5 pt-1">
-                {isCancellation ? (
-                  <span className="text-muted-foreground text-xs">
-                    {TYPE_LABELS[txn.transactionType]} 거래
-                  </span>
-                ) : null}
-                <StatusBadge status={txn.status} />
-                {txn.installmentMonths && txn.installmentMonths > 1 ? (
-                  <span className="text-muted-foreground text-xs">
-                    {txn.installmentMonths}개월 할부
-                  </span>
-                ) : null}
-              </span>
+            ) : null}
+          </InfoRow>
+          {installment ? (
+            <InfoRow label="할부">
+              {installment}개월
               {/*
                 할부는 **승인월에 전액** 계상된다. `installmentMonths`는 보관만 되고
                 집계·예산·정기지출 어디에서도 월 분할에 쓰이지 않는다
@@ -1464,80 +1527,53 @@ function TransactionDetailDialog({
                 맞지 않고, 사용자는 앱이 틀렸다고 판단한다. 실제 월 분할은 금액 계약
                 (ADR-0027)을 건드리므로 별건이고, 여기서는 **정직하게 말하는 것**만 한다.
               */}
-              {txn.installmentMonths && txn.installmentMonths > 1 ? (
-                <span className="text-muted-foreground text-[13px]">
-                  이 달 합계에는 전액{" "}
-                  {formatMoney(txn.netAmount, txn.currency)}이 들어가 있어요 (월{" "}
-                  {formatMoney(
-                    Math.round(txn.netAmount / txn.installmentMonths),
-                    txn.currency,
-                  )}
-                  씩 {txn.installmentMonths}개월).
-                </span>
-              ) : null}
-            </>
-          )}
-        </div>
+              <span className="text-muted-foreground text-caption mt-1 block">
+                이 달 합계에는 전액 {formatMoney(txn.netAmount, txn.currency)}이 들어가 있어요
+                (월 {formatMoney(Math.round(txn.netAmount / installment), txn.currency)}씩).
+              </span>
+            </InfoRow>
+          ) : null}
+          {foreign ? (
+            <InfoRow label="해외 결제">
+              {formatMoney(txn.originalAmount as number, txn.originalCurrency as string)}
+              <TransactionFxDetails
+                currency={txn.originalCurrency as string}
+                exchangeRate={txn.exchangeRate}
+                fx={txn.fx}
+              />
+            </InfoRow>
+          ) : null}
+          {partiallyCancelled ? (
+            <InfoRow label="취소">
+              원래 {formatMoney(txn.amount, txn.currency)} 중{" "}
+              {formatMoney(txn.cancelledAmount, txn.currency)} 취소
+            </InfoRow>
+          ) : null}
+        </dl>
 
-        {editNotice ? <p role="status" aria-live="polite" className="text-muted-foreground text-sm">{editNotice}</p> : null}
-        {actionBusy ? (
-          <p role="status" className="text-muted-foreground text-sm">변경 내용을 처리하고 있어요.</p>
-        ) : actionError && !editing ? (
-          <p role="alert" className="text-destructive text-sm">{actionError}</p>
-        ) : actionStatus === "success" && !editNotice && !editing ? (
-          <p role="status" className="text-primary text-sm">변경 내용을 저장했어요.</p>
-        ) : null}
-
-        <div className="flex min-w-0 flex-col gap-3">
-          <div className="space-y-1 border-t pt-4">
-            <h2 className="text-sm font-semibold">카드 · 분류 · 공개 범위</h2>
-            <p className="text-muted-foreground text-xs">아래 항목은 선택하면 바로 저장돼요.</p>
-          </div>
-          {/* 카드 연결/재지정 — 미연결·모호(pending_review) 거래 해소 경로 */}
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="detail-card">카드</Label>
-            <Select
-              value={txn.cardId ?? CARD_NONE}
-              disabled={busy}
-              onValueChange={onChangeCard}
-            >
-              <SelectTrigger id="detail-card" className="min-h-11 min-w-0 w-full max-w-full">
-                <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder="카드 미연결" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={CARD_NONE}>카드 미연결</SelectItem>
-                {cardOptions.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {txn.cardId == null || txn.status === "pending_review" ? (
-              <p className="text-muted-foreground text-[13px]">
-                카드에 연결하면 공개 범위가 카드 설정을 따라가요.
-              </p>
-            ) : null}
-          </div>
-
-          {/* 카테고리 변경(+applyRule) */}
+        {/* 분류 — 고르면 바로 저장된다. 가장 자주 바꾸는 카테고리를 맨 위에 둔다. */}
+        <section aria-label="분류" className="flex min-w-0 flex-col gap-4">
+          <SectionHeader
+            as="h3"
+            title="분류"
+            trailing={<span className="text-caption text-muted-foreground">고르면 바로 저장돼요</span>}
+          />
           <div className="flex flex-col gap-2">
             <Label htmlFor="detail-category">카테고리</Label>
-            <label className="flex min-h-11 cursor-pointer items-center gap-2">
-              <Checkbox
-                checked={applyRule}
-                disabled={busy}
-                onChange={(e) => onApplyRuleChange(e.target.checked)}
-              />
-              <span className="text-muted-foreground text-xs">
-                같은 가맹점도 다음부터 자동 분류하기
-              </span>
-            </label>
-            <p className="text-muted-foreground text-xs">자동 분류를 원하면 먼저 체크한 뒤 카테고리를 선택해 주세요. 지난 거래는 바뀌지 않아요.</p>
             <Select
               value={txn.categoryId ?? ""}
               disabled={busy}
-              onValueChange={onChangeCategory}
+              onValueChange={(value) => {
+                if (!value || value === txn.categoryId) return;
+                onChangeCategory(value);
+                if (searchTerm) {
+                  setRuleFor({
+                    id: value,
+                    name: categoryOptions.find((o) => o.value === value)?.label ?? "선택한 분류",
+                  });
+                  setRuleState("offered");
+                }
+              }}
             >
               <SelectTrigger id="detail-category" className="min-h-11 min-w-0 w-full max-w-full">
                 <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder="미분류" />
@@ -1550,6 +1586,32 @@ function TransactionDetailDialog({
                 ))}
               </SelectContent>
             </Select>
+            {/* 분류 변경이 저장 중이거나 저장됐을 때만 — 실패하면 묻지 않는다(오류는 위에서 말한다). */}
+            {ruleFor && (ruleReady || busy) ? (
+              <div className="bg-muted flex flex-col gap-2 rounded-control p-3" role="status">
+                {ruleState === "applied" ? (
+                  <p className="text-caption">
+                    앞으로 들어오는 {merchant} 결제는 &lsquo;{ruleFor.name}&rsquo;(으)로 분류해요.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-caption">
+                      앞으로 들어오는 {merchant} 결제도 &lsquo;{ruleFor.name}&rsquo;(으)로 분류할까요? 지난 거래는 그대로예요.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="tint"
+                      size="sm"
+                      className="min-h-10 self-start"
+                      disabled={!ruleReady || busy || ruleState === "saving"}
+                      onClick={() => void applyRuleForMerchant()}
+                    >
+                      {ruleState === "saving" ? "저장 중…" : "앞으로도 이렇게 분류"}
+                    </Button>
+                  </>
+                )}
+              </div>
+            ) : null}
 
             {/* 알맞은 카테고리가 없으면 여기서 바로 새로 만들어 지정. */}
             {creatingCategory ? (
@@ -1592,7 +1654,7 @@ function TransactionDetailDialog({
                   </Button>
                 </div>
                 {categoryError ? (
-                  <p className="text-destructive text-[13px]">{categoryError}</p>
+                  <p className="text-destructive text-caption">{categoryError}</p>
                 ) : null}
               </div>
             ) : (
@@ -1600,22 +1662,16 @@ function TransactionDetailDialog({
                 type="button"
                 onClick={() => setCreatingCategory(true)}
                 disabled={busy}
-                className="text-primary w-fit text-[13px] font-medium hover:underline disabled:opacity-50"
+                className="text-primary text-caption min-h-11 w-fit font-medium hover:underline disabled:opacity-50"
               >
                 + 새 카테고리 만들기
               </button>
             )}
-
           </div>
 
-          {/* 공개 범위 */}
           <div className="flex flex-col gap-2">
             <Label htmlFor="detail-visibility">공개 범위</Label>
-            <Select
-              value={txn.visibility}
-              disabled={busy}
-              onValueChange={onChangeVisibility}
-            >
+            <Select value={txn.visibility} disabled={busy} onValueChange={onChangeVisibility}>
               <SelectTrigger id="detail-visibility" className="min-h-11 min-w-0 w-full max-w-full">
                 <SelectValue className="min-w-0 flex-1 truncate text-left" />
               </SelectTrigger>
@@ -1629,7 +1685,29 @@ function TransactionDetailDialog({
             </Select>
           </div>
 
-          {/* 메모 */}
+          {/* 카드 연결/재지정 — 미연결·모호(pending_review) 거래 해소 경로 */}
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="detail-card">카드</Label>
+            <Select value={txn.cardId ?? CARD_NONE} disabled={busy} onValueChange={onChangeCard}>
+              <SelectTrigger id="detail-card" className="min-h-11 min-w-0 w-full max-w-full">
+                <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder="카드 미연결" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={CARD_NONE}>카드 미연결</SelectItem>
+                {cardOptions.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {txn.cardId == null || txn.status === "pending_review" ? (
+              <p className="text-muted-foreground text-caption">
+                카드에 연결하면 공개 범위가 카드 설정을 따라가요.
+              </p>
+            ) : null}
+          </div>
+
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <Label>메모</Label>
@@ -1637,99 +1715,58 @@ function TransactionDetailDialog({
                 type="button"
                 disabled={busy}
                 onClick={onOpenMemo}
-                className="text-accent-foreground text-[13px] font-medium disabled:opacity-50"
+                className="text-accent-foreground text-caption min-h-11 font-medium disabled:opacity-50"
               >
                 {txn.memo ? "수정하기" : "남기기"}
               </button>
             </div>
             <p
               className={cn(
-                "bg-muted rounded-lg px-3 py-2.5 text-sm",
+                "bg-muted text-body rounded-control px-3 py-2.5 break-words",
                 !txn.memo && "text-muted-foreground",
               )}
             >
               {txn.memo ?? "아직 메모가 없어요"}
             </p>
           </div>
+        </section>
 
-          {/* 가족에게 물어보기(확인 요청) — 자기 훅을 쓰는 독립 컴포넌트 */}
-          <ReviewRequestAction txn={txn} disabled={busy} />
+        {/* 가족에게 물어보기(확인 요청) — 자기 훅을 쓰는 독립 컴포넌트 */}
+        <ReviewRequestAction txn={txn} disabled={busy} />
 
-          {/* 보조 액션 */}
-          <div className="flex flex-col gap-2">
-            {canLink ? (
-              <Button
-                variant="tint"
-                className="h-11 w-full"
-                disabled={busy}
-                onClick={onOpenLink}
-              >
-                원래 결제와 연결하기
-              </Button>
-            ) : null}
-            {/* 승인 거래만 제외/포함 대상(취소 행은 합계에 순액이 없음). */}
-            {!isCancellation && excluded ? (
-              <Button
-                variant="tint"
-                className="h-11 w-full"
-                disabled={busy}
-                onClick={onInclude}
-              >
-                다시 합계에 포함하기
-              </Button>
-            ) : null}
-            {!isCancellation && !excluded ? (
-              <Button
-                variant="ghost"
-                className="text-muted-foreground h-11 w-full"
-                disabled={busy}
-                onClick={onExclude}
-              >
-                중복이에요 · 합계에서 빼기
-              </Button>
-            ) : null}
+        {searchTerm ? (
+          <MerchantHistory
+            txn={txn}
+            searchTerm={searchTerm}
+            disabled={busy || editing}
+            onOpen={onOpenTransaction}
+          />
+        ) : null}
 
-            {/* 하드 삭제(되돌리기 불가) — 확인 다이얼로그 경유 */}
-            <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
-              <AlertDialogTrigger asChild>
-                <Button
-                  variant="ghost"
-                  className="text-destructive h-11 w-full"
-                  disabled={busy}
-                >
-                  거래 삭제
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>거래를 삭제할까요?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {merchantLabel(txn)} ·{" "}
-                    {formatMoney(txn.amount, txn.currency)} 거래가 영구
-                    삭제됩니다. 되돌릴 수 없어요. (합계에서만 빼려면 &lsquo;합계에서
-                    빼기&rsquo;를 쓰세요.)
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>취소</AlertDialogCancel>
-                  <AlertDialogAction
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                    onClick={onDelete}
-                  >
-                    삭제하기
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
-        </div>
+        {/* 하드 삭제(되돌리기 불가) — ⋯ 메뉴에서 열고 확인을 한 번 더 받는다 */}
+        <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>거래를 삭제할까요?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {merchant} · {formatMoney(txn.amount, txn.currency)} 거래가 영구
+                삭제됩니다. 되돌릴 수 없어요. (합계에서만 빼려면 ⋯ 메뉴의 &lsquo;합계에서
+                빼기&rsquo;를 쓰세요.)
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>취소</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={onDelete}
+              >
+                삭제하기
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <DialogFooter className="flex-col gap-2 sm:flex-col">
-          {isPending ? (
-            <Button className="h-11 w-full" disabled={busy} onClick={onMarkValid}>
-              정상 거래로 확인하기
-            </Button>
-          ) : null}
           <Button
             variant="ghost"
             className="h-11 w-full"
@@ -1760,6 +1797,16 @@ function TransactionDetailDialog({
         </AlertDialog>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** 상세 시트의 결제 정보 한 줄(키-값). */
+function InfoRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 gap-4 py-3">
+      <dt className="text-caption text-muted-foreground w-16 shrink-0 pt-0.5">{label}</dt>
+      <dd className="text-body min-w-0 flex-1 break-words">{children}</dd>
+    </div>
   );
 }
 
