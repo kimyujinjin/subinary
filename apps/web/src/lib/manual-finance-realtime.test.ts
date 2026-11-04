@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
-import { isManualFinanceHint, refreshManualFinanceQueries, resetSharedManualFinanceQueries } from "./manual-finance-realtime";
+import { isManualFinanceHint, refreshManualFinanceQueries, resetSharedManualFinanceQueries, revalidateSharedManualFinanceQueries } from "./manual-finance-realtime";
 
 describe("manual finance shared cache revocation", () => {
   it("recognizes only the explicit v1 metadata hint", () => {
@@ -51,6 +51,22 @@ describe("manual finance shared cache revocation", () => {
     expect(qc.getQueryData(connection)).toBeUndefined();
     expect(qc.getQueryData(asset)).toEqual({ synthetic: true });
     expect(qc.getQueryState(asset)?.isInvalidated).toBe(true);
+    qc.clear();
+  });
+  it("앱 복귀는 공유 값을 지우지 않고 다시 확인만 한다 — 연결 계좌 화면만 비운다", async () => {
+    const qc = new QueryClient();
+    const shared = ["manual-finance", "hh-a", "user-a", "household", "overview"];
+    const privateKey = ["manual-finance", "hh-a", "user-a", "private", "assets"];
+    const connection = ["manual-finance", "hh-a", "user-a", "owner", "finance-connections"];
+    const other = ["manual-finance", "hh-b", "user-a", "household", "assets"];
+    for (const key of [shared, privateKey, connection, other]) qc.setQueryData(key, { synthetic: true });
+    await revalidateSharedManualFinanceQueries(qc, "hh-a");
+    // 보여 주던 값은 남고(로딩으로 번쩍이지 않음) 다시 받을 대상으로만 표시된다.
+    expect(qc.getQueryData(shared)).toEqual({ synthetic: true });
+    expect(qc.getQueryState(shared)?.isInvalidated).toBe(true);
+    expect(qc.getQueryData(connection)).toBeUndefined();
+    expect(qc.getQueryState(privateKey)?.isInvalidated).toBe(false);
+    expect(qc.getQueryState(other)?.isInvalidated).toBe(false);
     qc.clear();
   });
 });

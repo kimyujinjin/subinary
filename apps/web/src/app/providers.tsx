@@ -30,6 +30,9 @@ export function Providers({ children }: Readonly<{ children: ReactNode }>) {
             refetchOnWindowFocus: true,
             retry: 1,
             staleTime: 30_000,
+            // 화면을 떠난 뒤에도 30분은 캐시를 둔다(기본 5분). 탭을 다시 열면 이전 화면을 바로
+            // 보여 주고 뒤에서 새로 받는다. 로그아웃은 clear()로 전부 지우고, 가족·사용자는 키에 있다.
+            gcTime: 30 * 60_000,
           },
         },
       }),

@@ -132,16 +132,21 @@ function useLoanCacheCleanup(key: readonly unknown[]) {
   }, [qc, keyString]);
 }
 
+/**
+ * 자산 화면의 개요. 예전에는 화면을 떠날 때 캐시를 지워(gcTime 0) 자산 탭을 열 때마다 처음부터
+ * 로딩했다(2026-11-05 사용자 지적). 이제 전역 캐시 시간을 따르고, 열 때마다 뒤에서 새로 받는다
+ * (staleTime 0). 가족·사용자·공개 범위는 키에 있고 로그아웃은 캐시 전체를 지운다. 다시 받다가
+ * 권한 오류가 나면 화면이 오류를 먼저 그려 이전 값이 남지 않는다.
+ */
 export function useFinancialOverview(scope: ManualFinanceScope = "household") {
   const { householdId } = useHousehold();
   const { user, status, authedFetch } = useAuth();
   const active = Boolean(householdId && user && status === "authenticated");
   const key = loanImportKeys.overview(active ? householdId : null, active ? user!.id : null, scope);
-  useLoanCacheCleanup(key);
   return useQuery({
     queryKey: key, enabled: active,
     queryFn: ({ signal }) => authedFetch((token) => loanImportApi.overview(token, householdId!, user!.id, scope, signal)),
-    staleTime: 0, gcTime: 0, retry: false,
+    staleTime: 0, retry: false,
   });
 }
 

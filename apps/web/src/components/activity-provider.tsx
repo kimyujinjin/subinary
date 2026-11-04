@@ -33,7 +33,7 @@ import { useHousehold } from "@/lib/household-context";
 import { initPushNotifications } from "@/lib/native";
 import { invalidateTransactionScope } from "@/lib/queries";
 import { nextBackoff, readSseStream } from "@/lib/realtime";
-import { isManualFinanceHint, refreshManualFinanceQueries, resetSharedManualFinanceQueries } from "@/lib/manual-finance-realtime";
+import { isManualFinanceHint, refreshManualFinanceQueries, resetSharedManualFinanceQueries, revalidateSharedManualFinanceQueries } from "@/lib/manual-finance-realtime";
 
 /** SSE 힌트 디바운스(ms) — 연속 승격(백필 등) 폭주를 1회 무효화로 합친다. */
 const HINT_DEBOUNCE_MS = 400;
@@ -329,7 +329,8 @@ export function ActivityProvider() {
         return;
       }
       invalidateTransactionScope(queryClient);
-      void resetSharedManualFinanceQueries(queryClient, householdId).catch(() => undefined);
+      // 복귀는 공유 변경 신호가 아니다 — 보여 준 채로 다시 확인한다(실제 변경 힌트는 위에서 즉시 비운다).
+      void revalidateSharedManualFinanceQueries(queryClient, householdId).catch(() => undefined);
       void checkActivityRef.current();
       void connect();
     };
