@@ -69,7 +69,7 @@ export function BankMacJob({ job }: { job: MacBankJob }) {
       ) : null}
       {job.state === "succeeded" ? (
         <>
-          <p className="text-caption text-muted-foreground mt-2">가족 자산 합계에는 자동으로 더하지 않아요.</p>
+          <p className="text-caption text-muted-foreground mt-2">자산 합계에 반영돼요. 가족과 공유하면 가족 합계에도 들어가요.</p>
           <div className="divide-y divide-border/60">
             {job.observations.map((observation) => (
               <ObservationRow key={observation.accountFingerprint} observation={observation} />

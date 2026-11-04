@@ -43,6 +43,6 @@ describe("모아 버튼에서 Mac 자동 실행 상태 표시", () => {
   it("정상 저장한 0원 장부 잔액을 누락하지 않는다", () => {
     const job: MacBankJob = { ...fixture, state: "succeeded", logoutConfirmed: true, observations: [{ formatVersion: 1, provider: "shinhan", source: "browser_assisted", origin: "https://bank.shinhan.com", pageKind: "deposit_account_list", capturedAt: fixture.createdAt, accountFingerprint: "a".repeat(64), accountLast4: "1234", currency: "KRW", balanceKind: "ledger", balanceKrw: "0", bankAsOfDate: null }] };
     const html = renderToStaticMarkup(<BankMacJob job={job} />);
-    expect(html).toContain("모아에 저장 완료"); expect(html).toContain("0원"); expect(html).toContain("끝 1234"); expect(html).toContain("가족 자산 합계에는 자동으로 더하지 않아요"); expect(html).not.toContain("a".repeat(64));
+    expect(html).toContain("모아에 저장 완료"); expect(html).toContain("0원"); expect(html).toContain("끝 1234"); expect(html).toContain("자산 합계에 반영돼요"); expect(html).not.toContain("a".repeat(64));
   });
 });
