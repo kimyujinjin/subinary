@@ -52,3 +52,6 @@ Thumbs.db
 tmp/
 output/
 .playwright-cli/
+
+# Python 바이트코드(실행기 테스트·설치 때 생긴다)
+__pycache__/
