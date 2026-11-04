@@ -33,9 +33,10 @@ STEP = re.compile(r'/\*moa:([a-z-]+)\*/')
 
 class FakeBank:
     """은행 단계 응답을 흉내 낸다. 키패드 ref는 snapshot마다 새로 발급하고 이전 ref는 거절한다."""
-    def __init__(self, *, tab_logged_in=False, result='ok', deposits=None, loans=None, logout=True, fail=None, drop_key=None):
+    def __init__(self, *, tab_logged_in=False, result=None, deposits=None, loans=None, logout=True, fail=None, drop_key=None):
         self.codes: list[str] = []
-        self.tab_logged_in, self.result, self.logout, self.fail, self.drop_key = tab_logged_in, result, logout, fail, drop_key
+        self.tab_logged_in, self.logout, self.fail, self.drop_key = tab_logged_in, logout, fail, drop_key
+        self.result = result or {'result': 'ok', 'hits': [], 'alerts': [], 'hash': '#010800000000', 'loginForm': False}
         self.deposits = deposits if deposits is not None else [{'number': '110-123-456789', 'amount': '2,000,000'}]
         self.loans = loans if loans is not None else [{'name': '<가계>일반자금대출(주택관련 중도금대출)', 'number': '220-333-444555', 'maturity': '2030.05.31', 'amount': '150,000,000'}]
         self.counter = itertools.count(100)
@@ -81,7 +82,7 @@ class FakeBank:
             return {'length': self.length, 'tree': self.tree()}
         if step == 'keypad-close': return {'length': self.length, 'open': False}
         if step == 'submit': return {'submitted': True}
-        if step == 'result': return {'result': self.result}
+        if step == 'result': return dict(self.result)
         if step == 'deposits': return {'deposits': [dict(row) for row in self.deposits]}
         if step == 'loans': return {'loans': [dict(row) for row in self.loans]}
         if step == 'logout': return {'logout': self.logout}
@@ -144,15 +145,40 @@ class ReplPhaseTests(unittest.TestCase):
         self.assertNotIn('submit', bank.steps())
 
     def test_rejected_login_is_classified_and_never_retried(self):
-        for verdict, outcome in [('credentials_invalid', 'failed'), ('authentication_required', 'authentication_required'), ('timeout', 'failed')]:
-            with self.subTest(verdict=verdict):
+        login = {'hash': '#011100000000', 'loginForm': True, 'alerts': []}
+        cases = [
+            (dict(login, result='message', hits=['비밀번호', '오류', '횟수']), 'failed', 'credentials_invalid'),
+            (dict(login, result='message', hits=[], alerts=['password']), 'failed', 'credentials_invalid'),
+            (dict(login, result='message', hits=['추가인증', '휴대폰', '인증']), 'authentication_required', 'authentication_required'),
+            (dict(login, result='message', hits=['비밀번호', '인증']), 'authentication_required', 'authentication_required'),
+            (dict(login, result='message', hits=['공지']), 'authentication_required', 'authentication_required'),
+            (dict(login, result='moved', hits=[], hash='#999900000000', loginForm=False), 'authentication_required', 'authentication_required'),
+            (dict(login, result='timeout', hits=[]), 'failed', 'timeout'),
+        ]
+        for observed, outcome, code in cases:
+            with self.subTest(observed=observed):
                 self.credentials.return_value = dict(self.secret)
-                bank = FakeBank(result=verdict)
-                result = self.run_with(bank)
-                self.assertEqual((result['outcome'], result['errorCode']), (outcome, verdict))
+                notes = []
+                bank = FakeBank(result=observed)
+                result = repl.repl_phase('aside', self.check_active, self.credentials, self.progress, worker.capture, LABELS,
+                                         open_session=lambda: bank, diagnose=notes.append)
+                self.assertEqual((result['outcome'], result['errorCode']), (outcome, code))
                 self.assertEqual(bank.steps().count('submit'), 1)
                 self.assertNotIn('deposits', bank.steps())
                 self.assertFalse(result['logoutConfirmed'])
+                self.assertEqual([note['step'] for note in notes], ['result'])
+                self.assertEqual(notes[0]['code'], code)
+
+    def test_diagnostic_keeps_only_fixed_vocabulary(self):
+        note = repl.diagnostic('result', 'timeout', {'hits': ['비밀번호', '이수빈 고객님', '110-123-456789'], 'hash': '#011100000000', 'loginForm': True})
+        self.assertEqual(note, {'step': 'result', 'code': 'timeout', 'hits': ['비밀번호'], 'hash': '#011100000000', 'loginForm': True})
+        self.assertIsNone(repl.diagnostic('x', 'timeout', {'hash': '#abc<script>'})['hash'])
+
+    def test_failure_step_is_noted(self):
+        notes = []
+        bank = FakeBank(fail=('loans', 'unsupported_layout'))
+        repl.repl_phase('aside', self.check_active, self.credentials, self.progress, worker.capture, LABELS, open_session=lambda: bank, diagnose=notes.append)
+        self.assertEqual([(note['step'], note['code']) for note in notes], [('loans', 'unsupported_layout')])
 
     def test_existing_logged_in_tab_is_read_without_credentials(self):
         bank = FakeBank(tab_logged_in=True)

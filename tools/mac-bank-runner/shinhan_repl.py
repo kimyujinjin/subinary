@@ -27,7 +27,15 @@ ANSI = re.compile(rb'\x1b\[[0-9;]*[A-Za-z]')
 DONE = re.compile(r'\[(ok|error)\s*\|\s*[0-9.]+\s*m?s\]\s*$')
 KEY = re.compile(r'button "([^"]*)" \[ref=([A-Za-z0-9]+)\]')
 URL = re.compile(r'\[url=([^\]\s]+)\]')
+STEP = re.compile(r'/\*moa:([a-z-]+)\*/')
 MAX_OUTPUT = 4 * 1024 * 1024
+# 로그인 뒤 은행 레이어(w2modal_popupLayer)에서 찾는 고정 어휘. 원문 대신 이 목록의 적중만 밖으로 꺼낸다.
+CREDENTIAL_WORDS = ('비밀번호', '이용자ID', '아이디')
+CREDENTIAL_CONTEXT = ('오류', '일치', '횟수', '잠금', '정지', '초과', '잘못', '틀')
+AUTH_WORDS = ('추가인증', '추가 인증', '본인확인', 'OTP', 'ARS', '보안매체', '휴대폰', '인증')
+LOADING_WORDS = ('처리중', '처리 중', '잠시')
+LAYER_WORDS = (*CREDENTIAL_WORDS, *CREDENTIAL_CONTEXT, *AUTH_WORDS, *LOADING_WORDS,
+               '동시', '중복', '보안프로그램', '설치', '점검', '공지', '만료', '변경')
 
 
 class ReplFailure(Exception):
@@ -170,12 +178,12 @@ const moaLoginReady = () => ['ibx_loginId', '비밀번호', 'btn_idLogin'].every
 const moaKeypadOpen = () => { const k = document.getElementById('비밀번호_mainDiv'); if (!k) return false; const r = k.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
 const moaPwLength = () => { const e = document.getElementById('비밀번호'); return e ? e.value.length : -1; };
 const moaTrapDialogs = () => { const kind = (m) => { m = String(m); if (/비밀번호/.test(m) && /(일치|오류|틀|잘못)/.test(m)) return 'password'; if (/(아이디|이용자\s*ID)/i.test(m) && /(일치|오류|틀|잘못|없|존재|등록되지)/.test(m)) return 'login_id'; if (/인증/.test(m)) return 'auth'; return 'other'; }; window.__moaAlerts = []; window.alert = (m) => { window.__moaAlerts.push(kind(m)); }; window.confirm = (m) => { window.__moaAlerts.push(kind(m)); return false; }; return true; };
-const moaFlags = () => { const t = ((document.body && document.body.innerText) || '').replace(/\s+/g, ' '); const b = document.getElementById('btn_logout'); const r = b ? b.getBoundingClientRect() : null; return { loggedIn: !!r && r.width > 0 && r.height > 0, pw: /비밀번호[^.]{0,30}(일치하지|오류|틀렸|잘못)/.test(t), id: /(아이디|이용자\s*ID)[^.]{0,30}(일치하지|존재하지|등록되지|없습니다|잘못)/i.test(t), auth: /(추가\s*인증|본인\s*확인|인증번호|OTP|보안매체|휴대폰\s*인증|ARS)/.test(t), alerts: (window.__moaAlerts || []).slice(0, 10) }; };
+const moaLoginState = () => { const vis = (e) => { const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'; }; const words = __WORDS__; const b = document.getElementById('btn_logout'); const layers = [...document.querySelectorAll('.w2modal_popupLayer, [role="dialog"], [role="alertdialog"]')].filter(vis).map((e) => (e.innerText || '').replace(/\s+/g, ' ').trim()).filter((t) => t.length > 0); return { loggedIn: !!b && vis(b), hash: location.hash, loginForm: !!document.getElementById('ibx_loginId'), layers: layers.length, hits: words.filter((w) => layers.some((t) => t.includes(w))), alerts: (window.__moaAlerts || []).slice(0, 10) }; };
 const moaDeposits = () => { const t = document.getElementById('grd_list_01_body_table'); if (!t) return null; const f = document.getElementById('grd_list_01_foot_table'); const rows = [...t.querySelectorAll('tr')].filter((r) => r.querySelector('td[col_id="잔액_display"]')).map((r) => { const c = (k) => { const e = r.querySelector('td[col_id="' + k + '"]'); return e ? e.textContent.trim() : ''; }; return { number: c('계좌번호_view'), amount: c('잔액_display') }; }); return rows.length || /[0-9]/.test(f ? f.textContent : '') ? { rows } : null; };
 const moaLoans = () => { const t = document.getElementById('grd_list03_body_table'); if (!t) return null; const f = document.getElementById('grd_list03_foot_table'); const rows = [...t.querySelectorAll('tr')].filter((r) => r.querySelector('td[col_id="대출잔액_display"]')).map((r) => { const c = (k) => { const e = r.querySelector('td[col_id="' + k + '"]'); return e ? e.textContent.trim() : ''; }; return { name: c('계좌명_display'), number: c('대출계좌번호_view'), maturity: c('대출만기일_display'), amount: c('대출잔액_display') }; }); const empty = [...document.querySelectorAll('[id^="grd_list03"]')].some((e) => /없습니다/.test(e.textContent)); return rows.length || empty || /[0-9]/.test(f ? f.textContent : '') ? { rows } : null; };
 const moaLoggedOut = () => { const t = ((document.body && document.body.innerText) || '').replace(/\s+/g, ' '); const b = document.getElementById('btn_logout'); const r = b ? b.getBoundingClientRect() : null; return /로그아웃 되었습니다/.test(t) && !(r && r.width > 0 && r.height > 0); };
 moaEmit({ ready: true });
-'''
+'''.replace('__WORDS__', json.dumps(LAYER_WORDS, ensure_ascii=False))
 
 FIND = '''/*moa:find*/ await (async () => {
 const tabs = (await listBrowserTabs()).filter((t) => moaBank(t.url)); let hit = null;
@@ -211,18 +219,50 @@ const m = s.tree.match(/button "가상키보드 닫기" \\[ref=([A-Za-z0-9]+)\\]
 moaEmit({ length: await p.evaluate(moaPwLength), open: await p.evaluate(moaKeypadOpen) }); })();'''
 
 SUBMIT = '''/*moa:submit*/ await (async () => {
-const p = moaPage(); await p.evaluate(moaTrapDialogs); globalThis.moaBase = await p.evaluate(moaFlags);
+const p = moaPage(); await p.evaluate(moaTrapDialogs); globalThis.moaBase = await p.evaluate(moaLoginState);
+if (moaBase.layers > 0 || moaBase.loggedIn) moaFail('unsupported_layout');
 await moaClick(p.locator('#btn_idLogin')); moaEmit({ submitted: true }); })();'''
 
-# 로그인 결과: 로그아웃 버튼(성공) > 비밀번호·ID 오류 > 인증·기타 안내 순으로 판정한다. 로그인 화면에 원래 있던 문구(FAQ의 OTP 등)는 제외한다.
+# 로그인 결과 관찰. 은행은 오류·안내를 alert가 아닌 WebSquare 모달 레이어로 띄운다(2026-11-04 확인).
+# 로그아웃 버튼이면 성공, 같은 레이어가 1초 이상 유지되면 메시지, 로그인 화면을 벗어난 채 3초 이상이면 이동으로 본다.
+# 판정(오류 종류)은 고정 어휘 적중만 받아 Python(login_verdict)에서 한다.
 RESULT = '''/*moa:result*/ await (async () => {
-const end = Date.now() + 25000; let out = null; let off = false;
-while (Date.now() < end && !out) { await sleep(500); if (!page) continue; if (!moaBank(page.url())) { off = true; continue; } off = false;
-const v = await page.evaluate(moaFlags).catch(() => null); if (!v) continue;
-if (v.loggedIn) out = 'ok';
-else if (v.alerts.includes('password') || v.alerts.includes('login_id') || (v.pw && !moaBase.pw) || (v.id && !moaBase.id)) out = 'credentials_invalid';
-else if (v.alerts.length || (v.auth && !moaBase.auth)) out = 'authentication_required'; }
-moaEmit({ result: out || (off ? 'unsupported_layout' : 'timeout') }); })();'''
+const end = Date.now() + 25000; let out = null; let last = null; let seen = ''; let moved = 0;
+const loading = __LOADING__;
+while (Date.now() < end && !out) { await sleep(500); if (!page || !moaBank(page.url())) continue;
+const v = await page.evaluate(moaLoginState).catch(() => null); if (!v) continue; last = v;
+if (v.loggedIn) { out = 'ok'; break; }
+const key = v.layers + ':' + v.hits.join(',') + ':' + v.alerts.join(',');
+if ((v.layers > 0 && !v.hits.some((w) => loading.includes(w))) || v.alerts.length) { if (key === seen) out = 'message'; seen = key; } else seen = '';
+if (!out && v.hash !== moaBase.hash && !v.loginForm) { moved += 1; if (moved >= 6) out = 'moved'; } else moved = 0; }
+moaEmit({ result: out || 'timeout', hits: last ? last.hits : [], alerts: last ? last.alerts : [], hash: last ? last.hash : null, loginForm: last ? last.loginForm : null }); })();'''.replace(
+    '__LOADING__', json.dumps(LOADING_WORDS, ensure_ascii=False))
+
+
+def login_verdict(value: dict[str, object]) -> str:
+    """RESULT 관찰을 고정 오류 코드로 바꾼다. 은행 메시지가 비밀번호·ID 오류가 아니면 사람이 확인하도록 인증 대기로 둔다."""
+    result = value.get('result')
+    hits = set(value.get('hits') or []) if isinstance(value.get('hits'), list) else set()
+    alerts = set(value.get('alerts') or []) if isinstance(value.get('alerts'), list) else set()
+    if result == 'ok':
+        return 'ok'
+    if result == 'message':
+        if (hits & set(CREDENTIAL_WORDS) and hits & set(CREDENTIAL_CONTEXT)) or alerts & {'password', 'login_id'}:
+            return 'credentials_invalid'
+        return 'authentication_required'
+    if result == 'moved':
+        return 'authentication_required'
+    return 'timeout'
+
+
+def diagnostic(step: str, code: str, value: dict[str, object] | None = None) -> dict[str, object]:
+    """실패 원인 추적용 기록. 고정 어휘 적중·hash·폼 여부만 담고 화면 원문·금액·계좌는 담지 않는다."""
+    value = value or {}
+    hits = [word for word in value.get('hits') or [] if word in LAYER_WORDS] if isinstance(value.get('hits'), list) else []
+    hash_value = value.get('hash')
+    return {'step': step, 'code': code, 'hits': hits,
+            'hash': hash_value if isinstance(hash_value, str) and re.fullmatch(r'#?[0-9]{0,20}', hash_value) else None,
+            'loginForm': value.get('loginForm') if isinstance(value.get('loginForm'), bool) else None}
 
 DEPOSITS = '''/*moa:deposits*/ await (async () => {
 let d = await moaWait(moaDeposits, 15000);
@@ -365,13 +405,25 @@ def failed(code: str, logout: bool = False) -> dict[str, object]:
 
 def repl_phase(aside: str, check_active: Callable[[], None], credentials: Callable[[], dict[str, object]] | None,
                progress: Callable[[str], None], capture: Callable[[dict[str, object]], dict[str, object]],
-               labels: dict[str, str], *, open_session: Callable[[], ReplSession] | None = None, budget: float = 140) -> dict[str, object]:
+               labels: dict[str, str], *, open_session: Callable[[], ReplSession] | None = None, budget: float = 140,
+               diagnose: Callable[[dict[str, object]], None] | None = None) -> dict[str, object]:
     """worker의 codex_phase와 같은 결과 형식을 반환한다. 같은 작업 안에서 로그인을 다시 시도하지 않는다."""
     deadline = time.monotonic() + budget
     session = open_session() if open_session else ReplSession(aside)
     logged_in = False
+    step = 'start'
+
+    def note(value: dict[str, object]) -> None:
+        if diagnose:
+            try:
+                diagnose(value)
+            except Exception:  # 진단 기록 실패가 결과를 바꾸지 않게 한다.
+                pass
 
     def call(code: str, limit: float) -> dict[str, object]:
+        nonlocal step
+        marker = STEP.search(code)
+        step = marker.group(1) if marker else 'helpers'
         remaining = deadline - time.monotonic()
         if remaining <= 1:
             raise ReplFailure('timeout')
@@ -414,9 +466,11 @@ def repl_phase(aside: str, check_active: Callable[[], None], credentials: Callab
                     login_id = password = ''
                 check_active()
                 call(SUBMIT, 20)
-                result = call(RESULT, 40).get('result')
-                if result != 'ok':
-                    return failed(result if isinstance(result, str) else 'operation_unknown')
+                observed = call(RESULT, 40)
+                verdict = login_verdict(observed)
+                if verdict != 'ok':
+                    note(diagnostic('result', verdict, observed))
+                    return failed(verdict)
                 logged_in = True
         try:
             progress('reading')
@@ -432,6 +486,7 @@ def repl_phase(aside: str, check_active: Callable[[], None], credentials: Callab
             return failed('operation_unknown')
         return {'outcome': 'succeeded', 'logoutConfirmed': True, 'observations': found}
     except ReplFailure as error:
+        note(diagnostic(step, error.code))
         return failed(error.code, logout() if logged_in else False)
     except BaseException:
         if logged_in:

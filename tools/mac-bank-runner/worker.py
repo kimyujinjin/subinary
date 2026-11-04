@@ -573,7 +573,8 @@ def run_phase(args: argparse.Namespace, api: Api, job: dict[str, object], state:
     if (getattr(args, 'engine', None) or selected_engine(args.state.parent)) == 'repl':
         def progress(value: str) -> None:
             api.call(f'/v1/mac-bank-runner/jobs/{job_id}/progress', {'claimId': claim_id, 'state': value})
-        result = shinhan_repl().repl_phase(getattr(args, 'aside', DEFAULT_ASIDE), check_active, callback, progress, capture, VIRTUAL_KEY_LABELS)
+        result = shinhan_repl().repl_phase(getattr(args, 'aside', DEFAULT_ASIDE), check_active, callback, progress, capture, VIRTUAL_KEY_LABELS,
+                                           diagnose=lambda value: append_diagnostic(args.state.parent, dict(value, job=job_id)))
     else:
         result = codex_phase(args.codex, args.state.parent, check_active, callback)
     if result['outcome'] == 'succeeded':
@@ -588,6 +589,13 @@ def run_phase(args: argparse.Namespace, api: Api, job: dict[str, object], state:
         state.pop('active', None)
     state.pop('completion', None)
     write_private(args.state, state)
+
+
+def append_diagnostic(folder: Path, value: dict[str, object]) -> None:
+    """repl 엔진 실패 원인을 소유자 전용 파일에 한 줄씩 남긴다. 고정 어휘·hash·단계만 받으며 화면 원문·금액은 없다."""
+    fd = os.open(folder / 'diagnostics.log', os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'a') as out:
+        out.write(json.dumps(dict(value, at=now()), ensure_ascii=False) + '\n')
 
 
 def selected_engine(folder: Path) -> str:
