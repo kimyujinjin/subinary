@@ -61,6 +61,8 @@ AES-256-GCM은 이 기능 전용 버전별 키를 사용한다. AAD에는 앱 �
 - `FINANCE_CONNECTION_VAULT_ACTIVE_VERSION`: 운영자가 선택한 활성 키 버전.
 - `FINANCE_CONNECTION_VAULT_KEYS_JSON`: 전용 32바이트 키의 버전별 JSON 매핑. 최대 8개. 실제 값은 채팅·소스·명령행 인자·로그에 남기지 않는다.
 
+**운영 연결(2026-11-04)**: 키 두 개(`ACTIVE_VERSION`·`KEYS_JSON`)는 `~/.config/family-memory-ai/finance-connections/vault.env`(권한 600)에 두고, `docker-compose.prod.yml`의 api `env_file`이 이 파일을 읽는다. 켜는 스위치 `FINANCE_CONNECTIONS_ENABLED=true`는 비밀이 아니므로 `.env.production`에 둔다. 이 연결이 없던 동안 `deploy.sh` 재배포가 기능을 조용히 껐다(11-03 23:38 ~ 11-04). 배포 후 `docker exec family-memory-ai-api-1 sh -c 'test -n "$FINANCE_CONNECTION_VAULT_KEYS_JSON" && echo ok'`로 키가 들어갔는지 확인한다(값은 출력하지 않는다).
+
 설정이 없으면 공급자 접근은 비활성이다. 활성 상태인데 키가 누락/잘못됐으면 일반 오류로 시작을 거부한다. 운영 활성화에는 전용 키 생성/안전한 보관·복구·교체 경로에 대한 구체적 운영 승인, 공급자 조건 확인, 승인된 마이그레이션·배포 절차가 필요하다. 이 코드는 실행 중인 설정 파일이나 소켓/보안/IP 설정을 바꾸지 않는다.
 
 실제 계좌 연결은 사용자가 정상 로그인한 앱의 입력 화면에 새 키를 직접 넣는 경로만 사용한다. 과거 채팅에 노출된 키는 쓰지 않는다. 공급자 약관은 본인이 확인/수락한다. 조회와 앱 저장 동의는 가족 공유 동의가 아니므로 초기 버전에서는 공유 스위치를 제공하지 않는다.
