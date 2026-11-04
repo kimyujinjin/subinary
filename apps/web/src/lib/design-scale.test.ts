@@ -28,8 +28,8 @@ function count(pattern: RegExp): number {
 }
 
 // 상한은 내리기만 한다. 화면 개편 PR에서 실제 개수에 맞춰 갱신한다.
-const MAX_ARBITRARY_TEXT_SIZE = 238;
-const MAX_ARBITRARY_RADIUS = 4;
+const MAX_ARBITRARY_TEXT_SIZE = 223;
+const MAX_ARBITRARY_RADIUS = 2;
 
 describe("디자인 스케일 래칫", () => {
   it("임의 글자 크기(text-[Npx])가 늘지 않는다 — text-display/title/heading/body/caption/micro를 쓴다", () => {

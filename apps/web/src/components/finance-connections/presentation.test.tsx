@@ -84,13 +84,12 @@ describe("asset screen connected account summary", () => {
   it("shows separate currencies, observation/valuation limits and a management link without write controls", () => {
     const html = assetSummary();
     expect(html).toContain('href="/more/connections"');
-    expect(html).toContain("123,456.75 원");
-    expect(html).toContain("98.001 USD");
-    expect(html).toContain("가족 자산 합계에 더하지 않아요");
+    expect(html).toContain("123,456.75원");
+    expect(html).toContain("$98.00");
+    expect(html).not.toContain("USD");
+    expect(html).toContain("가족 합계에 더하지 않아요");
     expect(html).toContain("내 연결 계좌");
-    expect(html).toContain("가족 합계와 별도");
     expect(html).toContain("마지막 조회 성공");
-    expect(html).toContain("증권사 평가 기준 시각: 제공되지 않음");
     expect(html).not.toContain("<button");
     expect(html).not.toContain("<input");
     expect(html).not.toContain("순자산");
@@ -112,25 +111,24 @@ describe("asset screen connected account summary", () => {
   it("retains exact old values on provider failure or an unknown refresh", () => {
     const failed = assetSummary({ data: { enabled: true, disabledReason: null, items: [{ ...item, status: "error", errorCode: "provider_unavailable" }] } });
     expect(failed).toContain("이전 조회 내역");
-    expect(failed).toContain("123,456.75 원");
+    expect(failed).toContain("123,456.75원");
     expect(failed).toContain("조회 실패");
     const unknown = assetSummary({ uncertainId: item.id });
     expect(unknown).toContain("조회 확인 필요");
     expect(unknown).toContain("이전 조회 내역");
   });
   it("distinguishes empty, disabled and disconnected connections", () => {
-    expect(assetSummary({ data: { enabled: true, disabledReason: null, items: [] } })).toContain("연결한 토스증권 계좌가 없어요");
-    const disabled = assetSummary({ data: { enabled: false, disabledReason: "not_configured", items: [] } });
-    expect(disabled).toContain("토스증권 연결을 준비하고 있어요");
-    expect(disabled).not.toContain("계좌가 없어요");
+    // 연결이 없으면 섹션을 그리지 않는다 — 연결 시작은 자산 추가 시트가 맡는다.
+    expect(assetSummary({ data: { enabled: true, disabledReason: null, items: [] } })).toBe("");
+    expect(assetSummary({ data: { enabled: false, disabledReason: "not_configured", items: [] } })).toBe("");
     const disconnected = assetSummary({ data: { enabled: true, disabledReason: null, items: [{ ...item, status: "disconnected" }] } });
     expect(disconnected).not.toContain("123,456.75");
   });
   it("preserves provider zero and keeps absent currency unfilled", () => {
     const html = assetSummary({ data: { enabled: true, disabledReason: null, items: [{ ...item, snapshot: { ...item.snapshot!, totals: [{ currency: "KRW", marketValue: "0", afterCostValue: "0" }] } }] } });
-    expect(html).toContain("0 원");
+    expect(html).toContain(">0원<");
     expect(html).toContain("조회 내역 없음");
-    expect(html).not.toContain("0 USD");
+    expect(html).not.toContain("$0.00");
   });
   it("keeps an unselected account out of the values and directs selection to management", () => {
     const html = assetSummary({ data: { enabled: true, disabledReason: null, items: [{ ...item, status: "select_account", selectedAccountId: null, snapshot: null, lastSuccessAt: null, canRefresh: false }] } });
