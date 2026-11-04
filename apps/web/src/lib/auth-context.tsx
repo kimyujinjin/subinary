@@ -35,6 +35,11 @@ import type {
 
 import { clearAiChatHistory } from "./ai-chat-history";
 import { ApiError, api, type AccessToken } from "./api-client";
+import {
+  clearQueryCache,
+  restoreQueryCache,
+  startQueryCachePersistence,
+} from "./query-persistence";
 import { isRetriableFailure } from "./session-failure";
 import {
   authenticateBiometricResilient,
@@ -148,6 +153,8 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     // "로그아웃했는가"와 "이 캐시의 주인이 바뀔 수 있는가"는 다른 질문이고, 후자가
     // 참인 건 세션이 닫히는 모든 경로에서 동일하다. 재로그인하면 다시 받아온다.
     queryClient.clear();
+    // 앱에 저장해 둔 화면 캐시(암호문)와 그 키도 같은 이유로 지운다(query-persistence).
+    void clearQueryCache();
     // `/ai` 대화는 react-query 캐시가 아니라 localStorage에 있다 — 같은 이유로
     // 함께 버린다. 금융 질문·답변이 담기므로 다음 사용자에게 남으면 안 된다.
     clearAiChatHistory();
@@ -340,6 +347,13 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
         if (cancelled) return;
         const me = await api.auth.me(refreshed.tokens.accessToken);
         if (cancelled) return;
+        // 앱: 마지막 화면 데이터를 화면이 뜨기 전에 복원한다(이 사용자 것일 때만). 보안
+        // 저장소가 느리면 기다리지 않는다 — 늦게 끝나도 더 새 값은 덮어쓰지 않는다.
+        await Promise.race([
+          restoreQueryCache(queryClient, refreshed.user.id),
+          new Promise((resolve) => setTimeout(resolve, 400)),
+        ]);
+        if (cancelled) return;
         setMemberships(me.memberships);
         setStatus("authenticated");
       } catch (error) {
@@ -354,7 +368,14 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     return () => {
       cancelled = true;
     };
-  }, [clearSession, refreshSession, bootstrapAttempt]);
+  }, [clearSession, refreshSession, bootstrapAttempt, queryClient]);
+
+  // 앱: 로그인된 동안 화면 데이터를 암호화해 저장한다(콜드 스타트 즉시 표시). 웹은 no-op.
+  const userId = user?.id ?? null;
+  useEffect(() => {
+    if (status !== "authenticated" || !userId) return;
+    return startQueryCachePersistence(queryClient, userId);
+  }, [status, userId, queryClient]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

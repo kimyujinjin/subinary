@@ -87,6 +87,9 @@ fi
 # 셸에 개발용 값이 남아 있으면 앱이 localhost를 보고 조용히 죽는다.
 : "${NEXT_PUBLIC_API_URL:=https://app.subinary.cloud}"
 export NEXT_PUBLIC_API_URL
+# 번들 버전을 앱에 넣는다 — 화면 캐시(query-persistence)는 번들이 바뀌면 옛 데이터 모양을 믿지 않는다.
+NEXT_PUBLIC_BUNDLE_VERSION="$version"
+export NEXT_PUBLIC_BUNDLE_VERSION
 echo "[ota] 정적 export (API=$NEXT_PUBLIC_API_URL)"
 pnpm --filter @family/web build:mobile >"$work_dir/build.log" 2>&1 || {
   echo "[ota] ✗ 빌드 실패 — 마지막 20줄:" >&2

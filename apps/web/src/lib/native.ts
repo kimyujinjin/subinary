@@ -238,6 +238,46 @@ export async function clearStoredRefreshToken(): Promise<void> {
   });
 }
 
+/** 화면 캐시 암호화 키(AES-256, base64)의 보안 저장소 키. 실제 저장 키에는 prefix가 붙는다. */
+const SECURE_QUERY_CACHE_KEY = "queryCacheKey";
+
+/**
+ * 네이티브: 화면 캐시 암호화 키를 읽는다(없으면 null). 웹: 항상 null.
+ * refresh 토큰과 같은 Keychain/Keystore에 기기 전용·잠금 해제 시에만 읽히게 둔다(query-persistence).
+ */
+export async function getQueryCacheKey(): Promise<string | null> {
+  if (!isNative()) return null;
+  return runStorageOperation(async () => {
+    const module = await getSecureStorageModule();
+    const value = await module.SecureStorage.get(SECURE_QUERY_CACHE_KEY, false, false);
+    return typeof value === "string" && value.length > 0 ? value : null;
+  });
+}
+
+/** 네이티브: 화면 캐시 암호화 키를 저장한다. 웹: no-op. */
+export async function setQueryCacheKey(value: string): Promise<void> {
+  if (!isNative()) return;
+  await runStorageOperation(async () => {
+    const module = await getSecureStorageModule();
+    await module.SecureStorage.set(
+      SECURE_QUERY_CACHE_KEY,
+      value,
+      false,
+      false,
+      module.KeychainAccess.whenUnlockedThisDeviceOnly,
+    );
+  });
+}
+
+/** 네이티브: 화면 캐시 암호화 키를 지운다 — 저장된 암호문은 더 이상 풀 수 없다. 웹: no-op. */
+export async function removeQueryCacheKey(): Promise<void> {
+  if (!isNative()) return;
+  await runStorageOperation(async () => {
+    const module = await getSecureStorageModule();
+    await module.SecureStorage.remove(SECURE_QUERY_CACHE_KEY, false);
+  });
+}
+
 /**
  * 네이티브 상태바 아이콘 명암을 앱 테마에 맞춘다(웹: no-op).
  *  - dark 테마(어두운 헤더) → Style.Dark (밝은/흰 아이콘)
