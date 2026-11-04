@@ -32,14 +32,14 @@ export function BankRegistrationForm({ busy, onSubmit, onClose }: {
   return <form ref={form} aria-label="신한은행 자동조회 등록" autoComplete="off" onSubmit={event => { void submit(event); }} className="min-w-0 space-y-4 rounded-xl border bg-card p-4">
     <h2 className="font-semibold">신한은행 연결</h2>
     <p className="text-muted-foreground text-sm leading-relaxed">내 통장 잔액이나 전세·중도금 대출을 연결해요. 신한 인터넷뱅킹에 쓰는 아이디와 비밀번호를 입력해 주세요.</p>
-    <label className="block space-y-2 text-sm font-medium"><span>아이디</span><Input ref={login} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={64} required disabled={busy} /></label>
-    <label className="block space-y-2 text-sm font-medium"><span>비밀번호</span><Input ref={password} type="password" autoComplete="new-password" autoCapitalize="none" spellCheck={false} maxLength={64} required disabled={busy} /></label>
+    <label className="block space-y-2 text-sm font-medium"><span>아이디</span><Input ref={login} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={64} required /></label>
+    <label className="block space-y-2 text-sm font-medium"><span>비밀번호</span><Input ref={password} type="password" autoComplete="new-password" autoCapitalize="none" spellCheck={false} maxLength={64} required /></label>
     <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
-      <label className="block min-w-0 space-y-2 text-sm font-medium"><span>가져올 계좌</span><select ref={type} required disabled={busy} defaultValue="" className="min-h-12 w-full min-w-0 rounded-xl border bg-background px-3"><option value="">선택해 주세요</option><option value="deposit">입출금 통장</option><option value="interim">중도금 대출</option><option value="jeonse">전세 대출</option></select></label>
-      <label className="block min-w-0 space-y-2 text-sm font-medium"><span>계좌 끝 4자리</span><Input ref={last4} inputMode="numeric" pattern="[0-9]{4}" minLength={4} maxLength={4} required disabled={busy} /></label>
+      <label className="block min-w-0 space-y-2 text-sm font-medium"><span>가져올 계좌</span><select ref={type} required defaultValue="" className="min-h-12 w-full min-w-0 rounded-xl border bg-background px-3"><option value="">선택해 주세요</option><option value="deposit">입출금 통장</option><option value="interim">중도금 대출</option><option value="jeonse">전세 대출</option></select></label>
+      <label className="block min-w-0 space-y-2 text-sm font-medium"><span>계좌 끝 4자리</span><Input ref={last4} inputMode="numeric" pattern="[0-9]{4}" minLength={4} maxLength={4} required /></label>
     </div>
     <p className="text-muted-foreground text-xs leading-relaxed">종류와 끝 4자리가 일치하는 계좌 하나만 가져와요. 통장은 원화 잔액을 확인하고, 출금 한도는 잔액에 더하지 않아요.</p>
-    <fieldset disabled={busy} className="space-y-2 border-t pt-3">
+    <fieldset className="space-y-2 border-t pt-3">
       <legend className="pr-2 text-sm font-semibold">연결 전 확인해 주세요</legend>
       {bankConnectionConsentDocuments[BANK_CONNECTION_CONSENT_VERSION].map(label => <label key={label} className="flex min-h-11 items-start gap-3 text-sm leading-relaxed"><input type="checkbox" required className="mt-1 size-5 shrink-0" /><span>{label}</span></label>)}
     </fieldset>

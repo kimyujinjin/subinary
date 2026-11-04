@@ -84,6 +84,24 @@ export function hasPreviousSnapshot(item: FinanceConnection): boolean {
     (item.status !== "ready" || item.errorCode !== null)
   );
 }
+/**
+ * 키 등록 폼을 보일지(토스·신한 공용).
+ *
+ * 앱 복귀·60초 안전망·SSE 힌트는 권한을 다시 확인하려고 목록을 다시 읽는다. 예전에는 그때마다
+ * 폼을 닫아, 클라이언트 키를 넣고 다른 앱에서 시크릿 키를 복사해 오는 사이에 입력이 사라졌다
+ * (2026-11-04 신고). 다시 읽는 중(목록 없음 + 진행 중)에는 비활성화한 채 남기고, 읽은 결과가
+ * 등록을 막을 때(기능 꺼짐·권한 없음·읽기 실패)만 닫는다.
+ */
+export function registrationFormVisible(state: {
+  open: boolean;
+  canManage: boolean;
+  data: { enabled: boolean } | null;
+  busy: boolean;
+}): boolean {
+  if (!state.open || !state.canManage) return false;
+  return state.data ? state.data.enabled : state.busy;
+}
+
 export type ConnectionOperation = {
   kind: "register" | "account" | "refresh" | "disconnect";
   id: string;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { connectionFixture as item } from "./fixtures.test-support";
-import { canRefreshOnOpen, connectionDecimal, connectionMoney, connectionFailureMessage, connectionTime, createConnectionSession, hasPreviousSnapshot, reconcileConnectionOperation, type ConnectionOperation } from "./model";
+import { canRefreshOnOpen, connectionDecimal, connectionMoney, connectionFailureMessage, connectionTime, createConnectionSession, hasPreviousSnapshot, reconcileConnectionOperation, registrationFormVisible, type ConnectionOperation } from "./model";
 
 describe("connection display and refresh decisions", () => {
   it("preserves large integers and fractional precision without a currency conversion", () => {
@@ -92,5 +92,21 @@ describe("connectionMoney", () => {
     expect(connectionMoney("99.999", "USD")).toBe("$100.00");
     expect(connectionMoney("90071992547409931234.5", "USD")).toBe("$90,071,992,547,409,931,234.50");
     expect(connectionMoney("-1.234", "USD")).toBe("-$1.23");
+  });
+});
+
+describe("등록 폼은 다시 읽기로 닫히지 않는다", () => {
+  const open = { open: true, canManage: true, busy: false, data: { enabled: true } };
+  it("앱 복귀·60초 안전망으로 목록을 다시 읽는 동안에도 입력 중인 폼을 남긴다", () => {
+    // beforeRead가 목록을 비우고 진행 중으로 바꾼 상태 — 예전에는 여기서 폼이 사라져 입력이 지워졌다.
+    expect(registrationFormVisible({ ...open, data: null, busy: true })).toBe(true);
+    expect(registrationFormVisible(open)).toBe(true);
+  });
+  it("읽은 결과가 등록을 막으면 닫는다", () => {
+    expect(registrationFormVisible({ ...open, data: { enabled: false } })).toBe(false);
+    // 읽기 실패: 목록 없음 + 진행 끝.
+    expect(registrationFormVisible({ ...open, data: null, busy: false })).toBe(false);
+    expect(registrationFormVisible({ ...open, canManage: false })).toBe(false);
+    expect(registrationFormVisible({ ...open, open: false })).toBe(false);
   });
 });

@@ -59,14 +59,15 @@ export function ConnectionRegistrationForm({ busy, onSubmit, onClose }: {
       <div className="space-y-3">
             <label className="text-caption block space-y-1.5 font-medium">
         <span>클라이언트 키</span>
-        <Input ref={keyRef} type="password" autoComplete="new-password" autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={512} required disabled={busy} className="min-h-12 rounded-control bg-background" />
+        <Input ref={keyRef} type="password" autoComplete="new-password" autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={512} required />
       </label>
       <label className="text-caption block space-y-1.5 font-medium">
         <span>시크릿 키</span>
-        <Input ref={secretRef} type="password" autoComplete="new-password" autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={2048} required disabled={busy} className="min-h-12 rounded-control bg-background" />
+        <Input ref={secretRef} type="password" autoComplete="new-password" autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={2048} required />
       </label>
       </div>
-      <fieldset disabled={busy}>
+      {/* 다시 읽는 동안(busy)에도 입력칸은 막지 않는다 — 막으면 포커스가 빠져 키보드가 내려간다. 제출만 막는다. */}
+      <fieldset>
         <legend className="text-caption text-muted-foreground pb-1 font-medium">필수 동의</legend>
         <Consent label="제 명의 토스증권 계좌예요." />
         <Consent label="조회에 필요한 API 키와 보유 주식 조회 내역을 모아 서버에 저장하는 데 동의해요. API 키는 암호화해 보관해요." />

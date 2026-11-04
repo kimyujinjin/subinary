@@ -12,7 +12,7 @@ import { financeConnectionsApi, useOwnedFinanceConnections } from "@/lib/finance
 import { ConnectionCard } from "./connection-card";
 import { ConnectionRegistrationForm, type ConnectionCredentials } from "./registration-form";
 import { AssetConnectionsSummary } from "./asset-connections-summary";
-import { canRefreshOnOpen, connectionFailureMessage, connectionFailureStatus, createConnectionSession, reconcileConnectionOperation, type ConnectionOperation } from "./model";
+import { canRefreshOnOpen, connectionFailureMessage, connectionFailureStatus, createConnectionSession, reconcileConnectionOperation, registrationFormVisible, type ConnectionOperation } from "./model";
 
 /** headless 모드에서 부모(자산 목록)가 받는 값. 읽기·권한 확인·열 때 조회는 여전히 이 화면이 소유한다. */
 export interface ConnectionSnapshot {
@@ -39,7 +39,8 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
   const firstRead = useRef(true);
 
   const beforeRead = useCallback(() => {
-    // Invalidation must discard visible values/input immediately, even if the GET fails offline.
+    // Invalidation must discard visible values immediately, even if the GET fails offline.
+    // 열린 등록 폼은 닫지 않는다 — 읽는 동안 비활성화하고, 결과가 등록을 막을 때만 닫는다(registrationFormVisible).
     if (activeOperation.current) {
       uncertainRef.current = activeOperation.current;
       setUncertain(activeOperation.current);
@@ -47,7 +48,6 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
     activeOperation.current = null;
     session.invalidate();
     setData(null);
-    setShowForm(false);
     setBusy(true);
     setNotice(null);
   }, [session]);
@@ -98,6 +98,7 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
     firstRead.current = false;
     if (owned.error || !owned.data) {
       setData(null);
+      setShowForm(false);
       setNotice(connectionFailureMessage(owned.error));
       setBusy(false);
       return;
@@ -106,6 +107,7 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
     uncertainRef.current = next;
     setUncertain(next);
     setData(owned.data);
+    if (!owned.data.enabled || next) setShowForm(false);
     setNotice(next ? "아직 요청 결과를 확인하지 못했어요. 연결 상태를 다시 확인해 주세요. 새로 연결하지 않아도 돼요." : null);
     setBusy(false);
     if (opening && !next) void refreshOnOpening(owned.data);
@@ -193,7 +195,7 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
         <p className="text-caption text-muted-foreground">{notice}{uncertain ? " 결과가 확인될 때까지 새 요청은 보내지 않아요." : ""}</p>
         {reread}
       </section> : null}
-      {!data && (busy || owned.isPending) ? <FinanceLoading /> : null}
+      {!data && !showForm && (busy || owned.isPending) ? <FinanceLoading /> : null}
       {data && !data.enabled ? <section role="status" className="finance-panel flex items-center justify-between gap-3 p-5">
         <div className="min-w-0">
           <h2 className="text-heading">연결 준비 중이에요</h2>
@@ -211,7 +213,7 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
       {!notice && items.some((item) => item.status === "connecting" || item.status === "refreshing") ? <div className="flex items-center justify-between gap-3">
         <p className="text-caption text-muted-foreground">처리 중이에요.</p>{reread}
       </div> : null}
-      {showForm && data?.enabled && canManage ? <ConnectionRegistrationForm busy={busy} onSubmit={register} onClose={() => { setShowForm(false); }} /> : null}
+      {registrationFormVisible({ open: showForm, canManage, data, busy }) ? <ConnectionRegistrationForm busy={busy} onSubmit={register} onClose={() => { setShowForm(false); }} /> : null}
       {data?.enabled && canManage && !showForm ? <Button size="lg" className="w-full" disabled={busy || !!uncertain || pendingRegistration} onClick={() => setShowForm(true)}><Plus aria-hidden="true" />토스증권 연결</Button> : null}
     </div>
   );

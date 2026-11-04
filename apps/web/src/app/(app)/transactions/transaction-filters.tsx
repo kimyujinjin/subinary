@@ -68,7 +68,7 @@ export function TransactionFilters({ month, monthOptions, values, choices, onMon
             return <div key={key} className="min-w-0 space-y-2">
               <p className="text-muted-foreground text-xs">{label}</p>
               <Select value={values[key] || ALL} onValueChange={(value) => onChange(key, value === ALL ? "" : value)}>
-                <SelectTrigger aria-label={`${label} 필터`} className="bg-card min-h-11 w-full min-w-0 rounded-xl [&>[data-slot=select-value]]:min-w-0">
+                <SelectTrigger aria-label={`${label} 필터`} className="min-h-11 w-full min-w-0 rounded-xl [&>[data-slot=select-value]]:min-w-0">
                   <SelectValue>{values[key] ? choices[key].find((option) => option.value === values[key])?.label ?? `${label} 선택됨` : `전체 ${label}`}</SelectValue>
                 </SelectTrigger>
                 <SelectContent className="max-w-[calc(100vw-2rem)]">

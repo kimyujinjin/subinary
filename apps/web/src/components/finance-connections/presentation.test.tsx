@@ -10,6 +10,13 @@ const card = (patch: Partial<typeof item> = {}, canManage = true, unconfirmed = 
   <ConnectionCard item={{ ...item, ...patch }} disabled={false} enabled={enabled} canManage={canManage} unconfirmed={unconfirmed} onSelect={() => {}} onRefresh={() => {}} onDisconnect={() => {}} />,
 );
 describe("connection screen presentation contract", () => {
+  it("목록을 다시 읽는 동안(busy)에는 제출만 막고 입력칸은 그대로 둔다", () => {
+    // 입력칸을 막으면 포커스가 빠져 키보드가 내려가고, 60초마다 그렇게 된다.
+    const html = renderToStaticMarkup(<ConnectionRegistrationForm busy onSubmit={async () => {}} onClose={() => {}} />);
+    for (const input of html.match(/<input[^>]*>/g) ?? []) expect(input).not.toMatch(/\sdisabled=""/);
+    expect(html).not.toMatch(/<fieldset[^>]*\sdisabled=""/);
+    expect(html).toMatch(/<button[^>]*type="submit"[^>]*disabled=""/);
+  });
   it("renders empty password inputs, unselected consents, owner context and retention disclosure", () => {
     const html = renderToStaticMarkup(<ConnectionRegistrationForm busy={false} onSubmit={async () => {}} onClose={() => {}} />);
     expect((html.match(/type="password"/g) ?? [])).toHaveLength(2);
@@ -28,6 +35,11 @@ describe("connection screen presentation contract", () => {
     expect(steps.indexOf("계좌 선택")).toBeLessThan(steps.indexOf("조회"));
     expect((steps.match(/aria-current="step"/g) ?? [])).toHaveLength(1);
     expect(html.indexOf("<fieldset")).toBeLessThan(html.indexOf("<details"));
+    // 흰 패널 위 입력칸은 기본 채움(bg-muted)으로 보인다. 흰 배경으로 덮으면 칸이 사라진다(2026-11-04 신고).
+    for (const input of html.match(/<input[^>]*type="password"[^>]*>/g) ?? []) {
+      expect(input).toContain("bg-muted");
+      expect(input).not.toMatch(/bg-(background|card)\b/);
+    }
   });
   it("separates KRW and USD rather than presenting a combined asset total", () => {
     const html = card();

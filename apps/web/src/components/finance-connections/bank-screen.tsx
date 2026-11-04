@@ -9,7 +9,7 @@ import { StatusChip } from "@/components/widgets/status-chip";
 import { FinanceLoading } from "@/components/manual-finance/shared";
 import { useAuth } from "@/lib/auth-context";
 import { bankConnectionsApi, useOwnedBankConnections } from "@/lib/bank-connections-client";
-import { createConnectionSession, connectionFailureStatus, connectionTime, connectionDecimal } from "./model";
+import { createConnectionSession, connectionFailureStatus, connectionTime, connectionDecimal, registrationFormVisible } from "./model";
 import { BANK_ERROR, BANK_STATUS, bankAccountLabel, reconcileBankOperation, type PendingBankOperation } from "./bank-model";
 import { BankRegistrationForm, type BankRegistrationInput } from "./bank-registration-form";
 import { BankStartPanel } from "./bank-start-panel";
@@ -29,7 +29,8 @@ export function BankConnectionScreen({ householdId, userId, canManage, summary =
   const firstRead = useRef(true);
   const beforeRead = useCallback(() => {
     if (active.current) { pending.current = active.current; setUncertain(active.current); }
-    active.current = null; session.invalidate(); setData(null); setForm(false); setBusy(true); setNotice(null);
+    // 열린 등록 폼은 닫지 않는다 — 읽는 동안 비활성화하고, 결과가 등록을 막을 때만 닫는다(registrationFormVisible).
+    active.current = null; session.invalidate(); setData(null); setBusy(true); setNotice(null);
   }, [session]);
   const owned = useOwnedBankConnections(householdId, userId, beforeRead);
   const openingRefresh = useCallback(async (list: BankConnectionList) => {
@@ -61,9 +62,9 @@ export function BankConnectionScreen({ householdId, userId, canManage, summary =
   useEffect(() => {
     if (owned.isPending || owned.isFetching) return;
     const opening = firstRead.current; firstRead.current = false;
-    if (owned.error || !owned.data) { setData(null); setBusy(false); setNotice("은행 연결 상태를 불러오지 못했어요."); return; }
+    if (owned.error || !owned.data) { setData(null); setForm(false); setBusy(false); setNotice("은행 연결 상태를 불러오지 못했어요."); return; }
     pending.current = reconcileBankOperation(pending.current, owned.data.items); setUncertain(pending.current);
-    setData(owned.data); setBusy(false); setNotice(pending.current ? "요청 결과가 확인될 때까지 다시 로그인하지 않아요." : null);
+    setData(owned.data); setBusy(false); if (!owned.data.enabled || pending.current) setForm(false); setNotice(pending.current ? "요청 결과가 확인될 때까지 다시 로그인하지 않아요." : null);
     if (opening && !pending.current) void openingRefresh(owned.data);
   }, [owned.data, owned.dataUpdatedAt, owned.error, owned.isPending, owned.isFetching, openingRefresh]);
   useEffect(() => () => { session.invalidate(); }, [session]);
@@ -119,7 +120,7 @@ export function BankConnectionScreen({ householdId, userId, canManage, summary =
       }} onDisconnect={() => { void write({ kind: "disconnect", id: item.id, version: item.version }, signal => authedFetch(token => bankConnectionsApi.disconnect(token, item.id,
         { householdId, expectedVersion: item.version }, userId, signal))); }} />)}
     </div> : null}
-    {!summary && form && data?.enabled && canManage ? <BankRegistrationForm busy={busy} onSubmit={register} onClose={() => setForm(false)} /> : null}
+    {!summary && registrationFormVisible({ open: form, canManage, data, busy }) ? <BankRegistrationForm busy={busy} onSubmit={register} onClose={() => setForm(false)} /> : null}
     {!summary && data?.enabled && canManage && !form ? <Button variant="weak" className="w-full" disabled={disabled} onClick={openRegistration}>신한 계좌 추가</Button> : null}
     {summary ? <Link href="/more/connections?provider=shinhan_bank" className="text-caption text-muted-foreground inline-flex min-h-11 items-center font-medium">신한 연결 관리</Link> : null}
   </section>;
