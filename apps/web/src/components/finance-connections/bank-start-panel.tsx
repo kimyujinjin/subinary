@@ -24,12 +24,12 @@ const activeStates = new Set([
   "reading",
   "logging_out",
 ]);
-/** "Codex"는 제품 안에서 설명되지 않는 고유명사라 사용자 문구에 쓰지 않는다 — 이미
- *  다른 안내가 쓰고 있는 "실행기"로 통일한다. Mac은 사용자 본인의 기기이므로 남긴다
+/** "Codex"·"실행기"는 제품 안에서 설명되지 않는 내부 용어라 사용자 문구에 쓰지 않는다
+ *  (docs/ux-renewal-2026-11.md §3.5) — 사용자에게는 "Mac"이라고만 말한다. Mac은 사용자 본인의 기기이므로 남긴다
  *  (켜져 있어야 조회가 된다는 전제를 숨기면 실패 원인을 알 수 없다). */
 const labels: Record<string, string> = {
   queued: "Mac에서 실행 대기",
-  claimed: "Mac 실행기 시작 중",
+  claimed: "Mac에서 시작하는 중",
   running: "Mac에서 은행 접속 중",
   authentication_required: "Mac에서 은행 인증이 필요해요",
   reading: "통장·대출 잔액 조회 중",
@@ -243,7 +243,7 @@ export function BankStartPanel({
   return (
     <div className="min-w-0 space-y-5">
       {pairing && !paired ? (
-        <section className="finance-panel space-y-3 p-5" aria-label="Mac 실행기 연결 승인">
+        <section className="finance-panel space-y-3 p-5" aria-label="Mac 연결 승인">
           <h3 className="text-heading">이 Mac 연결</h3>
           <p className="text-caption text-muted-foreground">
             연결을 해제할 때까지 이 Mac에서 내가 요청한 신한은행 조회를 허용해요. 모아에서 언제든 연결을 해제할 수 있어요.
@@ -256,7 +256,7 @@ export function BankStartPanel({
       {data && !runner ? (
         <section className="finance-panel p-5" aria-label="Mac 연결 상태">
           <p className="text-heading">연결된 Mac이 없어요</p>
-          <p className="text-caption text-muted-foreground mt-1">Mac 실행기에서 기기 연결을 진행해 주세요.</p>
+          <p className="text-caption text-muted-foreground mt-1">Mac에서 모아 연결을 먼저 진행해 주세요.</p>
         </section>
       ) : null}
       {runner ? (

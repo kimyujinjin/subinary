@@ -352,7 +352,7 @@ export default function TodoPage() {
           todo.processingTruncated
         )}
         error={todo.processingError}
-        errorText="처리 상태를 확인하지 못했어요. 확인이 필요한 내역이 없다는 뜻은 아니에요."
+        errorText="대기 중인 문자를 불러오지 못했어요."
         footer={
           todo.processingTruncated ? (
             <p className="text-muted-foreground px-4 py-3 text-xs">
@@ -470,5 +470,5 @@ function smsSubtitle(e: CardSmsEventSummary): string {
     const merchant = e.merchantRaw ?? "가맹점 미상";
     return `${merchant}${amount ? ` ${amount}` : ""} · 확인만 하면 돼요`;
   }
-  return "자동으로 읽지 못했어요 · 원문을 보고 확정해 주세요";
+  return "자동으로 읽지 못했어요 · 문자를 보고 확정해 주세요";
 }

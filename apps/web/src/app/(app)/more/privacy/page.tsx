@@ -233,7 +233,6 @@ export default function PrivacyPage() {
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <PageBackHeader
         title="개인정보"
-        subtitle="무엇에 동의했고, 무엇이 수집·보관되는지 확인해요"
       />
 
       {/* ---- 1. 동의 상태 ---- */}

@@ -188,7 +188,7 @@ export function buildCollectSetup(input: CollectSetupInput): CollectSetupPlan {
           note: "매직 텍스트 선택기에서 문자 발신번호를 고르면 돼요.",
         },
       ],
-      bodyLabel: "본문 (문자 원문 그대로)",
+      bodyLabel: "본문 (문자 내용 그대로)",
       body: MACRODROID_MAGIC.message,
       bodyFields: [],
       eventIdHint: EVENT_ID_HINT.android,

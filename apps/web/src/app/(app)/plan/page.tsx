@@ -9,6 +9,7 @@ import type {
   ManualHousingPlanResponse,
 } from "@family/contracts";
 import { Button } from "@/components/ui/button";
+import { PageBackHeader } from "@/components/widgets/page-back-header";
 import { EmptyState } from "@/components/widgets";
 import { useAuth } from "@/lib/auth-context";
 import { useHousehold } from "@/lib/household-context";
@@ -117,28 +118,17 @@ function ScopedPlans({
   const next = records.data?.summary.nextPayment;
   return (
     <div className="mx-auto w-full min-w-0 max-w-2xl space-y-5">
-      <Link
-        href={`/assets?scope=${scope}`}
-        className="text-muted-foreground hover:text-primary focus-visible:outline-ring inline-flex min-h-11 items-center gap-2 rounded-lg text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2"
-      >
-        <ArrowLeft className="size-4 shrink-0" aria-hidden="true" />
-        자산으로 돌아가기
-      </Link>
-      <div className="flex flex-col items-start justify-between gap-3 sm:flex-row">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">주택 납부 일정</h1>
-        </div>
-        {canCreate && (Boolean(records.data?.items.length) || records.isError) ? (
-          <Button
-            className="min-h-11 shrink-0"
-            disabled={opening !== null}
-            onClick={() => setEditor("new")}
-          >
-            <Plus className="size-4" />
-            주택 추가
-          </Button>
-        ) : null}
-      </div>
+      <PageBackHeader
+        title="주택 납부 일정"
+        backHref={`/assets?scope=${scope}`}
+        action={
+          canCreate && (Boolean(records.data?.items.length) || records.isError) ? (
+            <Button variant="ghost" size="icon" className="-mr-2" aria-label="주택 추가" disabled={opening !== null} onClick={() => setEditor("new")}>
+              <Plus />
+            </Button>
+          ) : null
+        }
+      />
       {scope === "private" ? <LegacyPrivateNotice href="/plan" /> : null}
       {!canCreate && scope === "household" ? (
         <p role="status" className="text-muted-foreground text-sm">

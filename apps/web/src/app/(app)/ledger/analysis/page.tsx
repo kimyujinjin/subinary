@@ -540,10 +540,6 @@ function LedgerAnalysisView() {
           <Card className="finance-panel">
             <CardHeader>
               <CardTitle>어디에 많이 썼나요?</CardTitle>
-              <CardDescription>
-                {isCurrentMonth ? "이번 달" : formatMonth(month)} 카테고리별
-                지출이에요
-              </CardDescription>
             </CardHeader>
             <CardContent>
               {categoriesQuery.isLoading || categoriesQuery.isError ? (
@@ -567,11 +563,6 @@ function LedgerAnalysisView() {
               <CardTitle>
                 {isCurrentMonth ? "이번 달 예산" : `${formatMonth(month)} 예산`}
               </CardTitle>
-              <CardDescription>
-                {isCurrentMonth
-                  ? "사용률이 높은 예산부터 보여드려요"
-                  : "그 달의 예산 달성률이에요"}
-              </CardDescription>
               <CardAction>
                 <SeeAllLink
                   href={`/budgets?month=${encodeURIComponent(month)}`}
@@ -672,10 +663,6 @@ function LedgerAnalysisView() {
               <Card className="finance-panel">
                 <CardHeader>
                   <CardTitle>자주 간 곳은 어디인가요?</CardTitle>
-                  <CardDescription>
-                    {isCurrentMonth ? "이번 달" : formatMonth(month)} 가맹점별
-                    지출 상위예요
-                  </CardDescription>
                 </CardHeader>
                 <CardContent>
                   {merchantsQuery.isLoading || merchantsQuery.isError ? (
@@ -697,9 +684,6 @@ function LedgerAnalysisView() {
               <Card className="finance-panel">
                 <CardHeader>
                   <CardTitle>누가, 어떤 카드로 썼나요?</CardTitle>
-                  <CardDescription>
-                    구성원과 카드별로 모아봤어요
-                  </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-5">
                   <section className="flex flex-col gap-1">
@@ -798,7 +782,6 @@ function LedgerAnalysisView() {
               <Card className="finance-panel">
                 <CardHeader>
                   <CardTitle>최근 거래</CardTitle>
-                  <CardDescription>가장 최근에 기록된 거래예요</CardDescription>
                   <CardAction>
                     <SeeAllLink href="/transactions" />
                   </CardAction>
