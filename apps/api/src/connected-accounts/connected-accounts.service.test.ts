@@ -42,15 +42,29 @@ describe("shinhanHoldings", () => {
     expect(
       rows.map((row) => [row.kind, row.label, row.krw, row.observedAt])
     ).toEqual([
-      ["account", "신한 통장 · 끝 9029", "2612734", "2026-11-03T12:17:00.000Z"],
-      [
-        "loan",
-        "신한 중도금대출 · 끝 0444",
-        "111440000",
-        "2026-11-03T12:17:00.000Z",
-      ],
+      ["account", "신한은행 통장", "2612734", "2026-11-03T12:17:00.000Z"],
+      ["loan", "신한은행 중도금대출", "111440000", "2026-11-03T12:17:00.000Z"],
     ]);
     expect(JSON.stringify(rows.map((row) => row.label))).not.toContain(fp);
+  });
+
+  it("adds the last four digits only when two accounts would share a name", () => {
+    const second = {
+      ...deposit,
+      accountFingerprint: "c".repeat(64),
+      accountLast4: "1111",
+      balanceKrw: "5",
+    };
+    const rows = shinhanHoldings(
+      { id: "j2", owner_user_id: owner, observations: [deposit, second, loan] },
+      "이수빈",
+      true
+    );
+    expect(rows.map((row) => row.label)).toEqual([
+      "신한은행 통장 9029",
+      "신한은행 통장 1111",
+      "신한은행 중도금대출",
+    ]);
   });
 
   it("drops malformed observations instead of inventing zero", () => {

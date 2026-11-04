@@ -13,7 +13,7 @@ import {
 } from "@family/contracts";
 
 export const ASSET_LABELS: Record<ManualAssetKind, string> = {
-  account: "통장·현금",
+  account: "통장",
   saving: "적금",
   stock: "주식",
   loan: "대출",

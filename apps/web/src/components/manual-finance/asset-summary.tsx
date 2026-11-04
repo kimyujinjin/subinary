@@ -137,7 +137,9 @@ function BreakdownGroup({
   palette: string[];
 }) {
   const known = parts.filter((part) => part.amount !== null && part.amount > 0n);
-  const width = total !== null && max > 0n ? Number((total * 1000n) / max) / 10 : 0;
+  // 막대는 이 묶음만의 구성이다 — 폭 전체를 100%로 쓰고 칸 길이 = 옆에 적은 비율.
+  // (예전에는 자산·대출 중 큰 쪽 기준으로 막대를 줄여, 칸 길이와 비율이 어긋나 보였다.)
+  const width = known.length ? 100 : 0;
   return (
     <div className="min-w-0">
       <div className="flex min-w-0 items-baseline justify-between gap-3">

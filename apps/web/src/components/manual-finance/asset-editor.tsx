@@ -258,7 +258,7 @@ export function AssetEditor({
         </details>
         <details className="text-muted-foreground text-xs leading-relaxed">
           <summary className="min-h-11 cursor-pointer py-3">금액 입력 기준</summary>
-          <p className="pb-3">통장·현금은 잔액, 적금은 현재 적립액, 주식은 현재 평가액, 대출은 남은 원금을 적어주세요. 만기 예상액이나 대출 한도는 제외해요.</p>
+          <p className="pb-3">통장은 잔액, 적금은 현재 적립액, 주식은 현재 평가액, 대출은 남은 원금을 적어주세요. 만기 예상액이나 대출 한도는 제외해요.</p>
           <p className="pb-3">금액과 날짜는 직접 확인한 원화 기준이에요. 계좌 자동 조회나 외화 환산 없이 입력한 값을 사용해요. 모르는 금액은 비워두고, 실제로 0원일 때만 0을 입력해 주세요.</p>
         </details>
       </form>

@@ -51,7 +51,7 @@ function HoldingRow({ holding, fxRate, fxDate }: { holding: ConnectedHolding; fx
           holding.krw !== null ? `국내 ${displayManualKrw(holding.krw)}` : null,
           holding.usd !== null ? `미국 ${connectionMoney(holding.usd, "USD")}` : null,
         ].filter(Boolean)
-      : ["자동 조회"];
+      : [`기준일 ${new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" }).format(new Date(holding.observedAt))}`];
   if (!holding.own) parts.unshift(holding.ownerName);
   const href = holding.own ? `/more/connections?provider=${holding.provider}` : "/assets";
   return (

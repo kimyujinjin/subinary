@@ -9,12 +9,14 @@ import { convertToKrw } from "./fx-client";
 /** 자산 목록·합계에 섞어 보여줄 연결 계좌 한 건(원화 환산 포함). */
 export interface ConnectedHolding {
   id: string;
-  /** 자산 화면 묶음: 통장·현금 / 주식 / 대출. */
+  /** 자산 화면 묶음: 통장 / 주식 / 대출. */
   kind: "account" | "stock" | "loan";
   provider: "toss_securities" | "shinhan_bank";
   label: string;
   ownerName: string;
   own: boolean;
+  /** 조회 시각(UTC ISO). 목록에 기준일로 보여준다. */
+  observedAt: string;
   /** 원화 금액(원 단위). 값이 없으면 null. */
   krw: string | null;
   /** 달러 금액(10진 문자열). 값이 없으면 null. */
@@ -52,6 +54,7 @@ export function toHoldings(
       label: item.label,
       ownerName: item.ownerName,
       own: item.own,
+      observedAt: item.observedAt,
       krw: krw === null ? null : krw.toString(),
       usd: item.usd,
       usdInKrw,
@@ -125,14 +128,14 @@ export interface AssetBreakdown {
 }
 
 const KIND_LABEL = {
-  account: "통장·현금",
+  account: "통장",
   saving: "적금",
   stock: "주식",
 } as const;
 
 /**
  * 순자산이 어떻게 계산됐는지 보여주는 구성(§8 자산).
- * 자산은 종류별(연결 통장은 통장·현금, 연결 증권은 주식에 포함), 대출은 항목별로 묶는다.
+ * 자산은 종류별(연결 통장은 통장, 연결 증권은 주식에 포함), 대출은 항목별로 묶는다.
  * 합 규칙은 서버 요약과 같다: 금액이 비어 있는 항목은 0이 아니라 '빠진 항목'으로 센다.
  */
 export function assetBreakdown(

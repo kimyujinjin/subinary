@@ -38,16 +38,22 @@ function utc(value: string): string {
  */
 export function shinhanHoldings(job: JobRow, ownerName: string, own: boolean): ConnectedAccountHolding[] {
   if (!Array.isArray(job.observations)) return [];
-  return job.observations.flatMap((value): ConnectedAccountHolding[] => {
+  const observations = job.observations.flatMap((value) => {
     const parsed = bankObservationSchema.safeParse(value);
-    if (!parsed.success) return [];
-    const o = parsed.data;
-    const base = { id: `${job.id}:${o.accountFingerprint}`, ownerUserId: job.owner_user_id, ownerName, own, provider: 'shinhan_bank' as const, usd: null, observedAt: utc(o.capturedAt), stale: false };
-    if (o.pageKind === 'deposit_account_list') {
-      return [{ ...base, kind: 'account', label: `신한 통장 · 끝 ${o.accountLast4}`, krw: o.balanceKrw }];
-    }
-    const name = o.loanType === 'jeonse' ? '전세대출' : '중도금대출';
-    return [{ ...base, kind: 'loan', label: `신한 ${name} · 끝 ${o.accountLast4}`, krw: o.outstandingPrincipalKrw }];
+    return parsed.success ? [parsed.data] : [];
+  });
+  // 조회 결과에는 상품 이름이 없다. '신한은행 통장'처럼 쓰고, 같은 이름이 둘 이상일 때만 끝 4자리로 구분한다.
+  const baseName = (o: (typeof observations)[number]) =>
+    o.pageKind === 'deposit_account_list' ? '신한은행 통장' : o.loanType === 'jeonse' ? '신한은행 전세대출' : '신한은행 중도금대출';
+  const counts = new Map<string, number>();
+  for (const o of observations) counts.set(baseName(o), (counts.get(baseName(o)) ?? 0) + 1);
+  return observations.map((o): ConnectedAccountHolding => {
+    const name = baseName(o);
+    const label = (counts.get(name) ?? 0) > 1 ? `${name} ${o.accountLast4}` : name;
+    const base = { id: `${job.id}:${o.accountFingerprint}`, ownerUserId: job.owner_user_id, ownerName, own, provider: 'shinhan_bank' as const, usd: null, observedAt: utc(o.capturedAt), stale: false, label };
+    return o.pageKind === 'deposit_account_list'
+      ? { ...base, kind: 'account', krw: o.balanceKrw }
+      : { ...base, kind: 'loan', krw: o.outstandingPrincipalKrw };
   });
 }
 
