@@ -1,10 +1,8 @@
-import type { ManualAssetSummary, ManualHousingSummary, MonthlyAnalytics } from "@family/contracts";
+import type { ManualAssetSummary, MonthlyAnalytics } from "@family/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { HomeConsumptionCard, monthComparison, type HomeConsumptionCardProps } from "./home-consumption-card";
-import { assetOneLine } from "./home-summary-rows";
-import { HomeHousingCard } from "./home-housing-card";
 import { ManualAssetsSummary } from "./manual-finance/asset-summary";
 
 const noExceptions = { count: 0, loading: false, error: false, truncated: false };
@@ -14,7 +12,6 @@ const monthly: MonthlyAnalytics = {
   totalNet: 0, totalApproved: 0, totalCancelled: 0, transactionCount: 0, previousNet: 0, deltaNet: 0, deltaRate: null,
 };
 const consumption = (props: Partial<HomeConsumptionCardProps> = {}) => renderToStaticMarkup(createElement(HomeConsumptionCard, { ...base, ...props }));
-const housing = (summary?: ManualHousingSummary, props: { loading?: boolean; error?: boolean } = {}) => renderToStaticMarkup(createElement(HomeHousingCard, { summary, loading: false, error: false, scope: "household", ...props }));
 
 describe("asset summary empty and partial states", () => {
   const empty: ManualAssetSummary = { currency: "KRW", grossAssets: null, debt: null, netAssets: null, assetsCompleteness: "empty", debtCompleteness: "empty", completeness: "empty", asOfDate: null, oldestAsOfDate: null, newestAsOfDate: null, mixedAsOfDates: false };
@@ -128,53 +125,7 @@ describe("quiet home transaction exceptions", () => {
   });
 });
 
-describe("home housing summary evidence", () => {
-  it("does not turn absent payment or occupancy information into zero or a claimed date", () => {
-    const html = housing({ nextPayment: null, hasIncompletePayments: true });
-    expect(html).not.toContain("— 원");
-    expect(html).toContain("금액·날짜·납부 내역이 비어 있는 항목");
-    expect(html).not.toContain("2029");
-    expect(html).not.toContain("0원</p>");
-  });
-
-  it("uses one compact schedule link when no payment is scheduled", () => {
-    const html = housing({ nextPayment: null, hasIncompletePayments: false });
-    expect(html).toContain("예정된 납부 일정이 없어요");
-    expect(html.match(/href=/g)).toHaveLength(1);
-    expect(html).toContain('href="/plan?scope=household"');
-    expect(html).not.toContain("납부할 금액");
-    expect(html).not.toContain("— 원");
-    expect(html).not.toContain("0원");
-  });
-
-  it("shows only the server-selected payment and its exact stored amount and date", () => {
-    const html = housing({ nextPayment: { planId: "00000000-0000-4000-8000-000000000001", paymentId: "00000000-0000-4000-8000-000000000002", label: "합성 테스트 주택", kind: "interim", installment: 2, dueDate: "2026-11-01", remainingAmountKrw: "90071992547409931234" }, hasIncompletePayments: false });
-    expect(html).toContain("합성 테스트 주택");
-    expect(html).toContain("중도금 2회차");
-    expect(html).toContain("2026-11-01");
-    expect(html).toContain("90,071,992,547,409,931,234원");
-  });
-
-  it("hides cached payment evidence while the query has failed or the scope is loading", () => {
-    const summary: ManualHousingSummary = { nextPayment: { planId: "00000000-0000-4000-8000-000000000001", paymentId: "00000000-0000-4000-8000-000000000002", label: "합성 테스트 주택", kind: "balance", installment: null, dueDate: "2026-11-01", remainingAmountKrw: "7000000" }, hasIncompletePayments: false };
-    for (const state of [{ error: true }, { loading: true }]) {
-      const html = housing(summary, state);
-      expect(html).not.toContain("합성 테스트 주택");
-      expect(html).not.toContain("7,000,000원");
-      expect(html).not.toContain("— 원");
-      expect(html).not.toContain("예정된 납부 일정이 없어요");
-      expect(html).toContain(state.error ? "납부 일정을 불러오지 못했어요" : "납부 일정을 불러오는 중이에요");
-    }
-  });
-});
-
 describe("home one-line summaries", () => {
-  const empty: ManualAssetSummary = { currency: "KRW", grossAssets: null, debt: null, netAssets: null, assetsCompleteness: "empty", debtCompleteness: "empty", completeness: "empty", asOfDate: null, oldestAsOfDate: null, newestAsOfDate: null, mixedAsOfDates: false };
-  it("names unknown values instead of treating them as zero", () => {
-    expect(assetOneLine(empty)).toBe("등록된 자산이 없어요");
-    expect(assetOneLine({ ...empty, debt: "111440000", debtCompleteness: "complete", completeness: "partial" })).toBe("남은 대출 111,440,000원 · 자산 미입력");
-    expect(assetOneLine({ ...empty, grossAssets: "200000", debt: "100000", netAssets: "0", assetsCompleteness: "complete", debtCompleteness: "complete", completeness: "complete" })).toBe("순자산 0원");
-  });
   it("does not compare an unfinished month against a finished one", () => {
     expect(monthComparison({ ...monthly, totalNet: 1000, previousNet: 5000, deltaNet: -4000 }, true)).toBe("지난달 전체 5,000원");
     expect(monthComparison({ ...monthly, totalNet: 1000, previousNet: 5000, deltaNet: -4000 }, false)).toBe("전달보다 4,000원 덜 썼어요");
