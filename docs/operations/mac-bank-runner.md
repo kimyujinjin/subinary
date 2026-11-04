@@ -87,3 +87,19 @@ v3는 별도 `schema-v3.sql`로 암호화 로그인 정보와 작업의 버전·
 Memory MCP와 context7 MCP는 이 실행 환경에 노출되지 않아 사용할 수 없었다. 공식 OpenAI App Server·MCP 문서와 React 문서를 직접 확인했다. 설계 결정은 이 문서에 보관한다: hosted 모아는 ChatGPT 인증을 소유하지 않고, 본인 계정에 연결한 Mac이 별도 범위의 grant로 나가는 HTTPS 요청만 수행한다. 반복 검토 항목은 ‘대기와 실행과 저장을 구분’, ‘결과 불명에서 은행 재실행 금지’, ‘서버 결과 저장 전 현재 권한 재확인’이다.
 
 공식 문서: [Codex App Server](https://learn.chatgpt.com/docs/app-server), [MCP 설정](https://learn.chatgpt.com/docs/extend/mcp).
+
+## aside repl 엔진 (2026-11-04)
+
+기본 엔진은 `tools/mac-bank-runner/shinhan_repl.py`의 고정 절차이며 모델을 사용하지 않는다. Codex App Server 경로(`codex_phase`)는 폴백으로 남긴다. 실행기 폴더의 `engine` 파일(소유자 전용, 그룹·기타 쓰기 권한 없음)에 `codex`를 쓰면 다음 작업부터 기존 경로를 사용한다. 파일이 없으면 repl이다.
+
+- 통로는 바꾸지 않는다. 기존 heartbeat·claim·1회 로그인 정보 전달·`/complete` 재전송을 그대로 사용하며 컨테이너에는 Aside CLI나 Aside 로그인 정보를 두지 않는다. `aside` CLI는 macOS 전용 바이너리이고 `aside mcp`는 stdio만 지원하며 데몬은 127.0.0.1의 비공개 프로토콜이므로 컨테이너에서 직접 호출하지 않는다.
+- 대화형 `aside repl` 세션 하나에 단계마다 한 줄 JS를 보낸다(호출당 120초 제한, 단계별 15~45초, 전체 140초). 원샷 호출은 종료 시 연 탭을 닫으므로 사용하지 않는다. 세션이 연 탭은 세션 종료 때 닫히고, 사용자가 이미 로그인한 탭은 붙기만 하며 남는다(붙은 탭은 `closeTab`으로 닫히지 않는다).
+- 순서: 로그인된 신한 탭이 있으면 그 탭을 쓴다(로그인 정보 미사용). 없으면 로그인 화면(`index.jsp#011100000000`)에서 `#ibx_loginId`를 입력하고, `#비밀번호`를 눌러 TransKey 보안키패드를 연 뒤 키 이름으로 ref를 찾아 클릭한다. 클릭마다 마스킹 글자 수를 확인하고 키패드를 닫은 뒤 `#btn_idLogin`을 한 번 제출한다. 예금 그리드 `#grd_list_01_body_table`과 대출 탭의 `#grd_list03_body_table`을 읽고 `#btn_logout` 후 "로그아웃 되었습니다"를 확인한다.
+- 비밀번호 문자는 repl 코드에 넣지 않는다. 은행 출처를 확인한 키패드 snapshot의 ref만 클릭 코드에 넣는다. ID는 입력 코드에 포함된다. 마커 시험에서 Aside 데몬 로그·상태 DB·세션 폴더에 repl 코드 본문이 남지 않았다. Aside 서버로 전송되는지는 확인하지 못했다.
+- Aside에서는 `page.on('dialog')`가 발생하지 않는다. 제출 직전에 페이지의 `alert`·`confirm`을 분류 기록으로 바꾸고(원문 미보관, confirm은 취소), 로그인 화면에 원래 있던 문구(FAQ의 OTP 등)는 기준선으로 빼고 판정한다.
+- 판정: 로그아웃 버튼은 성공, 비밀번호·ID 오류는 `credentials_invalid`, 인증·기타 안내는 `authentication_required`, 25초 무응답은 `timeout`, 화면 구조 불일치는 `unsupported_layout`이다. 같은 작업에서 재로그인하지 않으며 로그인 후 오류에도 정상 로그아웃을 시도한다. 단계가 제한 시간을 넘으면 세션을 종료하고 로그아웃 미확인 `timeout`으로 끝낸다.
+- 추가 인증 시 세션 탭이 닫히므로 사용자가 Mac에서 직접 로그인·인증한 뒤 ‘인증 완료, 계속 조회’를 누르면 이어가기 단계가 그 탭에 붙어 조회·로그아웃한다.
+- 계좌번호는 기존 `capture()`로 지문·끝 4자리로 바꾸고 원본 행을 비운다. 대출명에 중도금·전세 중 하나만 있는 대출만 저장한다.
+- 로그인 화면 드라이런(가짜 ID, 키 2개, 제출 없음)에서 제출 직전까지 6.05초가 걸렸다.
+
+`MAC_BANK_RUNNER_CONSENT_TEXT`에는 "Mac의 Codex로"가 남아 있다. 엔진 중립 문구로 바꾸려면 동의 버전 3과 모듈 스키마 v4가 필요하여 이번 변경에 포함하지 않았다.

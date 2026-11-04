@@ -5,7 +5,7 @@ export const assetConnectionProviderSchema = z.enum(['shinhan_bank', 'toss_secur
 export type AssetConnectionProvider = z.infer<typeof assetConnectionProviderSchema>;
 export const bankConnectionErrorSchema = z.enum([
   'credentials_invalid', 'authentication_required', 'network_error', 'unsupported_layout',
-  'account_not_found', 'account_ambiguous', 'account_changed', 'runtime_unavailable', 'operation_unknown',
+  'account_not_found', 'account_ambiguous', 'account_changed', 'runtime_unavailable', 'operation_unknown', 'timeout',
 ]);
 export type BankConnectionError = z.infer<typeof bankConnectionErrorSchema>;
 const loanSelectorSchema = z.object({

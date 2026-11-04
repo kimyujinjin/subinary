@@ -42,6 +42,15 @@ const labels: Record<string, string> = {
 };
 
 const failedStates = new Set(["failed", "operation_unknown", "cancelled", "expired"]);
+/** Mac 조회 실패를 종류별로 알린다. 로그인 실패·시간 초과·화면 변경은 사용자가 할 일이 다르다. */
+const failedReasons: Partial<Record<NonNullable<MacBankJob["errorCode"]>, string>> = {
+  credentials_invalid: "은행이 아이디나 비밀번호가 맞지 않다고 했어요. 계정 잠금을 막으려고 다시 시도하지 않았어요. 로그인 정보를 확인해 주세요.",
+  timeout: "은행 화면이 제때 응답하지 않아 멈췄어요. 다시 로그인하지 않았어요. 잠시 뒤 다시 조회해 주세요.",
+  unsupported_layout: "은행 화면 구성이 달라져 읽지 못했어요. 이전 금액은 바뀌지 않았어요.",
+  network_error: "Mac에서 은행 화면을 열지 못했어요. Mac이 켜져 있는지 확인해 주세요.",
+  runtime_unavailable: "Mac에서 은행 화면을 열지 못했어요. Mac이 켜져 있는지 확인해 주세요.",
+  operation_unknown: "실행 결과를 확인하지 못했어요. 다시 로그인하지 않아요. Mac의 은행 화면과 로그아웃 상태를 확인해 주세요.",
+};
 
 /** 대기·실행·인증·저장을 구분하며 본인 조회값만 표시한다. */
 export function BankMacJob({ job }: { job: MacBankJob }) {
@@ -54,7 +63,7 @@ export function BankMacJob({ job }: { job: MacBankJob }) {
       </p>
       {job.state === "authentication_required" ? (
         <p className="text-body mt-2">
-          은행이 추가 인증을 요구했어요. Mac의 신한은행 화면에서 인증을 마친 뒤 ‘인증 완료, 계속 조회’를 눌러 주세요.
+          은행이 추가 인증을 요구했어요. Mac에서 신한은행에 직접 로그인해 인증을 마친 뒤 ‘인증 완료, 계속 조회’를 눌러 주세요. 그 화면에서 이어서 조회하고 로그아웃해요.
         </p>
       ) : null}
       {job.state === "cancelled" && !job.logoutConfirmed ? (
@@ -62,9 +71,7 @@ export function BankMacJob({ job }: { job: MacBankJob }) {
       ) : null}
       {job.state === "failed" || job.state === "operation_unknown" ? (
         <p className="text-caption text-muted-foreground mt-2">
-          {job.errorCode === "operation_unknown"
-            ? "실행 결과를 확인하지 못했어요. 다시 로그인하지 않아요. Mac의 은행 화면과 로그아웃 상태를 확인해 주세요."
-            : "은행 조회를 마치지 못했어요. Mac의 은행 화면과 인증 상태를 확인해 주세요."}
+          {(job.errorCode && failedReasons[job.errorCode]) ?? "은행 조회를 마치지 못했어요. Mac의 은행 화면과 인증 상태를 확인해 주세요."}
         </p>
       ) : null}
       {job.state === "succeeded" ? (

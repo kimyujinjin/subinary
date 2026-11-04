@@ -9,6 +9,7 @@ export const BANK_ERROR: Record<BankConnectionError, string> = {
   account_changed: "처음 연결한 계좌와 달라 갱신을 멈췄어요.",
   runtime_unavailable: "은행 조회 기능을 준비하고 있어요. 로그인 정보를 다시 입력하지 않아도 돼요.",
   operation_unknown: "조회 결과를 확인하지 못했어요. 다시 로그인하지 않고 연결 상태부터 확인해 주세요.",
+  timeout: "은행 화면이 제때 응답하지 않아 조회를 멈췄어요. 이전 금액은 바뀌지 않았어요.",
 };
 export function bankAccountLabel(selector: BankConnection['selector']) {
   return 'accountType' in selector ? '신한 통장' : `신한 ${selector.loanType === 'interim' ? '중도금' : '전세'} 대출`;

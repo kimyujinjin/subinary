@@ -40,6 +40,12 @@ describe("모아 버튼에서 Mac 자동 실행 상태 표시", () => {
     const html = renderToStaticMarkup(<BankMacJob job={{ ...fixture, state: "failed", errorCode: "operation_unknown" }} />);
     expect(html).toContain("다시 로그인하지 않아요"); expect(html).toContain("로그아웃 상태"); expect(html).not.toContain("모아에 저장 완료");
   });
+  it("로그인 실패·시간 초과·화면 변경을 서로 다른 문구로 알린다", () => {
+    const text = (errorCode: MacBankJob["errorCode"]) => renderToStaticMarkup(<BankMacJob job={{ ...fixture, state: "failed", errorCode }} />);
+    expect(text("credentials_invalid")).toContain("다시 시도하지 않았어요"); expect(text("timeout")).toContain("제때 응답하지 않아");
+    expect(text("unsupported_layout")).toContain("화면 구성이 달라져");
+    expect(new Set([text("credentials_invalid"), text("timeout"), text("unsupported_layout")]).size).toBe(3);
+  });
   it("정상 저장한 0원 장부 잔액을 누락하지 않는다", () => {
     const job: MacBankJob = { ...fixture, state: "succeeded", logoutConfirmed: true, observations: [{ formatVersion: 1, provider: "shinhan", source: "browser_assisted", origin: "https://bank.shinhan.com", pageKind: "deposit_account_list", capturedAt: fixture.createdAt, accountFingerprint: "a".repeat(64), accountLast4: "1234", currency: "KRW", balanceKind: "ledger", balanceKrw: "0", bankAsOfDate: null }] };
     const html = renderToStaticMarkup(<BankMacJob job={job} />);

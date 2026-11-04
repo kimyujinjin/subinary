@@ -1,4 +1,8 @@
-"""모아의 본인 요청을 Mac의 공식 Codex App Server와 Computer Use로 처리한다."""
+"""모아의 본인 요청을 Mac에서 처리한다.
+
+기본 엔진은 aside repl 고정 절차(shinhan_repl.py)다. 같은 폴더의 `engine` 파일에 `codex`라고 쓰면
+기존 Codex App Server + Computer Use 경로(codex_phase)로 되돌린다.
+"""
 from __future__ import annotations
 
 import argparse
@@ -24,8 +28,10 @@ from collections.abc import Callable
 from types import ModuleType
 
 ORIGIN = 'https://app.subinary.cloud'
+DEFAULT_ASIDE = str(Path.home() / '.local/bin/aside')  # LaunchAgent PATH에는 ~/.local/bin이 없다.
 POLICY_SHA = '6dda4ec73eab62578f6276a01192f8ef4f6df7d60a2a3dcf9352e85ac1856a7a'  # resource_policy.py(같은 폴더). 정책을 바꾸면 이 값도 바꾼다.
-ERRORS = {'authentication_required', 'network_error', 'unsupported_layout', 'runtime_unavailable', 'operation_unknown'}
+ERRORS = {'authentication_required', 'credentials_invalid', 'network_error', 'unsupported_layout', 'runtime_unavailable', 'operation_unknown', 'timeout'}
+ENGINES = {'repl', 'codex'}
 ACTIVE = {'claimed', 'running', 'authentication_required', 'reading', 'logging_out'}
 AMOUNT = re.compile(r'(?:0|[1-9][0-9]{0,19}|-[1-9][0-9]{0,19})\Z')
 PROMPT = '''사용자가 모아에서 누른 신한은행 본인 통장·대출 잔액 조회 요청입니다.
@@ -564,7 +570,12 @@ def run_phase(args: argparse.Namespace, api: Api, job: dict[str, object], state:
             raise Stopped('authentication_required')
         return result
     callback = credentials if type(job.get('credentialVersion')) is int and not attempted and job.get('continueVersion', 0) == 0 else None
-    result = codex_phase(args.codex, args.state.parent, check_active, callback)
+    if (getattr(args, 'engine', None) or selected_engine(args.state.parent)) == 'repl':
+        def progress(value: str) -> None:
+            api.call(f'/v1/mac-bank-runner/jobs/{job_id}/progress', {'claimId': claim_id, 'state': value})
+        result = shinhan_repl().repl_phase(getattr(args, 'aside', DEFAULT_ASIDE), check_active, callback, progress, capture, VIRTUAL_KEY_LABELS)
+    else:
+        result = codex_phase(args.codex, args.state.parent, check_active, callback)
     if result['outcome'] == 'succeeded':
         api.call(f'/v1/mac-bank-runner/jobs/{job_id}/progress', {'claimId': claim_id, 'state': 'logging_out'})
     # 응답 유실 시에는 complete를 재전송해도 은행을 다시 열지 않는다.
@@ -577,6 +588,31 @@ def run_phase(args: argparse.Namespace, api: Api, job: dict[str, object], state:
         state.pop('active', None)
     state.pop('completion', None)
     write_private(args.state, state)
+
+
+def selected_engine(folder: Path) -> str:
+    """기본은 repl이다. 소유자 전용 `engine` 파일로만 codex 폴백을 고른다."""
+    path = folder / 'engine'
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return 'repl'
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o022:
+        raise Stopped('unsafe_state_permissions')
+    value = path.read_text().strip()
+    if value not in ENGINES:
+        raise Stopped('invalid_engine')
+    return value
+
+
+def shinhan_repl() -> ModuleType:
+    """같은 폴더에 함께 설치한 repl 엔진을 경로로 불러온다(sys.path에 의존하지 않는다)."""
+    spec = importlib.util.spec_from_file_location('moa_shinhan_repl', Path(__file__).resolve().with_name('shinhan_repl.py'))
+    if not spec or not spec.loader:
+        raise Stopped('runtime_unavailable')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def resource_policy(path: Path) -> ModuleType:
@@ -603,7 +639,8 @@ def guarded_phase(args: argparse.Namespace, job: dict[str, object]) -> None:
         with policy.ValidationLease('api', args.state.parent / 'receipts', 'moa-bank-codex') as lease:
             environment = dict(os.environ, MOA_RESOURCE_LEASE_TOKEN=lease.token)
             command = [sys.executable, str(Path(__file__).resolve()), '--state', str(args.state),
-                '--codex', args.codex, '--resource-policy', str(args.resource_policy), '--phase']
+                '--codex', args.codex, '--aside', getattr(args, 'aside', DEFAULT_ASIDE),
+                '--resource-policy', str(args.resource_policy), '--phase']
             result = lease.run(command, cwd=args.state.parent, env=environment, input=json.dumps(job),
                 timeout=170, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if result.returncode != 0:
@@ -630,6 +667,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--state', required=True, type=Path)
     parser.add_argument('--codex', default='/Users/soobeen/.local/bin/codex')
+    parser.add_argument('--aside', default=DEFAULT_ASIDE)
     parser.add_argument('--resource-policy', type=Path, default=Path(__file__).resolve().with_name('resource_policy.py'))
     parser.add_argument('--pair', action='store_true')
     parser.add_argument('--once', action='store_true')

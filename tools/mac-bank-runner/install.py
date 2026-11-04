@@ -15,7 +15,7 @@ LABEL = 'cloud.subinary.moa-bank-runner'
 
 
 def upgrade() -> None:
-    """등록·페어링을 그대로 두고 실행기와 자원 정책 파일만 바꾼 뒤 실행기를 다시 시작한다.
+    """등록·페어링을 그대로 두고 실행기·자원 정책·repl 엔진 파일만 바꾼 뒤 실행기를 다시 시작한다.
 
     등록 파일(plist)은 바꾸지 않는다 — 실행 인자가 같으므로 같은 Mac 연결을 유지한다.
     """
@@ -25,7 +25,7 @@ def upgrade() -> None:
         raise RuntimeError('등록된 실행기가 없어 업그레이드하지 않았습니다. 먼저 설치해 주세요.')
     if target.is_symlink():
         raise RuntimeError('실행기 파일 경로를 확인해 주세요.')
-    for name in ['worker.py', 'resource_policy.py']:
+    for name in ['worker.py', 'resource_policy.py', 'shinhan_repl.py']:
         source = Path(__file__).with_name(name).resolve()
         destination = support / name
         temporary = support / (name + '.new')
@@ -76,9 +76,10 @@ def main() -> None:
         raise RuntimeError('실행기 파일이 달라 설치를 중단했습니다.')
     if not target.exists():
         target.write_bytes(source.read_bytes()); target.chmod(0o600)
-    policy = support / 'resource_policy.py'
-    if not policy.exists():
-        policy.write_bytes(Path(__file__).with_name('resource_policy.py').read_bytes()); policy.chmod(0o600)
+    for name in ['resource_policy.py', 'shinhan_repl.py']:
+        companion = support / name
+        if not companion.exists():
+            companion.write_bytes(Path(__file__).with_name(name).read_bytes()); companion.chmod(0o600)
     if intent['phase'] == 'prepared':
         if state.exists():
             pair = read_private(state)

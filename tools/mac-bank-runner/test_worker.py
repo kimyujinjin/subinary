@@ -292,7 +292,7 @@ class LoginBrokerTests(unittest.TestCase):
                 if credentials:
                     value = credentials(); self.assertEqual(value['password'], self.raw['password']); value.clear()
                 return {'outcome': 'authentication_required', 'errorCode': 'authentication_required', 'logoutConfirmed': False, 'observations': []}
-            args = SimpleNamespace(state=state_path, codex='fixture')
+            args = SimpleNamespace(state=state_path, codex='fixture', engine='codex')
             with patch.object(worker, 'codex_phase', side_effect=phase):
                 worker.run_phase(args, api, job, state)
                 job['continueVersion'] = 1
