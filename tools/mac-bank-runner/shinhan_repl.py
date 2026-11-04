@@ -35,7 +35,10 @@ CREDENTIAL_CONTEXT = ('오류', '일치', '횟수', '잠금', '정지', '초과'
 AUTH_WORDS = ('추가인증', '추가 인증', '본인확인', 'OTP', 'ARS', '보안매체', '휴대폰', '인증')
 LOADING_WORDS = ('처리중', '처리 중', '잠시')
 LAYER_WORDS = (*CREDENTIAL_WORDS, *CREDENTIAL_CONTEXT, *AUTH_WORDS, *LOADING_WORDS,
-               '동시', '중복', '보안프로그램', '설치', '점검', '공지', '만료', '변경')
+               '동시', '중복', '보안프로그램', '설치', '점검', '공지', '만료', '변경', '제한', '서비스', '로그인', '실패', '올바르지', '입력')
+# 'ID 로그인'을 누르면 은행이 먼저 띄우는 안내(2026-11-04 확인). [확인]을 눌러야 로그인이 진행된다. 이 안내에서만 [확인]을 누른다.
+ID_LOGIN_NOTICE = ('ID로그인', '서비스가 제한')
+MAX_NOTICE_CONFIRMS = 2
 
 
 class ReplFailure(Exception):
@@ -178,12 +181,13 @@ const moaLoginReady = () => ['ibx_loginId', '비밀번호', 'btn_idLogin'].every
 const moaKeypadOpen = () => { const k = document.getElementById('비밀번호_mainDiv'); if (!k) return false; const r = k.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
 const moaPwLength = () => { const e = document.getElementById('비밀번호'); return e ? e.value.length : -1; };
 const moaTrapDialogs = () => { const kind = (m) => { m = String(m); if (/비밀번호/.test(m) && /(일치|오류|틀|잘못)/.test(m)) return 'password'; if (/(아이디|이용자\s*ID)/i.test(m) && /(일치|오류|틀|잘못|없|존재|등록되지)/.test(m)) return 'login_id'; if (/인증/.test(m)) return 'auth'; return 'other'; }; window.__moaAlerts = []; window.alert = (m) => { window.__moaAlerts.push(kind(m)); }; window.confirm = (m) => { window.__moaAlerts.push(kind(m)); return false; }; return true; };
-const moaLoginState = () => { const vis = (e) => { const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'; }; const words = __WORDS__; const b = document.getElementById('btn_logout'); const layers = [...document.querySelectorAll('.w2modal_popupLayer, [role="dialog"], [role="alertdialog"]')].filter(vis).map((e) => (e.innerText || '').replace(/\s+/g, ' ').trim()).filter((t) => t.length > 0); return { loggedIn: !!b && vis(b), hash: location.hash, loginForm: !!document.getElementById('ibx_loginId'), layers: layers.length, hits: words.filter((w) => layers.some((t) => t.includes(w))), alerts: (window.__moaAlerts || []).slice(0, 10) }; };
+const moaLoginState = () => { const vis = (e) => { const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'; }; const words = __WORDS__; const notice = __NOTICE__; const b = document.getElementById('btn_logout'); const texts = [...document.querySelectorAll('.w2modal_popupLayer, [role="dialog"], [role="alertdialog"]')].filter(vis).map((e) => (e.innerText || '').replace(/\s+/g, ' ').trim()).filter((t) => t.length > 0); const isNotice = (t) => notice.every((w) => t.includes(w)); const layers = texts.filter((t) => !isNotice(t)); return { loggedIn: !!b && vis(b), hash: location.hash, loginForm: !!document.getElementById('ibx_loginId'), notice: texts.some(isNotice), layers: layers.length, hits: words.filter((w) => layers.some((t) => t.includes(w))), alerts: (window.__moaAlerts || []).slice(0, 10) }; };
+const moaMarkNotice = () => { const vis = (e) => { const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'; }; const notice = __NOTICE__; document.querySelectorAll('[data-moa-confirm]').forEach((e) => e.removeAttribute('data-moa-confirm')); const layer = [...document.querySelectorAll('.w2modal_popupLayer')].filter(vis).find((e) => { const t = (e.innerText || '').replace(/\s+/g, ' '); return notice.every((w) => t.includes(w)); }); if (!layer) return false; const ok = [...layer.querySelectorAll('a, button, input[type="button"]')].filter((e) => vis(e) && (e.innerText || e.value || '').trim() === '확인'); if (ok.length !== 1) return false; ok[0].setAttribute('data-moa-confirm', '1'); return true; };
 const moaDeposits = () => { const t = document.getElementById('grd_list_01_body_table'); if (!t) return null; const f = document.getElementById('grd_list_01_foot_table'); const rows = [...t.querySelectorAll('tr')].filter((r) => r.querySelector('td[col_id="잔액_display"]')).map((r) => { const c = (k) => { const e = r.querySelector('td[col_id="' + k + '"]'); return e ? e.textContent.trim() : ''; }; return { number: c('계좌번호_view'), amount: c('잔액_display') }; }); return rows.length || /[0-9]/.test(f ? f.textContent : '') ? { rows } : null; };
 const moaLoans = () => { const t = document.getElementById('grd_list03_body_table'); if (!t) return null; const f = document.getElementById('grd_list03_foot_table'); const rows = [...t.querySelectorAll('tr')].filter((r) => r.querySelector('td[col_id="대출잔액_display"]')).map((r) => { const c = (k) => { const e = r.querySelector('td[col_id="' + k + '"]'); return e ? e.textContent.trim() : ''; }; return { name: c('계좌명_display'), number: c('대출계좌번호_view'), maturity: c('대출만기일_display'), amount: c('대출잔액_display') }; }); const empty = [...document.querySelectorAll('[id^="grd_list03"]')].some((e) => /없습니다/.test(e.textContent)); return rows.length || empty || /[0-9]/.test(f ? f.textContent : '') ? { rows } : null; };
 const moaLoggedOut = () => { const t = ((document.body && document.body.innerText) || '').replace(/\s+/g, ' '); const b = document.getElementById('btn_logout'); const r = b ? b.getBoundingClientRect() : null; return /로그아웃 되었습니다/.test(t) && !(r && r.width > 0 && r.height > 0); };
 moaEmit({ ready: true });
-'''.replace('__WORDS__', json.dumps(LAYER_WORDS, ensure_ascii=False))
+'''.replace('__WORDS__', json.dumps(LAYER_WORDS, ensure_ascii=False)).replace('__NOTICE__', json.dumps(ID_LOGIN_NOTICE, ensure_ascii=False))
 
 FIND = '''/*moa:find*/ await (async () => {
 const tabs = (await listBrowserTabs()).filter((t) => moaBank(t.url)); let hit = null;
@@ -227,16 +231,24 @@ await moaClick(p.locator('#btn_idLogin')); moaEmit({ submitted: true }); })();''
 # 로그아웃 버튼이면 성공, 같은 레이어가 1초 이상 유지되면 메시지, 로그인 화면을 벗어난 채 3초 이상이면 이동으로 본다.
 # 판정(오류 종류)은 고정 어휘 적중만 받아 Python(login_verdict)에서 한다.
 RESULT = '''/*moa:result*/ await (async () => {
-const end = Date.now() + 25000; let out = null; let last = null; let seen = ''; let moved = 0;
+const end = Date.now() + 25000; let out = null; let last = null; let seen = ''; let moved = 0; let confirms = 0;
 const loading = __LOADING__;
 while (Date.now() < end && !out) { await sleep(500); if (!page || !moaBank(page.url())) continue;
 const v = await page.evaluate(moaLoginState).catch(() => null); if (!v) continue; last = v;
 if (v.loggedIn) { out = 'ok'; break; }
+if (v.notice) { if (confirms >= __MAX_CONFIRMS__ || !(await page.evaluate(moaMarkNotice).catch(() => false))) { out = 'message'; break; } await page.locator('[data-moa-confirm="1"]').click({ timeout: 5000 }).catch(() => null); confirms += 1; seen = ''; continue; }
 const key = v.layers + ':' + v.hits.join(',') + ':' + v.alerts.join(',');
 if ((v.layers > 0 && !v.hits.some((w) => loading.includes(w))) || v.alerts.length) { if (key === seen) out = 'message'; seen = key; } else seen = '';
 if (!out && v.hash !== moaBase.hash && !v.loginForm) { moved += 1; if (moved >= 6) out = 'moved'; } else moved = 0; }
-moaEmit({ result: out || 'timeout', hits: last ? last.hits : [], alerts: last ? last.alerts : [], hash: last ? last.hash : null, loginForm: last ? last.loginForm : null }); })();'''.replace(
-    '__LOADING__', json.dumps(LOADING_WORDS, ensure_ascii=False))
+moaEmit({ result: out || 'timeout', confirms, hits: last ? last.hits : [], alerts: last ? last.alerts : [], notice: last ? last.notice : null, hash: last ? last.hash : null, loginForm: last ? last.loginForm : null }); })();'''.replace(
+    '__LOADING__', json.dumps(LOADING_WORDS, ensure_ascii=False)).replace('__MAX_CONFIRMS__', str(MAX_NOTICE_CONFIRMS))
+
+# 세션이 연 탭 정리. 은행이 onbeforeunload를 걸면 세션 종료 때 탭이 닫히지 않는다(2026-11-04 확인).
+# 메인으로 이동해 입력값을 지운 뒤 핸들러를 해제한다. 세션이 연 탭에만 쓰고, 사용자가 로그인해 둔 탭에는 쓰지 않는다.
+CLEANUP = '''/*moa:cleanup*/ await (async () => {
+if (page && moaBank(page.url())) { await page.evaluate(() => { window.onbeforeunload = null; location.replace(__MAIN__); }).catch(() => null); await sleep(1500);
+await page.evaluate(() => { window.onbeforeunload = null; }).catch(() => null); }
+moaEmit({ cleaned: true }); })();'''.replace('__MAIN__', json.dumps(MAIN_URL))
 
 
 def login_verdict(value: dict[str, object]) -> str:
@@ -259,8 +271,11 @@ def diagnostic(step: str, code: str, value: dict[str, object] | None = None) -> 
     """실패 원인 추적용 기록. 고정 어휘 적중·hash·폼 여부만 담고 화면 원문·금액·계좌는 담지 않는다."""
     value = value or {}
     hits = [word for word in value.get('hits') or [] if word in LAYER_WORDS] if isinstance(value.get('hits'), list) else []
-    hash_value = value.get('hash')
-    return {'step': step, 'code': code, 'hits': hits,
+    alerts = [kind for kind in value.get('alerts') or [] if kind in {'password', 'login_id', 'auth', 'other'}] if isinstance(value.get('alerts'), list) else []
+    hash_value, confirms = value.get('hash'), value.get('confirms')
+    return {'step': step, 'code': code, 'hits': hits, 'alerts': alerts,
+            'notice': value.get('notice') if isinstance(value.get('notice'), bool) else None,
+            'confirms': confirms if type(confirms) is int else None,
             'hash': hash_value if isinstance(hash_value, str) and re.fullmatch(r'#?[0-9]{0,20}', hash_value) else None,
             'loginForm': value.get('loginForm') if isinstance(value.get('loginForm'), bool) else None}
 
@@ -410,7 +425,7 @@ def repl_phase(aside: str, check_active: Callable[[], None], credentials: Callab
     """worker의 codex_phase와 같은 결과 형식을 반환한다. 같은 작업 안에서 로그인을 다시 시도하지 않는다."""
     deadline = time.monotonic() + budget
     session = open_session() if open_session else ReplSession(aside)
-    logged_in = False
+    logged_in = own_tab = False
     step = 'start'
 
     def note(value: dict[str, object]) -> None:
@@ -446,6 +461,7 @@ def repl_phase(aside: str, check_active: Callable[[], None], credentials: Callab
             if credentials is None:
                 # 이어가기·로그인 정보 없음: 사용자가 Mac에서 직접 로그인한 탭이 있어야 한다.
                 return failed('authentication_required')
+            own_tab = True
             opened = call(OPEN, 45)
             logged_in = opened.get('loggedIn') is True
             if not logged_in:
@@ -493,4 +509,9 @@ def repl_phase(aside: str, check_active: Callable[[], None], credentials: Callab
             logout()
         raise
     finally:
+        if own_tab and not session.dead:
+            try:
+                session.call(CLEANUP, 10)  # 전체 기한과 무관하게 입력값 정리는 시도한다(guarded_phase 170초 안).
+            except ReplFailure:
+                pass
         session.close()

@@ -1,5 +1,7 @@
 """실제 은행·Aside 없이 repl 엔진의 입력 경계·판정·로그아웃을 검사한다."""
 import importlib.util
+import shutil
+import subprocess
 import itertools
 import json
 import os
@@ -86,6 +88,7 @@ class FakeBank:
         if step == 'deposits': return {'deposits': [dict(row) for row in self.deposits]}
         if step == 'loans': return {'loans': [dict(row) for row in self.loans]}
         if step == 'logout': return {'logout': self.logout}
+        if step == 'cleanup': return {'cleaned': True}
         raise AssertionError(step)
 
     def close(self) -> None:
@@ -171,7 +174,9 @@ class ReplPhaseTests(unittest.TestCase):
 
     def test_diagnostic_keeps_only_fixed_vocabulary(self):
         note = repl.diagnostic('result', 'timeout', {'hits': ['비밀번호', '이수빈 고객님', '110-123-456789'], 'hash': '#011100000000', 'loginForm': True})
-        self.assertEqual(note, {'step': 'result', 'code': 'timeout', 'hits': ['비밀번호'], 'hash': '#011100000000', 'loginForm': True})
+        self.assertEqual(note, {'step': 'result', 'code': 'timeout', 'hits': ['비밀번호'], 'alerts': [], 'notice': None, 'confirms': None,
+                                'hash': '#011100000000', 'loginForm': True})
+        self.assertEqual(repl.diagnostic('result', 'x', {'alerts': ['password', '원문 메시지'], 'notice': True, 'confirms': 2})['alerts'], ['password'])
         self.assertIsNone(repl.diagnostic('x', 'timeout', {'hash': '#abc<script>'})['hash'])
 
     def test_failure_step_is_noted(self):
@@ -197,7 +202,7 @@ class ReplPhaseTests(unittest.TestCase):
         bank = FakeBank(fail=('loans', 'unsupported_layout'))
         result = self.run_with(bank)
         self.assertEqual((result['errorCode'], result['logoutConfirmed']), ('unsupported_layout', True))
-        self.assertEqual(bank.steps()[-1], 'logout')
+        self.assertEqual(bank.steps()[-2:], ['logout', 'cleanup'])  # 세션이 연 탭은 로그아웃 뒤 정리한다.
 
     def test_timeout_kills_session_and_reports_timeout(self):
         bank = FakeBank(fail=('deposits', 'timeout'))
@@ -228,6 +233,65 @@ class ReplPhaseTests(unittest.TestCase):
             with self.subTest(row=row):
                 result = self.run_with(FakeBank(tab_logged_in=True, deposits=[row], loans=[]))
                 self.assertEqual((result['errorCode'], result['observations']), ('unsupported_layout', []))
+
+
+class CleanupTests(unittest.TestCase):
+    def test_own_tab_is_cleaned_even_after_rejection_but_user_tab_is_not(self):
+        rejected = FakeBank(result={'result': 'message', 'hits': ['비밀번호', '오류'], 'alerts': [], 'hash': '#011100000000', 'loginForm': True})
+        repl.repl_phase('aside', Mock(), Mock(return_value={'loginId': 'id', 'password': 'pw', 'credentialVersion': 1}), Mock(), worker.capture, LABELS, open_session=lambda: rejected)
+        self.assertEqual(rejected.steps()[-1], 'cleanup')
+        reused = FakeBank(tab_logged_in=True)
+        repl.repl_phase('aside', Mock(), None, Mock(), worker.capture, LABELS, open_session=lambda: reused)
+        self.assertNotIn('cleanup', reused.steps())
+
+
+NODE = shutil.which('node') or str(Path.home() / '.local/bin/node')
+HARNESS = r'''
+let now = 0; Date.now = () => now; globalThis.sleep = async (ms) => { now += ms; };
+const states = __STATES__; let index = 0; const clicks = []; const out = [];
+console.log = (line) => out.push(String(line));
+globalThis.page = { url: () => 'https://bank.shinhan.com/index.jsp#011100000000',
+  evaluate: async (fn) => fn === moaMarkNotice ? true : fn === moaLoginState ? states[Math.min(index++, states.length - 1)] : null,
+  locator: (selector) => ({ click: async () => { clicks.push(selector); } }) };
+'''
+
+
+@unittest.skipUnless(Path(NODE).exists(), 'node가 없어 JS 판정 루프를 건너뛴다')
+class ResultLoopTests(unittest.TestCase):
+    """RESULT 단계의 실제 JS를 가짜 page로 돌려 안내창 확인·메시지·이동·시간 초과를 검사한다."""
+    base = {'loggedIn': False, 'hash': '#011100000000', 'loginForm': True, 'notice': False, 'layers': 0, 'hits': [], 'alerts': []}
+
+    def run_loop(self, states):
+        code = '\n'.join([HARNESS.replace('__STATES__', json.dumps([dict(self.base, **s) for s in states], ensure_ascii=False)),
+                          repl.one_line(repl.HELPERS), "globalThis.moaBase = { hash: '#011100000000' };", repl.one_line(repl.RESULT),
+                          'process.stdout.write(JSON.stringify({ out, clicks }));'])
+        with tempfile.TemporaryDirectory() as folder:
+            script = Path(folder) / 'loop.mjs'; script.write_text(code)
+            done = subprocess.run([NODE, str(script)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        value = json.loads(done.stdout)
+        result = [line.split('MOA_RESULT ', 1)[1] for line in value['out'] if line.startswith('MOA_RESULT ') and 'result' in line]
+        return json.loads(result[-1]), value['clicks']
+
+    def test_id_login_notice_is_confirmed_then_login_succeeds(self):
+        result, clicks = self.run_loop([{'notice': True}, {'loggedIn': True}])
+        self.assertEqual((result['result'], result['confirms']), ('ok', 1))
+        self.assertEqual(clicks, ['[data-moa-confirm="1"]'])
+
+    def test_notice_that_never_closes_stops_after_two_confirms(self):
+        result, clicks = self.run_loop([{'notice': True}])
+        self.assertEqual((result['result'], len(clicks)), ('message', 2))
+        self.assertEqual(repl.login_verdict(result), 'authentication_required')
+
+    def test_stable_error_layer_is_a_message_and_loading_is_ignored(self):
+        result, _ = self.run_loop([{'layers': 1, 'hits': ['처리중']}, {'layers': 1, 'hits': ['처리중']}, {'layers': 1, 'hits': ['비밀번호', '오류']}, {'layers': 1, 'hits': ['비밀번호', '오류']}])
+        self.assertEqual(result['result'], 'message')
+        self.assertEqual(repl.login_verdict(result), 'credentials_invalid')
+
+    def test_leaving_login_page_is_moved_and_silence_is_timeout(self):
+        self.assertEqual(self.run_loop([{'hash': '#999900000000', 'loginForm': False}])[0]['result'], 'moved')
+        result, clicks = self.run_loop([{}])
+        self.assertEqual((result['result'], clicks), ('timeout', []))
 
 
 class KeypadTests(unittest.TestCase):
