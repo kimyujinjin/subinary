@@ -14,6 +14,30 @@ from worker import Api, ORIGIN, read_private, write_private
 LABEL = 'cloud.subinary.moa-bank-runner'
 
 
+def upgrade() -> None:
+    """등록·페어링을 그대로 두고 실행기와 자원 정책 파일만 바꾼 뒤 실행기를 다시 시작한다.
+
+    등록 파일(plist)은 바꾸지 않는다 — 실행 인자가 같으므로 같은 Mac 연결을 유지한다.
+    """
+    support = Path.home() / 'Library/Application Support/MoaBankRunner'
+    intent_path, target = support / 'install.json', support / 'worker.py'
+    if not intent_path.exists() or read_private(intent_path).get('phase') != 'registered':
+        raise RuntimeError('등록된 실행기가 없어 업그레이드하지 않았습니다. 먼저 설치해 주세요.')
+    if target.is_symlink():
+        raise RuntimeError('실행기 파일 경로를 확인해 주세요.')
+    for name in ['worker.py', 'resource_policy.py']:
+        source = Path(__file__).with_name(name).resolve()
+        destination = support / name
+        temporary = support / (name + '.new')
+        temporary.write_bytes(source.read_bytes()); temporary.chmod(0o600)
+        os.replace(temporary, destination)
+    intent = read_private(intent_path)
+    intent['workerSha256'] = hashlib.sha256(target.read_bytes()).hexdigest()
+    write_private(intent_path, intent)
+    subprocess.run(['/bin/launchctl', 'kickstart', '-k', 'gui/' + str(os.getuid()) + '/' + LABEL], check=True)
+    print('모아 Mac 실행기를 업그레이드하고 다시 시작했습니다.')
+
+
 def main() -> None:
     """정확히 같은 파일의 부분 설치만 재개하며 기존 외부 등록을 보존한다."""
     if sys.platform != 'darwin':
@@ -52,6 +76,9 @@ def main() -> None:
         raise RuntimeError('실행기 파일이 달라 설치를 중단했습니다.')
     if not target.exists():
         target.write_bytes(source.read_bytes()); target.chmod(0o600)
+    policy = support / 'resource_policy.py'
+    if not policy.exists():
+        policy.write_bytes(Path(__file__).with_name('resource_policy.py').read_bytes()); policy.chmod(0o600)
     if intent['phase'] == 'prepared':
         if state.exists():
             pair = read_private(state)
@@ -83,4 +110,5 @@ def main() -> None:
     print('모아 Mac 실행기를 등록했습니다. 표시된 모아 화면에서 이 Mac 연결을 승인해 주세요.')
 
 
-if __name__ == '__main__': main()
+if __name__ == '__main__':
+    upgrade() if sys.argv[1:] == ['--upgrade'] else main()

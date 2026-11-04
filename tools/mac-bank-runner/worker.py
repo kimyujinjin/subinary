@@ -24,7 +24,7 @@ from collections.abc import Callable
 from types import ModuleType
 
 ORIGIN = 'https://app.subinary.cloud'
-POLICY_SHA = '10adbc1aa523b6238b9141791846290b2c7bf834171abfa3ba438331eb676b15'
+POLICY_SHA = '6dda4ec73eab62578f6276a01192f8ef4f6df7d60a2a3dcf9352e85ac1856a7a'  # resource_policy.py(같은 폴더). 정책을 바꾸면 이 값도 바꾼다.
 ERRORS = {'authentication_required', 'network_error', 'unsupported_layout', 'runtime_unavailable', 'operation_unknown'}
 ACTIVE = {'claimed', 'running', 'authentication_required', 'reading', 'logging_out'}
 AMOUNT = re.compile(r'(?:0|[1-9][0-9]{0,19}|-[1-9][0-9]{0,19})\Z')
@@ -630,7 +630,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--state', required=True, type=Path)
     parser.add_argument('--codex', default='/Users/soobeen/.local/bin/codex')
-    parser.add_argument('--resource-policy', type=Path, default=Path('/Users/soobeen/Documents/Codex/2026-10-30/task/family-assets-release-validation/validation_resources.py'))
+    parser.add_argument('--resource-policy', type=Path, default=Path(__file__).resolve().with_name('resource_policy.py'))
     parser.add_argument('--pair', action='store_true')
     parser.add_argument('--once', action='store_true')
     parser.add_argument('--phase', action='store_true', help=argparse.SUPPRESS)
