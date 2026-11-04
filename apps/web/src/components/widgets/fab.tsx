@@ -20,9 +20,6 @@ export function Fab({
   className?: string;
 }) {
   return (
-    <>
-    {/* 목록 마지막 줄이 버튼에 가리지 않게 버튼 높이만큼 비운다. */}
-    <div aria-hidden="true" className="order-last h-16 shrink-0 lg:hidden" />
     <button
       type="button"
       aria-label={label}
@@ -36,6 +33,5 @@ export function Fab({
     >
       {children}
     </button>
-    </>
   );
 }

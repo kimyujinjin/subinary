@@ -248,6 +248,13 @@
 html.kb-open {
   --app-tabbar-h: 0px;
 }
+/* 떠 있는 버튼이 있는 화면은 목록 마지막 줄이 가리지 않게 버튼 높이만큼 더 비운다. */
+@media (max-width: 1023px) {
+  #app-main:has([data-fab]) {
+    padding-bottom: calc(var(--app-tabbar-h) + 5.5rem);
+  }
+}
+
 html.kb-open [data-bottom-nav],
 html.kb-open [data-fab] {
   display: none;

@@ -10,7 +10,7 @@ import type {
   ManualFinanceScope,
 } from "@family/contracts";
 import { Button } from "@/components/ui/button";
-import { EmptyState, StatusChip } from "@/components/widgets";
+import { EmptyState, Fab, StatusChip } from "@/components/widgets";
 import { connectionMoney } from "@/components/finance-connections/model";
 import { useAuth } from "@/lib/auth-context";
 import { useHousehold } from "@/lib/household-context";
@@ -19,7 +19,10 @@ import { useFinancialOverview } from "@/lib/loan-import-client";
 import { LoanOverviewRow } from "@/components/loan-import/loan-rows";
 import { ConnectionScreen, type ConnectionSnapshot } from "@/components/finance-connections/connection-screen";
 import { useUsdKrwReference } from "@/lib/fx-client";
-import { connectedHoldings, type ConnectedHolding } from "@/lib/net-worth";
+import { assetBreakdown, toHoldings, type ConnectedHolding } from "@/lib/net-worth";
+import { connectedAccountsKey, useConnectedAccounts } from "@/lib/connected-accounts-client";
+import { ConnectedSharingPrompt } from "@/components/connected-sharing";
+import { useQueryClient } from "@tanstack/react-query";
 import { BankConnectionScreen } from "@/components/finance-connections/bank-screen";
 import {
   ASSET_LABELS,
@@ -40,14 +43,19 @@ import { ManualAssetsSummary } from "@/components/manual-finance/asset-summary";
 import { AssetEditor } from "@/components/manual-finance/asset-editor";
 import { AssetAddSheet } from "@/components/manual-finance/asset-add-choices";
 
-/** 자산 목록 안의 연결 계좌 한 줄: 원화 환산 합계 + 통화별 내역. 나에게만 보인다. */
+/** 자산 목록 안의 연결 계좌 한 줄(본인 것 + 공유에 동의한 가족 것). 원화 환산 합계 + 통화별 내역. */
 function HoldingRow({ holding, fxRate, fxDate }: { holding: ConnectedHolding; fxRate: string | null; fxDate: string | null }) {
-  const parts = [
-    holding.krw !== null ? `국내 ${displayManualKrw(holding.krw)}` : null,
-    holding.usd !== null ? `미국 ${connectionMoney(holding.usd, "USD")}` : null,
-  ].filter(Boolean);
+  const parts =
+    holding.provider === "toss_securities"
+      ? [
+          holding.krw !== null ? `국내 ${displayManualKrw(holding.krw)}` : null,
+          holding.usd !== null ? `미국 ${connectionMoney(holding.usd, "USD")}` : null,
+        ].filter(Boolean)
+      : ["자동 조회"];
+  if (!holding.own) parts.unshift(holding.ownerName);
+  const href = holding.own ? `/more/connections?provider=${holding.provider}` : "/assets";
   return (
-    <Link href="/more/connections?provider=toss_securities" className="-mx-2 flex min-h-16 w-[calc(100%+1rem)] min-w-0 items-center justify-between gap-3 rounded-control px-2 py-3 hover:bg-muted/50">
+    <Link href={href} className="-mx-2 flex min-h-16 w-[calc(100%+1rem)] min-w-0 items-center justify-between gap-3 rounded-control px-2 py-3 hover:bg-muted/50">
       <span className="min-w-0 flex-1">
         <strong className="text-body block break-words font-semibold">{holding.label}</strong>
         <span className="text-caption text-muted-foreground block">{parts.join(" · ")}</span>
@@ -62,6 +70,10 @@ function HoldingRow({ holding, fxRate, fxDate }: { holding: ConnectedHolding; fx
             ? "환율 확인 중"
             : holding.usd !== null && fxRate && fxDate
             ? `$1 = ${Number(fxRate).toLocaleString("ko-KR", { maximumFractionDigits: 2 })}원 · ${fxDate.slice(5).replace("-", "/")}`
+            : holding.kind === "loan"
+            ? "남은 원금"
+            : holding.kind === "account"
+            ? "현재 잔액"
             : "현재 평가액"}
         </small>
       </span>
@@ -89,11 +101,18 @@ function ScopedAssets({
   const [notice, setNotice] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [connections, setConnections] = useState<ConnectionSnapshot | null>(null);
-  const onConnections = useCallback((snapshot: ConnectionSnapshot) => setConnections(snapshot), []);
+  const queryClient = useQueryClient();
+  const connected = useConnectedAccounts();
+  // 내 토스 연결은 이 화면을 열 때 새로 조회한다(ConnectionScreen headless). 새 값이 오면 가족 합산을 다시 읽는다.
+  const onConnections = useCallback(
+    (snapshot: ConnectionSnapshot) => {
+      if (snapshot.data) void queryClient.invalidateQueries({ queryKey: connectedAccountsKey(householdId, user?.id ?? null) });
+    },
+    [queryClient, householdId, user?.id]
+  );
   const fx = useUsdKrwReference();
-  // 연결 계좌는 따로 두지 않고 같은 목록·합계에 섞는다(§8). 원화 환산은 ECB 최근 영업일 기준환율.
-  const holdings = scope === "household" ? connectedHoldings(connections?.data ?? null, fx.data, connections?.uncertainId ?? null) : [];
+  // 연결 계좌는 따로 두지 않고 같은 목록·합계에 섞는다(§8). 본인 것 + 공유에 동의한 가족 것. 달러는 ECB 기준환율로 환산.
+  const holdings = scope === "household" ? toHoldings(connected.data?.holdings, fx.data) : [];
   const readSession = useRef(createManualSaveSession());
   const abort = useRef<AbortController | null>(null);
   useEffect(
@@ -141,7 +160,7 @@ function ScopedAssets({
     overview.data &&
       (overview.data.manualItems.length || overview.data.loanItems.length || holdings.length)
   );
-  const visibleHoldings = kind === "all" || kind === "stock" ? holdings : [];
+  const visibleHoldings = holdings.filter((holding) => kind === "all" || kind === holding.kind);
   const replacedManualIds = new Set(
     overview.data?.loanItems
       .filter(
@@ -184,19 +203,13 @@ function ScopedAssets({
         <h1 className="text-title">
           {scope === "household" ? "자산" : "비공개 자산"}
         </h1>
-        {canCreate ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="자산 추가"
-            className="-mr-2"
-            disabled={opening !== null}
-            onClick={openAdd}
-          >
-            <Plus />
-          </Button>
-        ) : null}
+
       </div>
+      {canCreate ? (
+        <Fab label="자산 추가" onClick={openAdd}>
+          <Plus />
+        </Fab>
+      ) : null}
       {canCreate ? (
         <AssetAddSheet
           open={addOpen}
@@ -230,8 +243,10 @@ function ScopedAssets({
               summary={overview.data.summary}
               scope={scope}
               holdings={holdings}
+              breakdown={assetBreakdown(overview.data.manualItems, overview.data.loanItems, holdings)}
             />
           ) : null}
+          {scope === "household" ? <ConnectedSharingPrompt /> : null}
           {overview.data.unresolvedLoans > 0 ? (
             <p role="status" className="text-caption text-warning-strong">
               확인이 필요한 대출 {overview.data.unresolvedLoans}건은 합계에서
@@ -277,7 +292,7 @@ function ScopedAssets({
                     (item) => item.kind === groupKind
                   );
                   const groupLoans = groupKind === "loan" ? importedLoans : [];
-                  const groupHoldings = groupKind === "stock" ? visibleHoldings : [];
+                  const groupHoldings = visibleHoldings.filter((holding) => holding.kind === groupKind);
                   if (!groupItems.length && !groupLoans.length && !groupHoldings.length) return null;
                   return (
                     <section

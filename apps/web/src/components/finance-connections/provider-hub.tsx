@@ -22,6 +22,7 @@ import { bankConnectionsApi } from "@/lib/bank-connections-client";
 import { macBankRunnerApi } from "@/lib/mac-bank-runner-client";
 
 import { ConnectionScreen } from "./connection-screen";
+import { ConnectedSharingRow } from "@/components/connected-sharing";
 import { BankConnectionScreen } from "./bank-screen";
 import {
   CONNECTABLE_PROVIDERS,
@@ -230,6 +231,8 @@ function ProviderList({
           </div>
         ))}
       </nav>
+
+      <ConnectedSharingRow />
 
       <Link
         href="/assets/loan-records"
