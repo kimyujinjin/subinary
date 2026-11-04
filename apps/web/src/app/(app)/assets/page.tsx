@@ -3,21 +3,19 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Building2, ChevronRight, CreditCard, House, Plus } from "lucide-react";
+import { Building2, ChevronRight, CreditCard, HandCoins, House, PiggyBank, Plus, TrendingUp, Wallet } from "lucide-react";
 import type {
   ManualAsset,
   ManualAssetKind,
   ManualFinanceScope,
 } from "@family/contracts";
 import { Button } from "@/components/ui/button";
-import { EmptyState, Fab, StatusChip } from "@/components/widgets";
-import { connectionMoney } from "@/components/finance-connections/model";
+import { EmptyState, Fab, StatusChip, type ChipTone } from "@/components/widgets";
 import { useAuth } from "@/lib/auth-context";
 import { useHousehold } from "@/lib/household-context";
 import { useHouseholdMembers } from "@/lib/queries";
 import { manualFinanceApi, useManualAssets } from "@/lib/manual-finance-client";
 import { useFinancialOverview } from "@/lib/loan-import-client";
-import { LoanOverviewRow } from "@/components/loan-import/loan-rows";
 import { ConnectionScreen, type ConnectionSnapshot } from "@/components/finance-connections/connection-screen";
 import { useUsdKrwReference } from "@/lib/fx-client";
 import { assetBreakdown, toHoldings, type ConnectedHolding } from "@/lib/net-worth";
@@ -27,7 +25,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { BankConnectionScreen } from "@/components/finance-connections/bank-screen";
 import {
   ASSET_LABELS,
-  ASSET_VALUE_LABELS,
   createManualSaveSession,
   displayManualKrw,
   hideManualSharedEditor,
@@ -44,42 +41,63 @@ import { ManualAssetsSummary } from "@/components/manual-finance/asset-summary";
 import { AssetEditor } from "@/components/manual-finance/asset-editor";
 import { AssetAddSheet } from "@/components/manual-finance/asset-add-choices";
 
-/** 자산 목록 안의 연결 계좌 한 줄(본인 것 + 공유에 동의한 가족 것). 원화 환산 합계 + 통화별 내역. */
-function HoldingRow({ holding, fxRate, fxDate }: { holding: ConnectedHolding; fxRate: string | null; fxDate: string | null }) {
-  const parts =
-    holding.provider === "toss_securities"
-      ? [
-          holding.krw !== null ? `국내 ${displayManualKrw(holding.krw)}` : null,
-          holding.usd !== null ? `미국 ${connectionMoney(holding.usd, "USD")}` : null,
-        ].filter(Boolean)
-      : [`기준일 ${new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" }).format(new Date(holding.observedAt))}`];
-  parts.unshift(holding.ownerName);
-  const href = holding.own ? `/more/connections?provider=${holding.provider}` : "/assets";
-  return (
-    <Link href={href} className="-mx-2 flex min-h-16 w-[calc(100%+1rem)] min-w-0 items-center justify-between gap-3 rounded-control px-2 py-3 hover:bg-muted/50">
+/**
+ * 연결 계좌 부제의 금액 내역. 달러는 원화로 환산해 보여준다(§8).
+ * 한쪽 통화만 있으면 금액을 되풀이하지 않고 '미국 주식'처럼 종류만 적는다.
+ */
+function holdingDetail(holding: ConnectedHolding): string | null {
+  if (holding.provider !== "toss_securities") return null;
+  const domestic = holding.krw !== null && holding.krw !== "0";
+  if (holding.usd !== null && holding.usdInKrw === null) return "미국 주식 환율 확인 중";
+  if (domestic && holding.usdInKrw !== null) {
+    return `국내 ${displayManualKrw(holding.krw!)} · 미국 ${displayManualKrw(holding.usdInKrw.toString())}`;
+  }
+  return domestic ? "국내 주식" : holding.usdInKrw !== null ? "미국 주식" : null;
+}
+
+interface AssetRowData {
+  key: string;
+  title: string;
+  subtitle: string;
+  amount: bigint | null;
+  /** 합계에 들어가는 행인지(소계 계산용). */
+  counted: boolean;
+  chip: [ChipTone, string] | null;
+  onClick?: () => void;
+  href?: string;
+}
+
+const KIND_ICON: Record<ManualAssetKind, { icon: typeof Wallet; tone: string }> = {
+  account: { icon: Wallet, tone: "bg-chart-1/12 text-chart-1" },
+  saving: { icon: PiggyBank, tone: "bg-chart-2/12 text-chart-2" },
+  stock: { icon: TrendingUp, tone: "bg-chart-5/12 text-chart-5" },
+  loan: { icon: HandCoins, tone: "bg-chart-4/12 text-chart-4" },
+};
+
+/** 자산 목록 한 줄(§8): 종류 아이콘 · 이름 · 주인 · 금액. 문제 있을 때만 칩을 붙인다. */
+function AssetRow({ kind, row }: { kind: ManualAssetKind; row: AssetRowData }) {
+  const { icon: Icon, tone } = KIND_ICON[kind];
+  const body = (
+    <>
+      <span className={`flex size-10 shrink-0 items-center justify-center rounded-full ${tone}`} aria-hidden="true">
+        <Icon className="size-5" />
+      </span>
       <span className="min-w-0 flex-1">
-        <strong className="text-body block break-words font-semibold">{holding.label}</strong>
-        <span className="text-caption text-muted-foreground block">{parts.join(" · ")}</span>
-        {holding.stale ? <StatusChip className="mt-1">이전 조회</StatusChip> : null}
+        <span className="text-body block truncate font-semibold">{row.title}</span>
+        <span className="text-caption text-muted-foreground block truncate">{row.subtitle}</span>
       </span>
-      <span className="min-w-0 max-w-[55%] text-right">
-        <strong className="text-heading block break-all tabular-nums">
-          {holding.totalKrw === null ? "—" : displayManualKrw(holding.totalKrw.toString())}
-        </strong>
-        <small className="text-caption text-muted-foreground">
-          {holding.usd !== null && holding.usdInKrw === null
-            ? "환율 확인 중"
-            : holding.usd !== null && fxRate && fxDate
-            ? `$1 = ${Number(fxRate).toLocaleString("ko-KR", { maximumFractionDigits: 2 })}원 · ${fxDate.slice(5).replace("-", "/")}`
-            : holding.kind === "loan"
-            ? "남은 원금"
-            : holding.kind === "account"
-            ? "현재 잔액"
-            : "현재 평가액"}
-        </small>
+      <span className="flex shrink-0 flex-col items-end gap-1">
+        <span className={`text-body tabular-nums ${row.counted ? "font-semibold" : "text-muted-foreground"}`}>
+          {row.amount === null ? "미입력" : displayManualKrw(row.amount.toString())}
+        </span>
+        {row.chip ? <StatusChip tone={row.chip[0]}>{row.chip[1]}</StatusChip> : null}
       </span>
-    </Link>
+    </>
   );
+  const className = "-mx-2 flex min-h-16 w-[calc(100%+1rem)] min-w-0 items-center gap-3 rounded-control px-2 py-2.5 text-left hover:bg-muted/50";
+  if (row.href) return <Link href={row.href} className={className}>{body}</Link>;
+  if (row.onClick) return <button type="button" onClick={row.onClick} className={className}>{body}</button>;
+  return <div className={className}>{body}</div>;
 }
 
 const MANAGE_ROW =
@@ -292,74 +310,68 @@ function ScopedAssets({
               </div>
             ) : null}
             {items.length || importedLoans.length || visibleHoldings.length ? (
-              <div className="finance-panel min-w-0 px-5">
+              <div className="finance-panel min-w-0 px-5 pb-2">
                 {(
                   Object.entries(ASSET_LABELS) as Array<
                     [ManualAssetKind, string]
                   >
                 ).map(([groupKind, groupLabel]) => {
-                  const groupItems = items.filter(
-                    (item) => item.kind === groupKind
+                  const rows: AssetRowData[] = [
+                    ...items
+                      .filter((item) => item.kind === groupKind)
+                      .map((item): AssetRowData => {
+                        const replaced = replacedManualIds.has(item.id);
+                        return {
+                          key: item.id,
+                          title: item.label,
+                          subtitle: [ownerOf(item), opening === item.id ? "여는 중" : null].filter(Boolean).join(" · "),
+                          amount: item.amount === null ? null : BigInt(item.amount),
+                          counted: !replaced,
+                          chip: replaced ? ["neutral", "합계 제외"] : null,
+                          onClick: opening === null ? () => void open(item.id) : undefined,
+                        };
+                      }),
+                    ...(groupKind === "loan" ? importedLoans : []).map((item): AssetRowData => ({
+                      key: item.id,
+                      title: item.label,
+                      subtitle: [ownerOf(item), item.loanType === "jeonse" ? "전세 대출" : "중도금 대출"].filter(Boolean).join(" · "),
+                      amount: BigInt(item.outstandingPrincipalKrw),
+                      counted: item.includedInTotals,
+                      chip: item.includedInTotals ? null : ["attention", "합계 제외"],
+                      href: item.canEdit ? "/assets/loan-import" : undefined,
+                    })),
+                    ...visibleHoldings
+                      .filter((holding) => holding.kind === groupKind)
+                      .map((holding): AssetRowData => ({
+                        key: holding.id,
+                        title: holding.label,
+                        // 달러는 원화로 환산해 보여준다(§8). 환율이 없으면 그렇다고 적는다.
+                        subtitle: [holding.ownerName, holdingDetail(holding)].filter(Boolean).join(" · "),
+                        amount: holding.totalKrw,
+                        counted: true,
+                        chip: holding.stale ? ["neutral", "이전 조회"] : null,
+                        href: holding.own ? `/more/connections?provider=${holding.provider}` : undefined,
+                      })),
+                  ];
+                  if (!rows.length) return null;
+                  const subtotal = rows.reduce<bigint | null>(
+                    (sum, row) => (row.counted && row.amount !== null ? (sum ?? 0n) + row.amount : sum),
+                    null
                   );
-                  const groupLoans = groupKind === "loan" ? importedLoans : [];
-                  const groupHoldings = visibleHoldings.filter((holding) => holding.kind === groupKind);
-                  if (!groupItems.length && !groupLoans.length && !groupHoldings.length) return null;
                   return (
                     <section
                       key={groupKind}
-                      className="border-border/60 border-b last:border-0"
+                      className="border-border/60 border-b pb-1 last:border-0"
                       aria-label={`${groupLabel} 내역`}
                     >
-                      <h3 className="text-caption text-muted-foreground pt-4">
-                        {groupLabel} · {groupItems.length + groupLoans.length + groupHoldings.length}건
-                      </h3>
-                      {groupItems.map((item) => {
-                        const replaced = replacedManualIds.has(item.id);
-                        return (
-                          <button
-                            type="button"
-                            key={item.id}
-                            disabled={opening !== null}
-                            className="focus-visible:ring-ring -mx-2 flex min-h-16 w-[calc(100%+1rem)] min-w-0 items-center justify-between gap-3 rounded-control px-2 py-3 text-left hover:bg-muted/50 focus-visible:ring-2 focus-visible:outline-none disabled:opacity-60"
-                            onClick={() => void open(item.id)}
-                            aria-label={`${item.label} 상세`}
-                          >
-                            <span className="min-w-0 flex-1">
-                              <strong className="text-body block break-words font-semibold">
-                                {item.label}
-                              </strong>
-                              <span className="text-caption text-muted-foreground block">
-                                {ownerOf(item) ? `${ownerOf(item)} · ` : ""}기준일 {item.asOfDate ?? "미입력"}
-                                {opening === item.id ? " · 여는 중" : ""}
-                              </span>
-                              {replaced ? (
-                                <StatusChip className="mt-1">
-                                  새 대출로 대체 · 합계 제외
-                                </StatusChip>
-                              ) : null}
-                            </span>
-                            <span className="min-w-0 max-w-[55%] text-right">
-                              <strong
-                                className={`block break-all tabular-nums ${
-                                  replaced
-                                    ? "text-body text-muted-foreground font-medium"
-                                    : "text-heading"
-                                }`}
-                              >
-                                {displayManualKrw(item.amount)}
-                              </strong>
-                              <small className="text-caption text-muted-foreground">
-                                {ASSET_VALUE_LABELS[item.kind]}
-                              </small>
-                            </span>
-                          </button>
-                        );
-                      })}
-                      {groupLoans.map((item) => (
-                        <LoanOverviewRow key={item.id} item={item} owner={ownerOf(item)} />
-                      ))}
-                      {groupHoldings.map((holding) => (
-                        <HoldingRow key={holding.id} holding={holding} fxDate={fx.data?.asOfDate ?? null} fxRate={fx.data?.rate ?? null} />
+                      <div className="flex items-baseline justify-between gap-3 pt-4 pb-1">
+                        <h3 className="text-caption text-muted-foreground font-semibold">{groupLabel}</h3>
+                        <span className="text-caption text-muted-foreground tabular-nums">
+                          {subtotal === null ? "" : displayManualKrw(subtotal.toString())}
+                        </span>
+                      </div>
+                      {rows.map((row) => (
+                        <AssetRow key={row.key} kind={groupKind} row={row} />
                       ))}
                     </section>
                   );
