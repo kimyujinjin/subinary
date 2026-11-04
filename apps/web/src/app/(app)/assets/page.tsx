@@ -21,6 +21,7 @@ import { useUsdKrwReference } from "@/lib/fx-client";
 import { assetBreakdown, toHoldings, type ConnectedHolding } from "@/lib/net-worth";
 import { connectedAccountsKey, useConnectedAccounts } from "@/lib/connected-accounts-client";
 import { ConnectedSharingPrompt } from "@/components/connected-sharing";
+import { RefreshAllConnections } from "@/components/refresh-all-connections";
 import { useQueryClient } from "@tanstack/react-query";
 import { BankConnectionScreen } from "@/components/finance-connections/bank-screen";
 import {
@@ -227,6 +228,7 @@ function ScopedAssets({
         <h1 className="text-title">
           {scope === "household" ? "자산" : "비공개 자산"}
         </h1>
+        {scope === "household" && user ? <RefreshAllConnections householdId={householdId} userId={user.id} /> : null}
 
       </div>
       {canCreate ? (
