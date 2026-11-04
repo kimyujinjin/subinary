@@ -28,6 +28,11 @@ export function BottomSheet({
         <DialogPrimitive.Overlay className="data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/40" />
         <DialogPrimitive.Content
           aria-describedby={undefined}
+          // 첫 입력칸·접힘 요소에 포커스 테두리가 튀지 않게 시트 자체로 포커스를 옮긴다(스크린리더는 제목부터 읽는다).
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            (event.currentTarget as HTMLElement).focus();
+          }}
           className={cn(
             "bg-card text-card-foreground fixed z-50 flex flex-col gap-2 outline-none",
             "data-[state=open]:animate-in data-[state=closed]:animate-out duration-200",

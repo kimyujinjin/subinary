@@ -31,17 +31,17 @@ describe("connection screen presentation contract", () => {
   });
   it("separates KRW and USD rather than presenting a combined asset total", () => {
     const html = card();
-    expect(html).toContain("123,456.75 원");
-    expect(html).toContain("98.001 USD");
-    expect(html).toContain("증권사 평가 기준 시각");
-    expect(html).toContain("제공되지 않음");
+    expect(html).toContain("123,456.75원");
+    expect(html).toContain("$98.00");
+    expect(html).toContain("국내 주식");
+    expect(html).toContain("미국 주식");
     expect(html).not.toContain("총자산");
   });
   it("distinguishes missing values from provider-supplied zero", () => {
     const html = card({ snapshot: { ...item.snapshot!, totals: [{ currency: "KRW", marketValue: "0", afterCostValue: "0" }], items: [] } });
-    expect(html).toContain("0 원");
+    expect(html).toContain(">0원<");
     expect(html).toContain("조회 내역 없음");
-    expect(html).not.toContain("0 USD");
+    expect(html).not.toContain("$0.00");
     expect(html).toContain("조회된 보유 주식이 없어요");
   });
   it("retains stale values with a clear label for provider failure and unknown HTTP results", () => {
@@ -49,13 +49,13 @@ describe("connection screen presentation contract", () => {
     const html = card({}, true, true);
     expect(html).toContain("조회 확인 필요");
     expect(html).toContain("이전 조회 내역");
-    expect(html).toContain("123,456.75 원");
+    expect(html).toContain("123,456.75원");
   });
   it("labels a disabled service's saved snapshot as previous data", () => {
     const html = card({}, true, false, false);
     expect(html).toContain("이전 조회 내역");
-    expect(html).toContain("123,456.75 원");
-    expect(html).toContain("98.001 USD");
+    expect(html).toContain("123,456.75원");
+    expect(html).toContain("$98.00");
     expect(html).toContain("마지막 조회 성공");
   });
   it("requires explicit choice even when there is only one verified account", () => {

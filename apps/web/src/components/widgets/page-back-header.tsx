@@ -35,7 +35,7 @@ export function PageBackHeader({
   const pathname = usePathname();
 
   return (
-    <div className="flex items-start gap-2">
+    <div className="flex items-center gap-2">
       {/* 링크가 아니라 버튼인 이유: 목적지가 렌더 시점이 아니라 **누른 시점의 이동
           기록**에 따라 정해진다. 접근성용 이름은 아래 aria-label이 준다. */}
       <button
@@ -52,10 +52,10 @@ export function PageBackHeader({
       >
         <ArrowLeft className="size-5" />
       </button>
-      <div className="min-w-0 flex-1 pt-1">
-        <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
+      <div className="min-w-0 flex-1">
+        <h1 className="text-title truncate">{title}</h1>
         {subtitle ? (
-          <p className="text-muted-foreground text-sm">{subtitle}</p>
+          <p className="text-caption text-muted-foreground">{subtitle}</p>
         ) : null}
       </div>
       {action}
