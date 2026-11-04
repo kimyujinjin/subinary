@@ -3,9 +3,12 @@ import { bankConnectionErrorSchema, bankObservationSchema } from './bank-connect
 
 const uuid = z.string().uuid();
 const instant = z.string().datetime({ offset: true });
-/** 사용자에게 표시한 일회 조회 동의다. 로그인 정보 저장은 별도 설정 동의를 요구한다. */
-export const MAC_BANK_RUNNER_CONSENT_TEXT = '내 명의의 신한 통장·대출을 연결한 Mac의 Codex로 이번에 한 번 조회하고, 확인한 원화 잔액·대출 원금·만기일을 모아에 본인 전용으로 저장하는 데 동의해요. 별도 저장 설정에 동의한 로그인 정보가 있으면 이번 작업을 맡은 본인 Mac에 전달해 정상 은행 로그인에 사용해요. 추가 은행 인증은 은행 화면에서 직접 진행하며, 이체·상환·정기 조회는 허용하지 않아요.';
-export const MAC_BANK_RUNNER_CONSENT_VERSION = 2 as const;
+/**
+ * 사용자에게 표시한 일회 조회 동의다. 로그인 정보 저장은 별도 설정 동의를 요구한다.
+ * v3(2026-11-04): 조회 엔진을 특정하지 않는다(Codex 경로 제거). v2는 "Mac의 Codex로"였고 구버전 앱 요청으로 계속 받는다.
+ */
+export const MAC_BANK_RUNNER_CONSENT_TEXT = '내 명의의 신한 통장·대출을 연결한 Mac에서 이번에 한 번 조회하고, 확인한 원화 잔액·대출 원금·만기일을 모아에 본인 전용으로 저장하는 데 동의해요. 별도 저장 설정에 동의한 로그인 정보가 있으면 이번 작업을 맡은 본인 Mac에 전달해 정상 은행 로그인에 사용해요. 추가 은행 인증은 은행 화면에서 직접 진행하며, 이체·상환·정기 조회는 허용하지 않아요.';
+export const MAC_BANK_RUNNER_CONSENT_VERSION = 3 as const;
 /** 별도 저장 동의이며 일회 조회 동의나 Mac 연결 승인으로 대체하지 않는다. */
 export const MAC_BANK_CREDENTIAL_CONSENT_TEXT = '신한은행 아이디와 비밀번호를 모아 서버에 암호화해 저장하고, 내가 조회를 요청한 작업을 맡은 본인 Mac에 정상 은행 로그인을 위해 전달하는 데 동의해요. 은행 추가 인증은 직접 진행하며, 연결 해제나 로그인 정보 삭제 시 저장한 정보가 폐기돼요.';
 export const MAC_BANK_CREDENTIAL_CONSENT_VERSION = 1 as const;
@@ -32,7 +35,7 @@ export const macBankApproveSchema = z.object({ householdId: uuid, pairId: uuid, 
   grantMode: z.enum(['seven_days', 'until_revoked']).optional() }).strict();
 type MacBankApprove = z.infer<typeof macBankApproveSchema>;
 export const macBankScopeSchema = z.object({ householdId: uuid }).strict();
-export const macBankJobRequestSchema = z.object({ householdId: uuid, requestId: uuid, consentVersion: z.union([z.literal(1), z.literal(2)]).optional() }).strict();
+export const macBankJobRequestSchema = z.object({ householdId: uuid, requestId: uuid, consentVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional() }).strict();
 type MacBankJobRequest = z.infer<typeof macBankJobRequestSchema>;
 export const macBankClaimSchema = z.object({ claimId: uuid }).strict();
 type MacBankClaim = z.infer<typeof macBankClaimSchema>;
@@ -55,7 +58,7 @@ export const macBankJobStateSchema = z.enum(['queued', 'claimed', 'running', 'au
 export type MacBankJobState = z.infer<typeof macBankJobStateSchema>;
 const previousResult = z.object({ jobId: uuid, completedAt: instant, observations: z.array(bankObservationSchema).min(1).max(20) }).strict();
 export const macBankJobSchema = z.object({ id: uuid, householdId: uuid, ownerUserId: uuid, runnerId: uuid,
-  state: macBankJobStateSchema, claimId: uuid.nullable(), credentialVersion: credentialVersion.nullable().default(null), consentVersion: z.union([z.literal(1), z.literal(2)]).default(1), continueVersion: z.number().int().min(0).max(2_147_483_647),
+  state: macBankJobStateSchema, claimId: uuid.nullable(), credentialVersion: credentialVersion.nullable().default(null), consentVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]).default(1), continueVersion: z.number().int().min(0).max(2_147_483_647),
   errorCode: bankConnectionErrorSchema.nullable(), logoutConfirmed: z.boolean(), observations: z.array(bankObservationSchema).max(20),
   createdAt: instant, updatedAt: instant, expiresAt: instant,
   claimedAt: instant.nullable(), completedAt: instant.nullable() }).strict();

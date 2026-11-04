@@ -4,7 +4,7 @@ import { ConflictException, ForbiddenException, NotFoundException, ServiceUnavai
 import type { Db } from '@family/database';
 import type { ConfigService } from '@nestjs/config';
 import { FinanceVault } from '../finance-connections/finance-vault';
-import { macBankCredentialSaveSchema, macBankCredentialResultSchema, macBankJobSchema } from '@family/contracts';
+import { macBankJobRequestSchema, macBankCredentialSaveSchema, macBankCredentialResultSchema, macBankJobSchema } from '@family/contracts';
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { MacBankRunnerService } from './mac-bank-runner.service';
@@ -334,6 +334,14 @@ describe('Mac claim 전용 암호화 로그인 정보', () => {
     expect(result.loginId === login.loginId && result.password === login.password).toBe(true);
     expect(macBankCredentialResultSchema.safeParse(result).success).toBe(true);
     expect(rows.mock.calls.some(([, query]) => dialect.sqlToQuery(query as SQL).sql.includes('credential_delivered_at is null'))).toBe(true);
+  });
+  it('조회 동의 v3(엔진 중립 문구) 작업도 최초 claim에 한 번 전달한다', async () => {
+    const vault = testVault(), row = stored(vault);
+    const { service } = harness([...worker(), [boundJob({ consent_version: 3 })], [{ id: jobId }]], [[row]], vault);
+    const result = await service.retrieveCredentials(secret, jobId, { claimId, credentialVersion: 1 });
+    expect(result.password === login.password).toBe(true);
+    expect(macBankJobRequestSchema.safeParse({ householdId: home, requestId: jobId, consentVersion: 3 }).success).toBe(true);
+    expect(macBankJobRequestSchema.safeParse({ householdId: home, requestId: jobId, consentVersion: 4 }).success).toBe(false);
   });
   it('이미 전달됨·기존 수동작업·인증대기·재개·만료·다른 버전에는 전달하지 않는다', async () => {
     for (const change of [{ credential_delivered_at: now }, { credential_version: null }, { consent_version: 1 }, { state: 'authentication_required' },

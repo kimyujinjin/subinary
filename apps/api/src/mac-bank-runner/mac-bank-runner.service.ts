@@ -22,7 +22,7 @@ type RunnerRow = { id: string; secret_hash: string; user_code_hash: string; labe
 type JobRow = { id: string; runner_id: string; household_id: string; owner_user_id: string; member_id: string; member_joined_at: Time;
   state: MacBankJobState; claim_id: string | null; claimed_at: Time | null; expires_at: Time; continue_version: number;
   error_code: BankConnectionError | null; logout_confirmed: boolean; observations: unknown; completion_hash: string | null;
-  created_at: Time; updated_at: Time; completed_at: Time | null; credential_version?: number | null; credential_delivered_at?: Time | null; consent_version?: 1 | 2 };
+  created_at: Time; updated_at: Time; completed_at: Time | null; credential_version?: number | null; credential_delivered_at?: Time | null; consent_version?: 1 | 2 | 3 };
 type CredentialRow = { id: string; runner_id: string; household_id: string; owner_user_id: string; member_id: string;
   member_joined_at: Time; version: number; envelope: VaultEnvelope | null; updated_at: Time };
 const credentialPayload = macBankCredentialResultSchema.extend({ householdId: z.string().uuid(), memberId: z.string().uuid(),
@@ -54,7 +54,7 @@ export class MacBankRunnerService {
       return await this.db.transaction(async tx => {
         const [ready] = await this.rows<{ ready: boolean }>(tx, sql`select to_regclass('public.mac_bank_runners') is not null
           and to_regclass('public.mac_bank_runner_jobs') is not null
-          and exists(select 1 from public.mac_bank_runner_schema_migrations where version='mac-bank-runner-v3')
+          and exists(select 1 from public.mac_bank_runner_schema_migrations where version='mac-bank-runner-v4')
           and to_regclass('public.mac_bank_runner_credentials') is not null
           and exists(select 1 from pg_attribute where attrelid=to_regclass('public.mac_bank_runner_jobs') and attname='credential_version' and not attisdropped)
           and (select count(*) from pg_trigger where not tgisinternal and tgenabled in ('O','A')
@@ -195,7 +195,7 @@ export class MacBankRunnerService {
       await this.expire(tx, runner.owner_user_id!, now);
       const job = await this.workerJob(tx, runner, id, value.claimId);
       if (!['claimed', 'running'].includes(job.state) || job.continue_version !== 0 || job.credential_delivered_at
-        || job.credential_version !== value.credentialVersion || job.consent_version !== 2
+        || job.credential_version !== value.credentialVersion || (job.consent_version ?? 1) < 2
         || !macBankClaimLive(job.state, job.claim_id, value.claimId, date(job.expires_at), now)) throw conflict();
       const row = await this.credential(tx, runner);
       if (!row?.envelope || row.version !== value.credentialVersion) throw conflict();
@@ -302,7 +302,7 @@ export class MacBankRunnerService {
       if (!runner) throw new ServiceUnavailableException('연결한 Mac이 온라인인지 확인해 주세요.');
       const credentials = await this.credential(tx, runner);
       const [job] = await this.rows<JobRow>(tx, sql`insert into mac_bank_runner_jobs(id,runner_id,household_id,owner_user_id,member_id,member_joined_at,expires_at,credential_version,consent_version)
-        values(${value.requestId},${runner.id},${value.householdId},${user},${member.id},${iso(member.joined_at)},${new Date(now.getTime() + MAC_BANK_JOB_TTL_MS).toISOString()},${value.consentVersion === 2 && credentials?.envelope ? credentials.version : null},${value.consentVersion ?? 1}) returning *`);
+        values(${value.requestId},${runner.id},${value.householdId},${user},${member.id},${iso(member.joined_at)},${new Date(now.getTime() + MAC_BANK_JOB_TTL_MS).toISOString()},${(value.consentVersion ?? 1) >= 2 && credentials?.envelope ? credentials.version : null},${value.consentVersion ?? 1}) returning *`);
       return { job: this.dto(job) };
     });
   }
