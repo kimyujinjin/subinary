@@ -118,3 +118,14 @@ export function percent(
   const digits = opts?.digits ?? 1;
   return `${(ratio * 100).toFixed(digits)}%`;
 }
+
+/**
+ * 발신번호를 읽을 수 있게 쓴다(1661-7654). 카드사 이름은 응답에 없고, 번호로 카드사를
+ * 추측하면 틀린 이름을 붙일 수 있어 하지 않는다.
+ */
+export function formatSender(sender: string): string {
+  const digits = sender.replace(/\D/g, "");
+  if (digits === sender && /^1[5-9]\d{6}$/.test(digits)) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+  return sender;
+}
+
