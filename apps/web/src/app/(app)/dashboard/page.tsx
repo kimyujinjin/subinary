@@ -1,23 +1,56 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useMemo } from "react";
+import type { MemberColor, RecurringUpcomingResponse } from "@family/contracts";
 
 import { HomeConsumptionCard } from "@/components/home-consumption-card";
-import { HomeHousingCard } from "@/components/home-housing-card";
-import { HomeAssetSection, HomeBudgetSummary } from "@/components/home-summary-rows";
-import { useAuth } from "@/lib/auth-context";
-import { useHousehold } from "@/lib/household-context";
+import {
+  HomeMemberSplit,
+  HomeUpcoming,
+  HomeWeeklyRecap,
+} from "@/components/home-insight-sections";
+import { HomeBudgetSummary } from "@/components/home-summary-rows";
 import { useTodoCounts } from "@/components/widgets";
+import { useAuth } from "@/lib/auth-context";
 import { currentMonth } from "@/lib/format";
+import {
+  buildUpcomingRows,
+  lastWeekWindow,
+  paceText,
+  previousMonthToDate,
+  shiftMonth,
+  upcomingUntil,
+} from "@/lib/home-insights";
+import { useHousehold } from "@/lib/household-context";
 import { useManualHousingPlans } from "@/lib/manual-finance-client";
-import { useFinancialOverview } from "@/lib/loan-import-client";
 import { isMonthKey } from "@/lib/month";
-import { useAnalyticsMonths, useBudgets, useMonthly } from "@/lib/queries";
+import {
+  useAnalyticsMonths,
+  useBudgets,
+  useCardList,
+  useCards,
+  useCategoriesRange,
+  useHouseholdMembers,
+  useMembers,
+  useMonthly,
+  useMonthlyRange,
+} from "@/lib/queries";
+import {
+  fetchRecurringUpcoming,
+  recurringUpcomingQueryKey,
+} from "@/lib/recurring-api";
+import { useReviewRequests } from "@/lib/review-requests";
 
 const POLL_INTERVAL_MS = 60_000;
 
-/** 홈에서는 기록만 표시하며 잔액이나 거래를 변경하지 않는다. */
+/**
+ * 홈(2026-11-04 개편). 탭 첫 화면과 겹치는 바로가기(분석·카드 내역·순자산)는 두지 않고,
+ * 탭에 들어가야만 알 수 있는 것을 질문 순서대로 보여준다:
+ * 이번 달 괜찮나(사용액 + 지난달 이맘때) → 누가 썼나 → 예산 → 곧 나갈 돈 → 지난주.
+ * 홈에서는 기록만 표시하며 잔액이나 거래를 변경하지 않는다.
+ */
 export default function DashboardPage() {
   return (
     <Suspense fallback={null}>
@@ -33,14 +66,18 @@ function HomeView() {
   const selectedMonth = searchParams.get("month");
   const month =
     selectedMonth && isMonthKey(selectedMonth) ? selectedMonth : thisMonth;
-  // 자산 공개 범위는 기존 카드 내역의 공개 정책과 별도로 유지한다.
+  const isCurrentMonth = month === thisMonth;
   const scope = "household" as const;
   const { householdId } = useHousehold();
-  const { user } = useAuth();
-  const assets = useFinancialOverview(scope);
-  const housing = useManualHousingPlans(scope);
+  const { authedFetch } = useAuth();
+  // 창 계산 기준 시각. 창은 시간·날·주 단위로 내려 잡아 렌더마다 쿼리 키가 바뀌지 않는다.
+  const now = new Date();
+
   const monthly = useMonthly(month, { refetchInterval: POLL_INTERVAL_MS });
   const todo = useTodoCounts({ refetchInterval: POLL_INTERVAL_MS });
+  const requests = useReviewRequests(null, {
+    refetchInterval: POLL_INTERVAL_MS,
+  });
   const budgets = useBudgets(month);
   // 홈이 `?month=`를 읽기만 하고 바꿀 수단이 없었다 — 어떤 화면도 그 링크를 걸지
   // 않아 사실상 닿을 수 없는 파라미터였다. 분석·예산과 같은 스위처를 쓴다.
@@ -62,22 +99,100 @@ function HomeView() {
     },
     [router, thisMonth]
   );
-  const housingSummary = housing.data?.summary;
-  // 일정도 없고 빈 항목도 없으면 홈에서 주택 카드를 숨긴다(§5 홈 4). 불러오는 중·실패는 보여준다.
-  const showHousing =
-    housing.isPending ||
-    housing.isError ||
-    !!housingSummary?.nextPayment ||
-    !!housingSummary?.hasIncompletePayments;
+
+  // 페이스: 지난달 같은 시점까지의 합계. 지난달 기록이 아예 없으면 "더 썼어요"가 거짓이
+  // 되므로 묻지 않는다.
+  const previousMonth = shiftMonth(thisMonth, -1);
+  const hasPreviousMonth = availableMonths?.includes(previousMonth) ?? false;
+  const pace = useMonthlyRange(
+    isCurrentMonth && hasPreviousMonth ? previousMonthToDate(now) : null
+  );
+  const paceLine =
+    isCurrentMonth && pace.data && monthly.data
+      ? paceText(monthly.data.totalNet, pace.data.totalNet)
+      : null;
+
+  // 누가 썼나: 고른 달의 구성원별 집계. 색은 카드·거래 아이콘과 같은 구성원 색.
+  const members = useMembers(month);
+  const householdMembers = useHouseholdMembers();
+  const colorOf = useCallback(
+    (memberId: string): MemberColor | null =>
+      householdMembers.data?.find((member) => member.memberId === memberId)
+        ?.color ?? null,
+    [householdMembers.data]
+  );
+
+  // 지난주(월~일) — 이번 달을 볼 때만. 지난 달 화면에서 "지난주"는 뜻이 없다.
+  const week = lastWeekWindow(now);
+  const weekly = useMonthlyRange(isCurrentMonth ? week : null);
+  const weeklyCategories = useCategoriesRange(isCurrentMonth ? week : null);
+
+  // 다가오는 지출: 정기 결제(7일) · 카드 결제일(7일) · 주택 납부(30일).
+  const housing = useManualHousingPlans(scope);
+  const until = upcomingUntil(now);
+  const recurring = useQuery<RecurringUpcomingResponse>({
+    queryKey: recurringUpcomingQueryKey(householdId, until),
+    enabled: householdId != null && isCurrentMonth,
+    queryFn: () =>
+      authedFetch((token) =>
+        fetchRecurringUpcoming(token, householdId as string, until)
+      ),
+  });
+  const cardList = useCardList();
+  const billingCards = useMemo(
+    () =>
+      (cardList.data ?? []).filter(
+        (card) => card.status === "active" && card.billingDay != null
+      ),
+    [cardList.data]
+  );
+  const cardSpend = useCards(previousMonth, {
+    enabled: isCurrentMonth && billingCards.length > 0,
+  });
+  const lastMonthCardSpend = useMemo(
+    () =>
+      cardSpend.data
+        ? new Map(
+            cardSpend.data.items.flatMap((item) =>
+              item.cardId ? [[item.cardId, item.net] as const] : []
+            )
+          )
+        : null,
+    [cardSpend.data]
+  );
+  const upcomingRows = isCurrentMonth
+    ? buildUpcomingRows({
+        now,
+        recurring: recurring.data?.enabled ? recurring.data.items : [],
+        // 주택은 조회가 성공했을 때만 — 실패·로딩 중의 캐시 값을 일정처럼 말하지 않는다.
+        housing: housing.isSuccess ? housing.data.summary : null,
+        cards: billingCards.map((card) => ({
+          id: card.id,
+          alias: card.alias,
+          status: card.status,
+          billingDay: card.billingDay ?? null,
+        })),
+        lastMonthCardSpend,
+      })
+    : [];
+
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-4">
       <h1 className="sr-only">홈</h1>
       <HomeConsumptionCard
         month={month}
-        isCurrentMonth={month === thisMonth}
+        isCurrentMonth={isCurrentMonth}
         monthly={monthly.data}
         loading={monthly.isLoading}
         error={monthly.isError}
+        pace={paceLine}
+        requests={{
+          count:
+            requests.data?.items.filter((item) => item.direction === "received")
+              .length ?? 0,
+          loading: requests.isLoading,
+          error: requests.isError,
+        }}
         reviews={{
           count: todo.reviews.length,
           loading: todo.reviewsLoading,
@@ -93,24 +208,24 @@ function HomeView() {
         months={availableMonths}
         onMonthChange={changeMonth}
       />
-      {budgets.data ? <HomeBudgetSummary items={budgets.data.items} month={month} /> : null}
-      {showHousing ? (
-        <HomeHousingCard
-          scope={scope}
-          summary={housingSummary}
-          loading={housing.isPending}
-          error={housing.isError}
-        />
-      ) : null}
-      {householdId && user ? (
-      <HomeAssetSection
-        householdId={householdId}
-        userId={user.id}
-        summary={assets.data?.summary}
-        loading={assets.isPending}
-        error={assets.isError}
-        unresolvedLoans={assets.data?.unresolvedLoans}
+      <HomeMemberSplit
+        breakdown={members.data}
+        loading={members.isLoading}
+        error={members.isError}
+        colorOf={colorOf}
       />
+      {budgets.data ? (
+        <HomeBudgetSummary items={budgets.data.items} month={month} />
+      ) : null}
+      <HomeUpcoming rows={upcomingRows} />
+      {isCurrentMonth ? (
+        <HomeWeeklyRecap
+          week={week}
+          monthly={weekly.data}
+          categories={weeklyCategories.data}
+          loading={weekly.isLoading}
+          error={weekly.isError}
+        />
       ) : null}
     </div>
   );

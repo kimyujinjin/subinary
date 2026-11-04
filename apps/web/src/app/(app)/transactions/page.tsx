@@ -29,6 +29,7 @@ import type {
 import { DEFAULT_TIMEZONE } from "@family/shared";
 import { Plus, Search, X } from "lucide-react";
 
+import { ReviewRequestAction } from "@/components/review-request-action";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -1650,6 +1651,9 @@ function TransactionDetailDialog({
               {txn.memo ?? "아직 메모가 없어요"}
             </p>
           </div>
+
+          {/* 가족에게 물어보기(확인 요청) — 자기 훅을 쓰는 독립 컴포넌트 */}
+          <ReviewRequestAction txn={txn} disabled={busy} />
 
           {/* 보조 액션 */}
           <div className="flex flex-col gap-2">

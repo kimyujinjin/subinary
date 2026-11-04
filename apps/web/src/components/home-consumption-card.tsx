@@ -34,6 +34,17 @@ export interface HomeConsumptionCardProps {
    */
   months?: readonly string[];
   onMonthChange?: (month: string) => void;
+  /**
+   * 이번 달 페이스("지난달 이맘때보다 …"). 있으면 비교 줄을 이것으로 쓴다. 없으면(이번 달
+   * 첫 한 시간·지난달 기록 없음·과거 달) 기존 전월 비교로 돌아간다.
+   */
+  pace?: string | null;
+  /** 가족이 나에게 물어본 결제(확인 요청) 건수. 아는 경우에만 줄을 보인다. */
+  requests?: {
+    count: number;
+    loading: boolean;
+    error: boolean;
+  };
 }
 
 /**
@@ -69,14 +80,19 @@ export function HomeConsumptionCard({
   processing,
   months,
   onMonthChange,
+  pace,
+  requests,
 }: HomeConsumptionCardProps) {
   const reviewCount = visibleReviewCount(reviews);
   const processingCount = visibleReviewCount(processing);
+  const requestCount = requests ? visibleReviewCount(requests) : null;
   const amountKnown =
     !loading && !error && monthly != null && Number.isFinite(monthly.totalNet);
   const comparison = amountKnown
-    ? monthComparison(monthly, isCurrentMonth)
+    ? pace ?? monthComparison(monthly, isCurrentMonth)
     : null;
+  const hasRows =
+    requestCount !== null || reviewCount !== null || processingCount !== null;
   return (
     <section
       className="finance-panel panel-flush-top flex min-w-0 flex-col px-5 pt-1"
@@ -95,13 +111,6 @@ export function HomeConsumptionCard({
             {formatMonth(month)}
           </span>
         )}
-        <Link
-          href={`/ledger/analysis?month=${encodeURIComponent(month)}`}
-          className="text-caption text-muted-foreground hover:text-foreground -mr-2 inline-flex min-h-11 items-center gap-0.5 px-2 font-medium"
-          aria-label="카드 사용액 분석"
-        >
-          분석 <ChevronRight className="size-4" aria-hidden="true" />
-        </Link>
       </div>
       <h2
         id="home-consumption-heading"
@@ -135,47 +144,52 @@ export function HomeConsumptionCard({
       <p className="text-caption text-muted-foreground mt-1">
         {comparison ? `${comparison} · ` : ""}결제 취소 반영
       </p>
-      <div className="divide-border/60 mt-4 divide-y border-t border-border/60">
-        {reviewCount !== null ? (
-          <Link href={HOME_REVIEW_HREF} className={ROW}>
-            <span className="min-w-0 flex-1">
-              확인할 거래 {reviewCount.toLocaleString("ko-KR")}
-              {reviews.truncated ? "+" : ""}건
-            </span>
-            <span className="text-caption text-muted-foreground">
-              전체 기간
-            </span>
-            <ChevronRight
-              className="text-muted-foreground/60 size-5 shrink-0"
-              aria-hidden="true"
-            />
-          </Link>
-        ) : null}
-        {processingCount !== null ? (
-          <div role="status">
-            <Link href="/todo?section=processing" className={ROW}>
+      {hasRows ? (
+        <div className="divide-border/60 mt-4 divide-y border-t border-border/60">
+          {requestCount !== null ? (
+            <Link href="/todo?section=requests" className={ROW}>
               <span className="min-w-0 flex-1">
-                문자·환율 확인 대기 {processingCount.toLocaleString("ko-KR")}
-                {processing.truncated ? "+" : ""}건
+                가족이 물어본 결제 {requestCount.toLocaleString("ko-KR")}건
               </span>
               <ChevronRight
                 className="text-muted-foreground/60 size-5 shrink-0"
                 aria-hidden="true"
               />
             </Link>
-          </div>
-        ) : null}
-        <Link
-          href={`/transactions?month=${encodeURIComponent(month)}`}
-          className={ROW}
-        >
-          <span className="min-w-0 flex-1">카드 내역</span>
-          <ChevronRight
-            className="text-muted-foreground/60 size-5 shrink-0"
-            aria-hidden="true"
-          />
-        </Link>
-      </div>
+          ) : null}
+          {reviewCount !== null ? (
+            <Link href={HOME_REVIEW_HREF} className={ROW}>
+              <span className="min-w-0 flex-1">
+                확인할 거래 {reviewCount.toLocaleString("ko-KR")}
+                {reviews.truncated ? "+" : ""}건
+              </span>
+              <span className="text-caption text-muted-foreground">
+                전체 기간
+              </span>
+              <ChevronRight
+                className="text-muted-foreground/60 size-5 shrink-0"
+                aria-hidden="true"
+              />
+            </Link>
+          ) : null}
+          {processingCount !== null ? (
+            <div role="status">
+              <Link href="/todo?section=processing" className={ROW}>
+                <span className="min-w-0 flex-1">
+                  문자·환율 확인 대기 {processingCount.toLocaleString("ko-KR")}
+                  {processing.truncated ? "+" : ""}건
+                </span>
+                <ChevronRight
+                  className="text-muted-foreground/60 size-5 shrink-0"
+                  aria-hidden="true"
+                />
+              </Link>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="pb-4" />
+      )}
     </section>
   );
 }

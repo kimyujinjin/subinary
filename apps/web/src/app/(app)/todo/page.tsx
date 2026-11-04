@@ -29,6 +29,7 @@ import {
   CheckCircle2,
   CircleAlert,
   MailWarning,
+  MessageCircleQuestionMark,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -56,6 +57,7 @@ import {
   useCardSmsReviewGroups,
   useDisableSmsReviewPolicy,
 } from "@/lib/queries";
+import { useReviewRequests } from "@/lib/review-requests";
 import { Button } from "@/components/ui/button";
 import { transactionDetailHref } from "@/lib/deep-link";
 import {
@@ -70,6 +72,9 @@ import { postingMessage } from "@/lib/sms-posting";
 export default function TodoPage() {
   // 확정·제외 직후 캐시를 갱신하고, 문자 자동 정리가 대기 중이면 해당 묶음만 다시 읽는다.
   const todo = useTodoCounts();
+  // 가족이 나에게 물어본 결제(확인 요청). 내가 보낸 것은 결제 상세에서만 보인다.
+  const requests = useReviewRequests(null);
+  const received = (requests.data?.items ?? []).filter((item) => item.direction === "received");
   // 문자는 요약에 원문이 없어 상세를 따로 받아야 한다 → 고른 **한 건만** 넘긴다.
   const [selectedSms, setSelectedSms] = useState<string | null>(null);
   const smsGroups = useCardSmsReviewGroups();
@@ -92,12 +97,12 @@ export default function TodoPage() {
     }
   }, []);
   useEffect(() => {
+    const target = new URLSearchParams(window.location.search).get("section");
     if (
       !scrolledProcessing.current &&
-      new URLSearchParams(window.location.search).get("section") ===
-        "processing"
+      (target === "processing" || target === "requests")
     ) {
-      const section = document.getElementById("processing");
+      const section = document.getElementById(target);
       if (section) {
         section.scrollIntoView({ block: "start" });
         scrolledProcessing.current = true;
@@ -107,14 +112,17 @@ export default function TodoPage() {
     todo.processingLoading,
     todo.processing.length,
     todo.unpostedUnknown.length,
+    received.length,
   ]);
 
   const loading =
+    requests.isLoading ||
     todo.declinesLoading ||
     todo.reviewsLoading ||
     smsGroups.isLoading ||
     todo.unpostedLoading;
   const anyError =
+    requests.isError ||
     todo.declinesError ||
     todo.reviewsError ||
     smsGroups.isError ||
@@ -124,7 +132,8 @@ export default function TodoPage() {
   const showEmpty =
     !loading &&
     !anyError &&
-    todo.declines.length +
+    received.length +
+      todo.declines.length +
       todo.reviews.length +
       groups.length +
       todo.unpostedNeedsReview.length ===
@@ -192,6 +201,30 @@ export default function TodoPage() {
             />
           );
         })}
+      </Section>
+
+      {/* 가족이 물어본 결제 — 사람이 기다리는 일이라 결제 실패 다음에 둔다. 탭하면 결제 상세가
+          열리고 거기서 '확인했어요'를 누른다. */}
+      <Section
+        id="requests"
+        show={requests.isError || received.length > 0}
+        title="가족이 물어본 결제"
+        countText={pendingCountText(requests.isLoading, requests.isError, received.length, false)}
+        error={requests.isError}
+        errorText="물어본 결제를 불러오지 못했어요"
+      >
+        {received.map((item) => (
+          <ListRow
+            key={item.id}
+            href={transactionDetailHref(item.transactionId)}
+            icon={<MessageCircleQuestionMark />}
+            iconClassName="bg-accent text-accent-foreground"
+            title={item.merchant ?? "가맹점 미확인"}
+            subtitle={`${item.requesterName}님이 물어봤어요 · ${formatDate(item.occurredAt, { dateOnly: true })}`}
+            value={<Money amount={item.amount} currency={item.currency} />}
+            chevron
+          />
+        ))}
       </Section>
 
       {/* 2) 확인이 필요한 거래 — 탭하면 그 건의 상세가 바로 열린다(목록으로 보내면

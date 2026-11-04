@@ -303,6 +303,18 @@ export class NotificationDispatchProcessor extends WorkerHost {
       };
     }
 
+    if (data.kind === 'review') {
+      // 사람이 사람에게 보낸 확인 요청 — 받는 사람 1명. 결제 금액 필터(minAmount)는 적용하지
+      // 않는다: 가족이 물어본 것은 금액과 상관없이 전해져야 한다. 무음 시간대는 그대로 따른다.
+      return {
+        candidateUserIds: [data.userId],
+        channelId: NOTIFICATION_CHANNELS.review,
+        deepLink,
+        composeFor: () =>
+          composeReview(data.phase, data.actorName, data.merchant, data.amount, data.currency),
+      };
+    }
+
     // 여기까지 오면 kind가 새로 생겼는데 분기를 안 넣은 것이다. 예전에는 마지막
     // `return`이 암묵적으로 summary를 가정했고, 그러면 새 kind가 **조용히 잘못된
     // 문구로 발송된다** — P0-1(계약 5종 vs 발송 4종)이 그런 모양이었다. never 할당이
@@ -586,6 +598,23 @@ function composeUpcoming(
         ` (${excludedCount}건은 금액 미확인)`
       : `내일 ${count}건 ${formatMoney(totalAmount, 'KRW')} 빠져요`;
   return { title, body };
+}
+
+/**
+ * 가족 확인 요청 문구. 사람이 보낸 알림이라 보낸 사람 이름을 앞에 둔다. 가맹점을 모르면
+ * '결제'라고만 쓴다(추정해서 이름을 붙이지 않는다).
+ */
+export function composeReview(
+  phase: 'requested' | 'resolved',
+  actorName: string,
+  merchant: string | null,
+  amount: number,
+  currency: string,
+): { title: string; body: string } {
+  const what = `${merchant ?? '결제'} ${formatMoney(amount, currency)}`;
+  return phase === 'requested'
+    ? { title: '가족이 결제를 물어봤어요', body: `${actorName}님이 물어봤어요 · ${what}` }
+    : { title: '물어본 결제를 확인했어요', body: `${actorName}님이 확인했어요 · ${what}` };
 }
 
 /** 주간 소비 요약 문구. totalNet은 KRW 전용 집계(scheduler에서 통화 필터). */

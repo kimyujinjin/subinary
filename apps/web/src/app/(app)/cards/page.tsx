@@ -134,6 +134,9 @@ const VISIBILITY_LABEL: Record<CardVisibility, string> = {
   private: "나만 보기",
 };
 
+/** 결제일 선택지(매월 1~31일). 그 달에 없는 날은 말일로 본다. */
+const BILLING_DAYS = Array.from({ length: 31 }, (_, index) => index + 1);
+
 /** owner/admin 은 소유하지 않은 카드도 관리할 수 있다(서버 §5.1과 일치). */
 const MANAGER_ROLES = ["owner", "admin"] as const;
 
@@ -274,6 +277,8 @@ export default function CardsPage() {
    * 귀속을 보류하는 편이 사실에 가깝다. 금액을 지분으로 쪼개지는 않는다.
    */
   const [editIsShared, setEditIsShared] = useState(false);
+  /** 매월 결제일(""=선택 안 함). 홈 '다가오는 지출'이 결제일과 지난달 사용액을 보여준다. */
+  const [editBillingDay, setEditBillingDay] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
 
   // 상태 전환(비활성/재활성) 확인.
@@ -364,6 +369,7 @@ export default function CardsPage() {
     setEditVisibility(card.visibility);
     setEditOwnerMemberId(card.ownerMemberId);
     setEditIsShared(card.isShared);
+    setEditBillingDay(card.billingDay != null ? String(card.billingDay) : "");
     setEditError(null);
   }
 
@@ -389,6 +395,7 @@ export default function CardsPage() {
         // 소유자 변경 시 서버가 검증하고, 목록/폼 아이콘 색이 새 소유자 색으로 바뀐다.
         ownerMemberId: editOwnerMemberId || undefined,
         isShared: editIsShared,
+        billingDay: editBillingDay === "" ? null : Number(editBillingDay),
       },
     });
   }
@@ -705,7 +712,7 @@ export default function CardsPage() {
           <DialogHeader>
             <DialogTitle>카드 수정</DialogTitle>
             <DialogDescription>
-              별칭·소유자·공동사용 여부를 바꿀 수 있어요. 뒤 4자리는 카드 관리 메뉴의 ‘뒤 4자리 정정’에서 따로 확인해 주세요.
+              별칭·소유자·공동사용 여부·결제일을 바꿀 수 있어요. 뒤 4자리는 카드 관리 메뉴의 ‘뒤 4자리 정정’에서 따로 확인해 주세요.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onEditSubmit} className="flex flex-col gap-4" noValidate>
@@ -773,6 +780,28 @@ export default function CardsPage() {
                 {editVisibility === "private"
                   ? "나만 보기 카드는 함께 쓰는 카드로 표시할 수 없어요."
                   : "구성원별 지출에서 이 카드 결제를 '공용'으로 묶어요. 지난 달 기록에도 바로 적용되고, 끄면 되돌아가요."}
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="edit-billing-day">결제일</Label>
+              <Select
+                value={editBillingDay === "" ? "none" : editBillingDay}
+                onValueChange={(v) => setEditBillingDay(v === "none" ? "" : v)}
+              >
+                <SelectTrigger id="edit-billing-day" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">선택 안 함</SelectItem>
+                  {BILLING_DAYS.map((day) => (
+                    <SelectItem key={day} value={String(day)}>
+                      매월 {day}일
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-muted-foreground text-caption">
+                홈의 &lsquo;다가오는 지출&rsquo;에 결제일과 지난달 사용액을 보여줘요. 청구 금액은 카드사 이용기간에 따라 달라요.
               </p>
             </div>
             {editError ? (

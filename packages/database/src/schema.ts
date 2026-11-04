@@ -1002,6 +1002,8 @@ export const paymentCards = pgTable(
      * 과거까지 일관되게 바뀌고, 되돌리기는 플래그를 끄는 것으로 끝난다.
      */
     isShared: boolean('is_shared').notNull().default(false),
+    /** 매월 결제일(1~31, 0071). 홈 '다가오는 지출'용. 청구액은 계산하지 않는다. */
+    billingDay: integer('billing_day'),
     status: cardStatus('status').notNull().default('active'),
     createdBy: uuid('created_by')
       .notNull()
@@ -4890,6 +4892,26 @@ export const connectedAccountSharing = pgTable('connected_account_sharing', {
 }, (table) => [
   primaryKey({ columns: [table.householdId, table.userId] }),
   check('connected_account_sharing_version_check', sql`${table.consentVersion} > 0`),
+]);
+
+/**
+ * 가족에게 결제 물어보기(0072). 열린 요청은 (결제, 받는 사람)당 하나이며, 받은 사람이 확인하거나
+ * 물어본 사람이 취소하면 resolved_at이 채워진다. 거래 삭제 시 함께 지운다.
+ */
+export const transactionReviewRequests = pgTable('transaction_review_requests', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  householdId: uuid('household_id').notNull().references(() => households.id),
+  transactionId: uuid('transaction_id').notNull().references(() => cardTransactions.id, { onDelete: 'cascade' }),
+  requesterMemberId: uuid('requester_member_id').notNull().references(() => householdMembers.id),
+  assigneeMemberId: uuid('assignee_member_id').notNull().references(() => householdMembers.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  resolvedByMemberId: uuid('resolved_by_member_id').references(() => householdMembers.id),
+}, (table) => [
+  check('transaction_review_requests_distinct_check', sql`${table.requesterMemberId} <> ${table.assigneeMemberId}`),
+  check('transaction_review_requests_resolved_check', sql`(${table.resolvedAt} IS NULL) = (${table.resolvedByMemberId} IS NULL)`),
+  uniqueIndex('transaction_review_requests_open_unique').on(table.transactionId, table.assigneeMemberId).where(sql`${table.resolvedAt} IS NULL`),
+  index('transaction_review_requests_open_idx').on(table.householdId, table.assigneeMemberId, table.requesterMemberId).where(sql`${table.resolvedAt} IS NULL`),
 ]);
 
 /** A request starts pending once and becomes terminal once; terminal observations cannot be rewritten. */

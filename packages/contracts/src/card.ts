@@ -32,7 +32,13 @@ export const cardCreateRequestSchema = z.object({
 });
 export type CardCreateRequest = z.infer<typeof cardCreateRequestSchema>;
 
-/** `PATCH /v1/cards/:id` — update a card's alias, visibility, status, or owner. */
+/**
+ * 카드 결제일(매월 며칠). 홈 '다가오는 지출'이 결제일과 지난달 사용액을 보여준다(2026-11-04).
+ * 청구액은 계산하지 않는다 — 카드사마다 이용기간 규칙이 달라 틀린 금액이 된다.
+ */
+const billingDaySchema = z.number().int().min(1).max(31);
+
+/** `PATCH /v1/cards/:id` — update a card's alias, visibility, status, owner, or billing day. */
 export const cardUpdateRequestSchema = z.object({
   alias: z.string().min(1).max(100).optional(),
   visibility: cardVisibilitySchema.optional(),
@@ -42,6 +48,8 @@ export const cardUpdateRequestSchema = z.object({
   ownerMemberId: z.string().uuid().optional(),
   /** 공용 카드 표시 토글. */
   isShared: z.boolean().optional(),
+  /** 매월 결제일(1~31). null이면 지운다. 그 달에 없는 날은 말일로 본다. */
+  billingDay: billingDaySchema.nullable().optional(),
 });
 export type CardUpdateRequest = z.infer<typeof cardUpdateRequestSchema>;
 
@@ -72,6 +80,8 @@ export const cardSummarySchema = z.object({
    */
   isShared: z.boolean(),
   status: cardStatusSchema,
+  /** 매월 결제일. 입력하지 않았으면 null(구버전 응답에는 없을 수 있다). */
+  billingDay: billingDaySchema.nullable().optional(),
   createdAt: z.string(),
 });
 export type CardSummary = z.infer<typeof cardSummarySchema>;

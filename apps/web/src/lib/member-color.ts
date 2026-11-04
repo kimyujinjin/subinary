@@ -88,6 +88,20 @@ export function memberColorClass(
   return MEMBER_ICON_CLASSES[HASH_PALETTE[hash % HASH_PALETTE.length]];
 }
 
+/** memberId → 막대·점처럼 채운 색이 필요한 곳의 견본 색. 배정 규칙은 `memberColorClass`와 같다. */
+export function memberSwatchClass(
+  memberId: string | null | undefined,
+  color?: MemberColor | null,
+): string {
+  if (color) return MEMBER_COLOR_SWATCH_CLASSES[color];
+  if (!memberId) return "bg-muted-foreground/40";
+  let hash = 0;
+  for (let i = 0; i < memberId.length; i += 1) {
+    hash = (hash * 31 + memberId.charCodeAt(i)) >>> 0;
+  }
+  return MEMBER_COLOR_SWATCH_CLASSES[HASH_PALETTE[hash % HASH_PALETTE.length]];
+}
+
 /**
  * 공용(공동사용 카드) 버킷의 아이콘 색.
  *

@@ -33,6 +33,7 @@ import { RealtimeModule } from './realtime/realtime.module';
 import { OtaModule } from './ota/ota.module';
 import { FxModule } from './fx/fx.module';
 import { ConnectedAccountsModule } from './connected-accounts/connected-accounts.module';
+import { ReviewRequestsModule } from './review-requests/review-requests.module';
 import { RecurringModule } from './recurring/recurring.module';
 import { RetrievalModule } from './retrieval/retrieval.module';
 import { SlackModule } from './slack/slack.module';
@@ -73,6 +74,7 @@ const devOnlyModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
     OtaModule,
     FxModule,
     ConnectedAccountsModule,
+    ReviewRequestsModule,
     RecurringModule,
     RealtimeModule,
     NotificationsModule,

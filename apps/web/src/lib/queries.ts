@@ -184,11 +184,55 @@ export function useMembers(month?: string): UseQueryResult<MemberBreakdown> {
   });
 }
 
-export function useCards(month?: string): UseQueryResult<CardBreakdown> {
+/**
+ * 임의 기간 `[from, to)`의 지출 합계(홈 페이스·지난주). 창이 없으면 요청하지 않는다.
+ * 키는 `analytics`로 시작한다 — 카드·거래 변경 시 `["analytics"]` 무효화가 그대로 닿는다.
+ */
+export function useMonthlyRange(
+  range: { from: string; to: string } | null,
+): UseQueryResult<MonthlyAnalytics> {
+  const { householdId, authedFetch, enabled } = useHouseholdScope();
+  return useQuery({
+    queryKey: ["analytics", "monthly-range", householdId, range?.from ?? null, range?.to ?? null] as const,
+    enabled: enabled && range != null,
+    queryFn: () =>
+      authedFetch((token) =>
+        api.analytics.monthly(token, {
+          householdId: householdId as string,
+          from: range?.from,
+          to: range?.to,
+        }),
+      ),
+  });
+}
+
+/** 임의 기간의 카테고리별 지출(홈 지난주 회고). */
+export function useCategoriesRange(
+  range: { from: string; to: string } | null,
+): UseQueryResult<CategoryBreakdown> {
+  const { householdId, authedFetch, enabled } = useHouseholdScope();
+  return useQuery({
+    queryKey: ["analytics", "categories-range", householdId, range?.from ?? null, range?.to ?? null] as const,
+    enabled: enabled && range != null,
+    queryFn: () =>
+      authedFetch((token) =>
+        api.analytics.categories(token, {
+          householdId: householdId as string,
+          from: range?.from,
+          to: range?.to,
+        }),
+      ),
+  });
+}
+
+export function useCards(
+  month?: string,
+  opts?: { enabled?: boolean },
+): UseQueryResult<CardBreakdown> {
   const { householdId, authedFetch, enabled } = useHouseholdScope();
   return useQuery({
     queryKey: queryKeys.analytics("cards", householdId, month),
-    enabled,
+    enabled: enabled && (opts?.enabled ?? true),
     queryFn: () =>
       authedFetch((token) =>
         api.analytics.cards(token, {

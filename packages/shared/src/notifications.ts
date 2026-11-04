@@ -29,6 +29,11 @@ export const NOTIFICATION_CHANNELS = {
    * 만들 때 이 kind가 그 기반이 된다.
    */
   upcoming: 'upcoming',
+  /**
+   * 가족이 결제를 물어봤다 / 물어본 결제를 확인했다(2026-11-04 확인 요청). 사람이 사람에게
+   * 보내는 유일한 알림이라 시스템 알림(결제·예산)과 따로 끌 수 있게 채널을 나눈다.
+   */
+  review: 'review',
 } as const;
 
 export type NotificationKind = keyof typeof NOTIFICATION_CHANNELS;
@@ -55,6 +60,11 @@ export const NOTIFICATION_CHANNEL_META: readonly NotificationChannelMeta[] = [
     id: NOTIFICATION_CHANNELS.upcoming,
     name: '정기 결제 예고',
     description: '내일 나갈 정기 결제 안내',
+  },
+  {
+    id: NOTIFICATION_CHANNELS.review,
+    name: '확인 요청',
+    description: '가족이 물어본 결제와 그 답',
   },
 ];
 
@@ -144,6 +154,26 @@ export type NotificationDispatchJob =
       /** 금액을 세지 못해 합계에서 빠진 건수. 0이 아니면 문구가 그 사실을 말한다. */
       excludedCount: number;
       sentTokenIds?: string[];
+    }
+  | {
+      /**
+       * 가족이 결제 하나를 물어봤다(`requested`, 받는 사람에게) / 물어본 결제를 확인했다
+       * (`resolved`, 물어본 사람에게). 받는 사람은 항상 1명이다.
+       */
+      kind: 'review';
+      householdId: string;
+      userId: string;
+      requestId: string;
+      transactionId: string;
+      phase: 'requested' | 'resolved';
+      /** 행동한 사람(물어본 사람 / 확인한 사람)의 이름. */
+      actorName: string;
+      /** 표시용 가맹점명. 없으면 null. */
+      merchant: string | null;
+      /** 결제 금액(minor units). */
+      amount: number;
+      currency: string;
+      sentTokenIds?: string[];
     };
 
 /** kind → 알림 탭 시 이동할 앱 내 딥링크 경로. */
@@ -166,5 +196,8 @@ export function notificationDeepLink(job: NotificationDispatchJob): string {
       // 필터를 붙이지 않는다: P1-20("리마인더 딥링크가 이번 달 필터에 걸려 대상이 안
       // 보인다")이 그렇게 생겼다.
       return '/more/recurring';
+    case 'review':
+      // 결제 상세로 바로 연다 — 받은 사람은 거기서 '확인했어요'를, 물어본 사람은 결과를 본다.
+      return `/transactions?txn=${encodeURIComponent(job.transactionId)}`;
   }
 }

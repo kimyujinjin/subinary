@@ -61,6 +61,7 @@ function toCardSummary(card: schema.PaymentCard): CardSummary {
     visibility: card.visibility,
     isShared: card.isShared,
     status: card.status,
+    billingDay: card.billingDay ?? null,
     createdAt: card.createdAt.toISOString(),
   };
 }
@@ -307,6 +308,7 @@ export class CardService {
       isShared?: boolean;
       status?: schema.PaymentCard['status'];
       ownerMemberId?: string;
+      billingDay?: number | null;
       updatedAt: Date;
     } = { updatedAt: new Date() };
     if (input.isShared !== undefined) {
@@ -333,6 +335,10 @@ export class CardService {
     }
     if (input.status !== undefined) {
       patch.status = input.status;
+    }
+    // 결제일은 표시용 메타데이터다(홈 '다가오는 지출'). 거래·집계를 건드리지 않는다.
+    if (input.billingDay !== undefined) {
+      patch.billingDay = input.billingDay;
     }
     // 소유자 재지정: 같은 household의 활성 구성원만 허용. 아이콘 색이 새 소유자
     // 색으로 바뀐다. 권한은 위 isOwner/isManager 게이트를 그대로 따른다.

@@ -622,5 +622,6 @@ export * from './loan-import.js';
 export * from './finance-connections.js';
 export * from './bank-connections.js';
 export * from './mac-bank-runner.js';
+export * from './review-requests.js';
 export * from './fx.js';
 export * from './connected-accounts.js';

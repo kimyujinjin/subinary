@@ -14,7 +14,8 @@ import {
   CircleAlert,
   CircleCheck,
   CreditCard,
-type LucideIcon,
+  type LucideIcon,
+  MessageCircleQuestionMark,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
@@ -43,6 +44,8 @@ const KIND_META: Record<NotificationKind, KindMeta> = {
   decline: { icon: AlertTriangle, className: "bg-destructive/10 text-destructive" },
   // 예고는 경고가 아니다 — 아직 아무 일도 일어나지 않았으므로 중립 톤을 쓴다.
   upcoming: { icon: CalendarClock, className: "bg-accent text-accent-foreground" },
+  // 가족이 물어본 결제 — 사람이 보낸 알림이라 시스템 알림과 다른 아이콘을 쓴다.
+  review: { icon: MessageCircleQuestionMark, className: "bg-accent text-accent-foreground" },
 };
 
 /** 계약에 없는 kind용 중립 메타. */
