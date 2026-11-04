@@ -112,3 +112,55 @@ export function computeNetWorth(
   );
   return { assets, debt, net, partial };
 }
+
+export interface BreakdownPart {
+  key: string;
+  label: string;
+  /** 원 단위 합. 이 묶음에 금액이 하나도 없으면 null. */
+  amount: bigint | null;
+  /** 금액이 비어 있어 합계에서 빠진 항목 수. */
+  missing: number;
+}
+
+export interface AssetBreakdown {
+  assets: BreakdownPart[];
+  debts: BreakdownPart[];
+  assetsTotal: bigint | null;
+  debtsTotal: bigint | null;
+}
+
+const KIND_LABEL = { account: "통장·현금", saving: "적금", stock: "주식" } as const;
+
+/**
+ * 순자산이 어떻게 계산됐는지 보여주는 구성(§8 자산).
+ * 자산은 종류별(통장·현금·적금·주식 — 연결 계좌는 주식에 포함), 대출은 항목별로 묶는다.
+ * 합 규칙은 서버 요약과 같다: 금액이 비어 있는 항목은 0이 아니라 '빠진 항목'으로 센다.
+ */
+export function assetBreakdown(
+  manualItems: ReadonlyArray<{ id: string; kind: "account" | "saving" | "stock" | "loan"; label: string; amount: string | null }>,
+  loanItems: ReadonlyArray<{ id: string; label: string; outstandingPrincipalKrw: string; includedInTotals: boolean; totalMode?: string | null; replacesManualAssetId?: string | null }>,
+  holdings: readonly ConnectedHolding[]
+): AssetBreakdown {
+  const replaced = new Set(
+    loanItems.filter((loan) => loan.includedInTotals && loan.totalMode === "replacement").map((loan) => loan.replacesManualAssetId)
+  );
+  const add = (a: bigint | null, b: bigint | null) => (a === null ? b : b === null ? a : a + b);
+  const assets = (["account", "saving", "stock"] as const)
+    .map((kind): BreakdownPart => {
+      const rows = manualItems.filter((item) => item.kind === kind);
+      let amount = rows.reduce<bigint | null>((sum, item) => add(sum, item.amount === null ? null : BigInt(item.amount)), null);
+      if (kind === "stock") for (const holding of holdings) amount = add(amount, holding.totalKrw);
+      return { key: kind, label: KIND_LABEL[kind], amount, missing: rows.filter((item) => item.amount === null).length };
+    })
+    .filter((part) => part.amount !== null || part.missing > 0);
+  const debts: BreakdownPart[] = [
+    ...manualItems
+      .filter((item) => item.kind === "loan" && !replaced.has(item.id))
+      .map((item) => ({ key: item.id, label: item.label, amount: item.amount === null ? null : BigInt(item.amount), missing: item.amount === null ? 1 : 0 })),
+    ...loanItems
+      .filter((loan) => loan.includedInTotals)
+      .map((loan) => ({ key: loan.id, label: loan.label, amount: BigInt(loan.outstandingPrincipalKrw), missing: 0 })),
+  ];
+  const total = (parts: BreakdownPart[]) => parts.reduce<bigint | null>((sum, part) => add(sum, part.amount), null);
+  return { assets, debts, assetsTotal: total(assets), debtsTotal: total(debts) };
+}

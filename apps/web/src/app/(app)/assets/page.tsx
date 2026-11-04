@@ -10,7 +10,7 @@ import type {
   ManualFinanceScope,
 } from "@family/contracts";
 import { Button } from "@/components/ui/button";
-import { EmptyState, StatusChip } from "@/components/widgets";
+import { EmptyState, Fab, StatusChip } from "@/components/widgets";
 import { connectionMoney } from "@/components/finance-connections/model";
 import { useAuth } from "@/lib/auth-context";
 import { useHousehold } from "@/lib/household-context";
@@ -19,7 +19,7 @@ import { useFinancialOverview } from "@/lib/loan-import-client";
 import { LoanOverviewRow } from "@/components/loan-import/loan-rows";
 import { ConnectionScreen, type ConnectionSnapshot } from "@/components/finance-connections/connection-screen";
 import { useUsdKrwReference } from "@/lib/fx-client";
-import { connectedHoldings, type ConnectedHolding } from "@/lib/net-worth";
+import { assetBreakdown, connectedHoldings, type ConnectedHolding } from "@/lib/net-worth";
 import { BankConnectionScreen } from "@/components/finance-connections/bank-screen";
 import {
   ASSET_LABELS,
@@ -184,19 +184,13 @@ function ScopedAssets({
         <h1 className="text-title">
           {scope === "household" ? "자산" : "비공개 자산"}
         </h1>
-        {canCreate ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="자산 추가"
-            className="-mr-2"
-            disabled={opening !== null}
-            onClick={openAdd}
-          >
-            <Plus />
-          </Button>
-        ) : null}
+
       </div>
+      {canCreate ? (
+        <Fab label="자산 추가" onClick={openAdd}>
+          <Plus />
+        </Fab>
+      ) : null}
       {canCreate ? (
         <AssetAddSheet
           open={addOpen}
@@ -230,6 +224,7 @@ function ScopedAssets({
               summary={overview.data.summary}
               scope={scope}
               holdings={holdings}
+              breakdown={assetBreakdown(overview.data.manualItems, overview.data.loanItems, holdings)}
             />
           ) : null}
           {overview.data.unresolvedLoans > 0 ? (
