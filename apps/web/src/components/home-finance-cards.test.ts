@@ -2,7 +2,8 @@ import type { ManualAssetSummary, ManualHousingSummary, MonthlyAnalytics } from 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { HomeConsumptionCard, type HomeConsumptionCardProps } from "./home-consumption-card";
+import { HomeConsumptionCard, monthComparison, type HomeConsumptionCardProps } from "./home-consumption-card";
+import { assetOneLine } from "./home-summary-rows";
 import { HomeHousingCard } from "./home-housing-card";
 import { ManualAssetsSummary } from "./manual-finance/asset-summary";
 
@@ -165,5 +166,20 @@ describe("home housing summary evidence", () => {
       expect(html).not.toContain("예정된 납부 일정이 없어요");
       expect(html).toContain(state.error ? "납부 일정을 불러오지 못했어요" : "납부 일정을 불러오는 중이에요");
     }
+  });
+});
+
+describe("home one-line summaries", () => {
+  const empty: ManualAssetSummary = { currency: "KRW", grossAssets: null, debt: null, netAssets: null, assetsCompleteness: "empty", debtCompleteness: "empty", completeness: "empty", asOfDate: null, oldestAsOfDate: null, newestAsOfDate: null, mixedAsOfDates: false };
+  it("names unknown values instead of treating them as zero", () => {
+    expect(assetOneLine(empty)).toBe("등록된 자산이 없어요");
+    expect(assetOneLine({ ...empty, debt: "111440000", debtCompleteness: "complete", completeness: "partial" })).toBe("남은 대출 111,440,000원 · 자산 미입력");
+    expect(assetOneLine({ ...empty, grossAssets: "200000", debt: "100000", netAssets: "0", assetsCompleteness: "complete", debtCompleteness: "complete", completeness: "complete" })).toBe("순자산 0원");
+  });
+  it("does not compare an unfinished month against a finished one", () => {
+    expect(monthComparison({ ...monthly, totalNet: 1000, previousNet: 5000, deltaNet: -4000 }, true)).toBe("지난달 전체 5,000원");
+    expect(monthComparison({ ...monthly, totalNet: 1000, previousNet: 5000, deltaNet: -4000 }, false)).toBe("전달보다 4,000원 덜 썼어요");
+    expect(monthComparison({ ...monthly, totalNet: 9000, previousNet: 5000, deltaNet: 4000 }, false)).toBe("전달보다 4,000원 더 썼어요");
+    expect(monthComparison(monthly, false)).toBeNull();
   });
 });
