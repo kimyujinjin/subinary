@@ -44,9 +44,15 @@ function DialogOverlay({
   );
 }
 
+/**
+ * 모바일: 아래에서 올라오는 시트(화면 하단 안전 영역을 비우고 시트 안만 스크롤).
+ * sm 이상: 가운데 대화상자. 열 때는 시트 자체에 포커스를 둬 첫 버튼에 포커스 테두리가 뜨지 않게 한다.
+ */
 function DialogContent({
   className,
   children,
+  style,
+  onOpenAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content>) {
   return (
@@ -54,10 +60,20 @@ function DialogContent({
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
+        onOpenAutoFocus={(event) => {
+          onOpenAutoFocus?.(event);
+          if (event.defaultPrevented) return;
+          event.preventDefault();
+          (event.currentTarget as HTMLElement).focus();
+        }}
         className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 sm:max-w-lg",
+          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-50 grid w-full gap-4 overflow-y-auto overscroll-contain p-5 duration-200 outline-none",
+          "inset-x-0 bottom-0 max-h-[calc(100dvh-var(--safe-top)-1.5rem)] rounded-t-card data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom",
+          "sm:inset-x-auto sm:bottom-auto sm:top-[50%] sm:left-[50%] sm:max-h-[calc(100dvh-4rem)] sm:max-w-lg sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-card sm:p-6 sm:data-[state=open]:zoom-in-95 sm:data-[state=closed]:zoom-out-95",
           className,
         )}
+        // 하단 안전 영역(홈 인디케이터)만큼 비운다 — 호출부의 p-* 클래스가 덮어써도 유지되도록 inline으로.
+        style={{ paddingBottom: "max(1.25rem, calc(1rem + var(--safe-bottom)))", ...style }}
         {...props}
       >
         {children}

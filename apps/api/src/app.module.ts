@@ -31,6 +31,7 @@ import { ObservabilityModule } from './observability/observability.module';
 import { QueueModule } from './queue/queue.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { OtaModule } from './ota/ota.module';
+import { FxModule } from './fx/fx.module';
 import { RecurringModule } from './recurring/recurring.module';
 import { RetrievalModule } from './retrieval/retrieval.module';
 import { SlackModule } from './slack/slack.module';
@@ -69,6 +70,7 @@ const devOnlyModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
     BudgetsModule,
     // 정기 지출 Radar. 라우트는 붙지만 사용자 노출은 RECURRING_RADAR_ENABLED(기본 off)가 막는다.
     OtaModule,
+    FxModule,
     RecurringModule,
     RealtimeModule,
     NotificationsModule,

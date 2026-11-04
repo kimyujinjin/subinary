@@ -210,7 +210,7 @@ export function CollectSetupWizard({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto">
+      <DialogContent className="overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {received

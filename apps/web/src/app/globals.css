@@ -11,8 +11,10 @@
 :root {
   --radius: 1rem;
 
-  --background: #f4f6fa;
-  --foreground: #19283f;
+  /* 토스형 미니멀(docs/ux-renewal-2026-11.md §8): 모바일은 흰 바탕 + 섹션 사이 회색 띠(--band). */
+  --background: #ffffff;
+  --band: #f2f4f6;
+  --foreground: #191f28;
 
   --card: #ffffff;
   --card-foreground: #19283f;
@@ -22,11 +24,11 @@
   --primary: #2456cf;
   --primary-foreground: #ffffff;
 
-  --secondary: #edf1f7;
+  --secondary: #f2f4f6;
   --secondary-foreground: #40526c;
 
-  --muted: #edf1f7;
-  --muted-foreground: #59677c;
+  --muted: #f2f4f6;
+  --muted-foreground: #5d6876;
 
   --accent: #eaf0ff;
   --accent-foreground: #2456cf;
@@ -52,8 +54,8 @@
   --success-strong: #017044;
   --warning-strong: #b45309;
 
-  --border: #e3e8f0;
-  --input: #c4cede;
+  --border: #e5e8eb;
+  --input: #e5e8eb;
   --ring: #2456cf;
 
   --chart-1: #2456cf;
@@ -74,10 +76,11 @@
 
 /* --- 디자인 토큰 (다크) ---------------------------------------------------- */
 .dark {
-  --background: #101824;
+  --background: #131a25;
+  --band: #0b1018;
   --foreground: #eef3fc;
 
-  --card: #192538;
+  --card: #131a25;
   --card-foreground: #eef3fc;
   --popover: #25344b;
   --popover-foreground: #eef3fc;
@@ -159,6 +162,7 @@
   --text-micro--line-height: 0.875rem;
 
   --color-background: var(--background);
+  --color-band: var(--band);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
@@ -244,7 +248,8 @@
 html.kb-open {
   --app-tabbar-h: 0px;
 }
-html.kb-open [data-bottom-nav] {
+html.kb-open [data-bottom-nav],
+html.kb-open [data-fab] {
   display: none;
 }
 
@@ -252,6 +257,12 @@ html.kb-open [data-bottom-nav] {
 @layer base {
   * {
     @apply border-border outline-ring/50;
+  }
+  /* 입력 요소는 브라우저 기본 포커스 띠를 쓰지 않는다 — 각 컴포넌트가 1px 테두리로 포커스를 보여준다. */
+  input:focus,
+  select:focus,
+  textarea:focus {
+    outline: none;
   }
   html {
     color-scheme: light dark;
@@ -269,9 +280,37 @@ html.kb-open [data-bottom-nav] {
 }
 
 /* 핵심 금융 화면의 공통 표면. 카드 구분은 테두리가 아니라 배경 톤(background 위 card)으로 한다(§3.2). */
+/*
+ * 섹션 표면(§8 토스형 미니멀).
+ * 모바일: 화면 끝까지 펼친 흰 섹션 + 위쪽 회색 띠. 상자(둥근 모서리·배경 대비)를 쓰지 않는다.
+ * lg 이상: 회색 바탕 위 흰 둥근 카드(넓은 화면에서 끝없이 펼친 띠는 오히려 읽기 어렵다).
+ * 레이어 밖에 두어 shadcn Card의 유틸리티(border·shadow·rounded)보다 우선한다.
+ */
+:root {
+  --page-px: 1.25rem;
+}
 .finance-panel {
-  @apply rounded-card bg-card text-card-foreground;
-  /* shadcn Card와 함께 쓰여도 테두리·그림자가 되살아나지 않게 한다(레이어 밖이라 유틸리티보다 우선). */
+  @apply bg-card text-card-foreground;
   border-width: 0;
   box-shadow: none;
+  border-radius: 0;
+  margin-inline: calc(-1 * var(--page-px));
+  border-top: 10px solid var(--band);
+}
+/* 헤더 바로 밑 첫 섹션처럼 위에 띠가 필요 없는 곳에 명시적으로 붙인다. */
+.finance-panel.panel-flush-top {
+  border-top-width: 0;
+}
+@media (min-width: 1024px) {
+  :root {
+    --page-px: 2rem;
+  }
+  body {
+    background-color: var(--band);
+  }
+  .finance-panel {
+    margin-inline: 0;
+    border-top: 0;
+    border-radius: var(--radius-card);
+  }
 }

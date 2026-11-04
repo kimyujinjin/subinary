@@ -9,7 +9,6 @@ import {
   ChevronRight,
   CreditCard,
   Fingerprint,
-  Flag,
   KeyRound,
   Link2,
   LogOut,
@@ -20,7 +19,6 @@ import {
   Sparkles,
   Tags,
   Users,
-  Wallet,
   Wand2,
   type LucideIcon,
 } from "lucide-react";
@@ -88,14 +86,6 @@ const GROUPS: ReadonlyArray<MoreGroup> = [
     ],
   },
 ];
-const LEGACY_RECORDS_GROUP: MoreGroup = {
-  key: "legacy",
-  title: "보관한 기록",
-  items: [
-    { href: "/assets?scope=private", icon: Wallet, title: "비공개 자산" },
-    { href: "/plan?scope=private", icon: Flag, title: "비공개 주택 계획" },
-  ],
-};
 
 /** owner·admin에게만 보이는 운영 화면. 일반 목록과 섞지 않는다. */
 const OPERATIONS_GROUP: MoreGroup = {
@@ -124,14 +114,13 @@ function MoreSection({
   children,
 }: Readonly<{ group: MoreGroup; children?: ReactNode }>) {
   return (
-    <section className="flex min-w-0 flex-col gap-2">
-      <h2 className="text-caption text-muted-foreground px-1 font-semibold">{group.title}</h2>
-      <div className="finance-panel overflow-hidden py-1">
-        {group.items.map((item) => (
-          <MoreRow key={item.href} item={item} />
-        ))}
-        {children}
-      </div>
+    // 제목을 섹션 안에 둔다 — 밖에 두면 회색 띠가 제목과 목록 사이를 가른다(§8).
+    <section className="finance-panel min-w-0 overflow-hidden pt-4 pb-1">
+      <h2 className="text-caption text-muted-foreground px-5 pb-1 font-semibold">{group.title}</h2>
+      {group.items.map((item) => (
+        <MoreRow key={item.href} item={item} />
+      ))}
+      {children}
     </section>
   );
 }
@@ -265,7 +254,6 @@ export default function MorePage() {
           <MoreSection key={group.key} group={group} />
         )
       )}
-      <MoreSection group={LEGACY_RECORDS_GROUP} />
       {canViewOperations ? <MoreSection group={OPERATIONS_GROUP} /> : null}
     </div>
   );

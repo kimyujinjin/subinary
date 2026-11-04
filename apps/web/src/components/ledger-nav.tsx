@@ -41,7 +41,7 @@ export function LedgerNav({
   return (
     <nav
       aria-label="가계부 메뉴"
-      className="grid min-w-0 grid-cols-4 gap-1 rounded-control bg-muted p-1"
+      className="flex min-w-0 border-b border-border"
     >
       {ledgerNavItems(month).map((item) => {
         const badge = item.key === "todo" && pending > 0;
@@ -56,10 +56,11 @@ export function LedgerNav({
                 : undefined
             }
             className={cn(
-              "text-body flex min-h-10 min-w-0 items-center justify-center gap-1 rounded-sm px-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:px-2",
+              // 밑줄 탭(§8): 선택된 탭만 글자를 진하게 하고 아래에 2px 선을 긋는다.
+              "text-body relative -mb-px flex min-h-12 min-w-0 flex-1 items-center justify-center gap-1 px-1.5 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
               active === item.key
-                ? "bg-card text-foreground font-semibold"
-                : "text-muted-foreground hover:text-foreground hover:bg-card/50 font-medium"
+                ? "text-foreground font-semibold after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-foreground"
+                : "text-muted-foreground hover:text-foreground font-medium"
             )}
           >
             <span className="min-w-0 truncate">{item.label}</span>

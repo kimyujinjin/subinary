@@ -344,7 +344,7 @@ describe("manual recorded values", () => {
     expect(partial).toContain("자산 (일부 입력)");
     expect(partial).toContain("항목별 기준일");
     expect(partial).toContain("미입력");
-    expect(partial).toContain("순자산은 아직 계산하지 않았어요");
+    expect(partial).toContain("9,007,199,254,740,993원"); // 입력된 값만으로 계산한 순자산(§8)
     expect(partial).not.toContain("— 원");
     expect(partial).not.toContain(">0원<");
     expect(partial).toContain("9,007,199,254,740,993원");

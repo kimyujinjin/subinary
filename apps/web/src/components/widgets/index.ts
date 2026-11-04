@@ -27,3 +27,4 @@ export { StatusChip, type ChipTone } from "./status-chip";
 export { SectionHeader } from "./section-header";
 export { BottomSheet, SheetOption } from "./bottom-sheet";
 export { OverflowMenu, type OverflowAction } from "./overflow-menu";
+export { Fab } from "./fab";

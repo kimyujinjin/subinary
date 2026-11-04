@@ -170,7 +170,7 @@ function AppShell({ children }: Readonly<{ children: ReactNode }>) {
       <main
         id="app-main"
         tabIndex={-1}
-        className="min-w-0 flex-1 px-4 pt-5 pb-[calc(var(--app-tabbar-h)+1.5rem)] focus:outline-none lg:ml-52 lg:px-8 lg:pt-6 lg:pb-8"
+        className="min-w-0 flex-1 px-(--page-px) pt-4 pb-[calc(var(--app-tabbar-h)+1.5rem)] focus:outline-none lg:ml-52 lg:pt-6 lg:pb-8"
       >
         <PullToRefresh>
           <div className="mx-auto w-full max-w-6xl">{children}</div>

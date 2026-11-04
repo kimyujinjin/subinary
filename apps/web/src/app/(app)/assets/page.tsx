@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Building2, ChevronRight, CreditCard, House, Plus } from "lucide-react";
@@ -10,13 +10,16 @@ import type {
   ManualFinanceScope,
 } from "@family/contracts";
 import { Button } from "@/components/ui/button";
-import { BottomSheet, EmptyState, StatusChip } from "@/components/widgets";
+import { EmptyState, StatusChip } from "@/components/widgets";
+import { connectionMoney } from "@/components/finance-connections/model";
 import { useAuth } from "@/lib/auth-context";
 import { useHousehold } from "@/lib/household-context";
 import { manualFinanceApi, useManualAssets } from "@/lib/manual-finance-client";
 import { useFinancialOverview } from "@/lib/loan-import-client";
 import { LoanOverviewRow } from "@/components/loan-import/loan-rows";
-import { ConnectionScreen } from "@/components/finance-connections/connection-screen";
+import { ConnectionScreen, type ConnectionSnapshot } from "@/components/finance-connections/connection-screen";
+import { useUsdKrwReference } from "@/lib/fx-client";
+import { connectedHoldings, type ConnectedHolding } from "@/lib/net-worth";
 import { BankConnectionScreen } from "@/components/finance-connections/bank-screen";
 import {
   ASSET_LABELS,
@@ -36,6 +39,35 @@ import {
 import { ManualAssetsSummary } from "@/components/manual-finance/asset-summary";
 import { AssetEditor } from "@/components/manual-finance/asset-editor";
 import { AssetAddSheet } from "@/components/manual-finance/asset-add-choices";
+
+/** 자산 목록 안의 연결 계좌 한 줄: 원화 환산 합계 + 통화별 내역. 나에게만 보인다. */
+function HoldingRow({ holding, fxRate, fxDate }: { holding: ConnectedHolding; fxRate: string | null; fxDate: string | null }) {
+  const parts = [
+    holding.krw !== null ? `국내 ${displayManualKrw(holding.krw)}` : null,
+    holding.usd !== null ? `미국 ${connectionMoney(holding.usd, "USD")}` : null,
+  ].filter(Boolean);
+  return (
+    <Link href="/more/connections?provider=toss_securities" className="-mx-2 flex min-h-16 w-[calc(100%+1rem)] min-w-0 items-center justify-between gap-3 rounded-control px-2 py-3 hover:bg-muted/50">
+      <span className="min-w-0 flex-1">
+        <strong className="text-body block break-words font-semibold">{holding.label}</strong>
+        <span className="text-caption text-muted-foreground block">{parts.join(" · ")}</span>
+        {holding.stale ? <StatusChip className="mt-1">이전 조회</StatusChip> : null}
+      </span>
+      <span className="min-w-0 max-w-[55%] text-right">
+        <strong className="text-heading block break-all tabular-nums">
+          {holding.totalKrw === null ? "—" : displayManualKrw(holding.totalKrw.toString())}
+        </strong>
+        <small className="text-caption text-muted-foreground">
+          {holding.usd !== null && holding.usdInKrw === null
+            ? "환율 확인 중"
+            : holding.usd !== null && fxRate && fxDate
+            ? `$1 = ${Number(fxRate).toLocaleString("ko-KR", { maximumFractionDigits: 2 })}원 · ${fxDate.slice(5).replace("-", "/")}`
+            : "현재 평가액"}
+        </small>
+      </span>
+    </Link>
+  );
+}
 
 const MANAGE_ROW =
   "text-body hover:bg-muted/50 flex min-h-14 items-center gap-3 px-5 font-medium";
@@ -57,7 +89,11 @@ function ScopedAssets({
   const [notice, setNotice] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [basisOpen, setBasisOpen] = useState(false);
+  const [connections, setConnections] = useState<ConnectionSnapshot | null>(null);
+  const onConnections = useCallback((snapshot: ConnectionSnapshot) => setConnections(snapshot), []);
+  const fx = useUsdKrwReference();
+  // 연결 계좌는 따로 두지 않고 같은 목록·합계에 섞는다(§8). 원화 환산은 ECB 최근 영업일 기준환율.
+  const holdings = scope === "household" ? connectedHoldings(connections?.data ?? null, fx.data, connections?.uncertainId ?? null) : [];
   const readSession = useRef(createManualSaveSession());
   const abort = useRef<AbortController | null>(null);
   useEffect(
@@ -103,8 +139,9 @@ function ScopedAssets({
     kind === "all" || kind === "loan" ? overview.data?.loanItems ?? [] : [];
   const hasRecords = Boolean(
     overview.data &&
-      (overview.data.manualItems.length || overview.data.loanItems.length)
+      (overview.data.manualItems.length || overview.data.loanItems.length || holdings.length)
   );
+  const visibleHoldings = kind === "all" || kind === "stock" ? holdings : [];
   const replacedManualIds = new Set(
     overview.data?.loanItems
       .filter(
@@ -192,14 +229,7 @@ function ScopedAssets({
             <ManualAssetsSummary
               summary={overview.data.summary}
               scope={scope}
-              hasImportedBalance={overview.data.loanItems.some(
-                (item) => item.includedInTotals
-              )}
-              sourceLabel={
-                overview.data.loanItems.some((item) => item.includedInTotals)
-                  ? "직접 입력·이전 대출 기록"
-                  : "직접 입력"
-              }
+              holdings={holdings}
             />
           ) : null}
           {overview.data.unresolvedLoans > 0 ? (
@@ -236,7 +266,7 @@ function ScopedAssets({
                 ))}
               </div>
             ) : null}
-            {items.length || importedLoans.length ? (
+            {items.length || importedLoans.length || visibleHoldings.length ? (
               <div className="finance-panel min-w-0 px-5">
                 {(
                   Object.entries(ASSET_LABELS) as Array<
@@ -247,7 +277,8 @@ function ScopedAssets({
                     (item) => item.kind === groupKind
                   );
                   const groupLoans = groupKind === "loan" ? importedLoans : [];
-                  if (!groupItems.length && !groupLoans.length) return null;
+                  const groupHoldings = groupKind === "stock" ? visibleHoldings : [];
+                  if (!groupItems.length && !groupLoans.length && !groupHoldings.length) return null;
                   return (
                     <section
                       key={groupKind}
@@ -255,7 +286,7 @@ function ScopedAssets({
                       aria-label={`${groupLabel} 내역`}
                     >
                       <h3 className="text-caption text-muted-foreground pt-4">
-                        {groupLabel} · {groupItems.length + groupLoans.length}건
+                        {groupLabel} · {groupItems.length + groupLoans.length + groupHoldings.length}건
                       </h3>
                       {groupItems.map((item) => {
                         const replaced = replacedManualIds.has(item.id);
@@ -301,6 +332,9 @@ function ScopedAssets({
                       })}
                       {groupLoans.map((item) => (
                         <LoanOverviewRow key={item.id} item={item} />
+                      ))}
+                      {groupHoldings.map((holding) => (
+                        <HoldingRow key={holding.id} holding={holding} fxDate={fx.data?.asOfDate ?? null} fxRate={fx.data?.rate ?? null} />
                       ))}
                     </section>
                   );
@@ -348,7 +382,8 @@ function ScopedAssets({
           householdId={householdId}
           userId={user.id}
           canManage={canCreate}
-          presentation="asset-summary"
+          presentation="headless"
+          onSnapshot={onConnections}
         />
       ) : null}
       {scope === "household" && user ? (
@@ -378,29 +413,6 @@ function ScopedAssets({
           />
         </Link>
       </nav>
-      <button
-        type="button"
-        className="text-caption text-muted-foreground hover:text-foreground -ml-1 min-h-11 px-1"
-        onClick={() => setBasisOpen(true)}
-      >
-        합계 기준
-      </button>
-      <BottomSheet open={basisOpen} onOpenChange={setBasisOpen} title="합계 기준">
-        <div className="text-body text-muted-foreground space-y-3 pb-2">
-          <p>
-            직접 입력한 금액과 합계 반영을 선택한 신한 대출을 더해요. 기존
-            대출과 연결했다면 가져온 원금만 반영해요.
-          </p>
-          <p>
-            참고용·중복·확인이 필요한 대출, 카드 한도, 주택 계약금액, 적금 만기
-            예상액은 빼요.
-          </p>
-          <p>
-            가져온 대출은 화면을 확인한 시점의 남은 원금이에요. 은행·증권
-            연결 계좌는 따로 보여주고 합계에 더하거나 원화로 바꾸지 않아요.
-          </p>
-        </div>
-      </BottomSheet>
       {editor && !editorIsUnavailable && (editor !== "new" || canCreate) ? (
         <AssetEditor
           householdId={householdId}

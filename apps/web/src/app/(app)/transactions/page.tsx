@@ -60,7 +60,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ListRow, Money, StatusBadge, StatusChip, type ChipTone } from "@/components/widgets";
+import { Fab, ListRow, Money, StatusBadge, StatusChip, type ChipTone } from "@/components/widgets";
 import { LedgerHeader } from "@/components/ledger-header";
 import { ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
@@ -797,15 +797,10 @@ function TransactionsView() {
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
-      <LedgerHeader
-        active="transactions"
-        month={month}
-        action={
-          <Button size="icon" variant="ghost" className="-mr-2" aria-label="거래 추가" onClick={() => setAddOpen(true)}>
-            <Plus />
-          </Button>
-        }
-      />
+      <LedgerHeader active="transactions" month={month} />
+      <Fab label="거래 추가" onClick={() => setAddOpen(true)}>
+        <Plus />
+      </Fab>
 
       <TransactionFilters
         month={month}
@@ -910,8 +905,10 @@ function TransactionsView() {
             </div>
           ) : (
             <>
+              {/* 날짜마다 상자를 나누지 않고 한 섹션 안에 날짜 머리로 구분한다(§8). */}
+              <div className="finance-panel flex min-w-0 flex-col px-3 pb-2 sm:px-5">
               {groups.map((group) => (
-                <section key={group.key} className="finance-panel flex min-w-0 flex-col px-3 py-2 sm:px-5">
+                <section key={group.key} className="flex min-w-0 flex-col pt-2">
                   <div className="flex min-w-0 items-baseline justify-between gap-3 px-1 pt-3 pb-1 sm:px-2">
                     <h2 className="text-caption text-muted-foreground font-semibold">
                       {group.label}
@@ -996,6 +993,7 @@ function TransactionsView() {
                   </div>
                 </section>
               ))}
+              </div>
 
               {/* 무한 스크롤 sentinel: 뷰포트 진입 시 자동 로드(관찰 실패 대비 버튼 폴백) */}
               <div
@@ -1310,7 +1308,7 @@ function TransactionDetailDialog({
 
   return (
     <Dialog open onOpenChange={(v) => !v && requestClose()}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] grid-cols-[minmax(0,1fr)] gap-3 overflow-y-auto overscroll-contain p-4 [&>*]:min-w-0 sm:p-6">
+      <DialogContent className="grid-cols-[minmax(0,1fr)] gap-3 [&>*]:min-w-0">
         <DialogHeader>
           <DialogTitle className="break-words pr-6">{merchantLabel(txn)}</DialogTitle>
           <DialogDescription className="break-words">

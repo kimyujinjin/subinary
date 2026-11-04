@@ -8,7 +8,7 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="card"
       className={cn(
         // 카드 구분은 테두리가 아니라 배경 톤으로 한다(docs/ux-renewal-2026-11.md §3.2) — .finance-panel과 같은 모양.
-        "bg-card text-card-foreground rounded-card flex flex-col gap-4 py-5 shadow-none",
+        "finance-panel flex flex-col gap-4 py-5",
         className,
       )}
       {...props}

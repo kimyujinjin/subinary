@@ -60,6 +60,9 @@ interface StatusBadgeProps {
 
 /** 상태 배지. 알려진 상태는 라벨/색조를 자동 매핑한다. */
 export function StatusBadge({ status, label, tone }: StatusBadgeProps) {
+  // 기본 상태(승인·활성)는 표시하지 않는다(§5) — 모든 행에 붙으면 아무것도 말하지 않는다.
+  // 라벨을 명시해 부른 곳(정기 결제 등)은 그대로 보여준다.
+  if (label === undefined && (status === "approved" || status === "active")) return null;
   const resolvedTone = tone ?? STATUS_TONES[status] ?? "neutral";
   const resolvedLabel = label ?? STATUS_LABELS[status] ?? status;
   return <Badge variant={TONE_VARIANT[resolvedTone]}>{resolvedLabel}</Badge>;

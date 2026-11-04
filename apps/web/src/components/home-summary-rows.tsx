@@ -1,3 +1,4 @@
+"use client";
 import type { BudgetSummary, ManualAssetSummary } from "@family/contracts";
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
@@ -7,6 +8,9 @@ import { displayManualKrw } from "@/components/manual-finance/model";
 import { SectionHeader } from "@/components/widgets/section-header";
 import { StatusChip } from "@/components/widgets/status-chip";
 import { formatWon } from "@/lib/format";
+import { useOwnedFinanceConnections } from "@/lib/finance-connections-client";
+import { useUsdKrwReference } from "@/lib/fx-client";
+import { computeNetWorth, connectedHoldings } from "@/lib/net-worth";
 
 /**
  * 자산 요약 한 줄(§5 홈 5). 아는 값만 말하고 모르는 값은 `미입력`이라고 말한다 —
@@ -28,50 +32,57 @@ export function assetOneLine(summary: ManualAssetSummary): string {
   return [...known, ...unknown].join(" · ");
 }
 
-export function HomeAssetRow({
+const noop = () => {};
+
+/**
+ * 홈 자산 섹션(§8): 순자산 숫자 + 자산·대출 한 줄. 자산 화면과 같은 계산(computeNetWorth)을 쓴다.
+ * 연결 계좌는 **읽기만** 한다 — 새 조회는 동의 범위(자산·연결 화면을 열 때)에서만 일어난다.
+ */
+export function HomeAssetSection({
+  householdId,
+  userId,
   summary,
   loading,
   error,
   unresolvedLoans = 0,
 }: {
+  householdId: string;
+  userId: string;
   summary?: ManualAssetSummary;
   loading: boolean;
   error: boolean;
   unresolvedLoans?: number;
 }) {
+  const connections = useOwnedFinanceConnections(householdId, userId, noop);
+  const fx = useUsdKrwReference();
+  const holdings = connectedHoldings(connections.data ?? null, fx.data);
+  const worth = computeNetWorth(summary, holdings);
   return (
     <Link
       href="/assets?scope=household"
-      className="finance-panel hover:bg-muted/40 focus-visible:outline-ring flex min-h-16 min-w-0 items-center gap-3 px-5 py-4 focus-visible:outline-2 focus-visible:outline-offset-2"
+      className="finance-panel hover:bg-muted/40 flex min-w-0 items-center gap-3 px-5 py-5"
+      aria-label="자산 보기"
     >
       <span className="min-w-0 flex-1">
-        <span className="text-caption text-muted-foreground block">
-          가족 자산
-        </span>
-        <span
-          className={`text-body block break-words font-semibold ${
-            error
-              ? "text-destructive"
-              : loading
-              ? "text-muted-foreground font-normal"
-              : ""
-          }`}
-          role={error ? "alert" : loading ? "status" : undefined}
-        >
-          {loading
-            ? "자산을 불러오는 중이에요."
-            : error || !summary
-            ? "자산을 불러오지 못했어요."
-            : assetOneLine(summary)}
-        </span>
+        <span className="text-caption text-muted-foreground block">순자산</span>
+        {loading ? (
+          <span className="text-body text-muted-foreground block" role="status">자산을 불러오는 중이에요.</span>
+        ) : error || !summary ? (
+          <span className="text-body text-destructive block" role="alert">자산을 불러오지 못했어요.</span>
+        ) : worth.net === null ? (
+          <span className="text-heading block">등록된 자산이 없어요</span>
+        ) : (
+          <>
+            <span className="text-title block break-all tabular-nums">{displayManualKrw(worth.net.toString())}</span>
+            <span className="text-caption text-muted-foreground block">
+              자산 {worth.assets === null ? "미입력" : displayManualKrw(worth.assets.toString())} · 대출{" "}
+              {worth.debt === null ? "미입력" : displayManualKrw(worth.debt.toString())}
+            </span>
+          </>
+        )}
       </span>
-      {!loading && !error && unresolvedLoans > 0 ? (
-        <StatusChip tone="attention">확인 필요 {unresolvedLoans}</StatusChip>
-      ) : null}
-      <ChevronRight
-        className="text-muted-foreground/60 size-5 shrink-0"
-        aria-hidden="true"
-      />
+      {!loading && !error && unresolvedLoans > 0 ? <StatusChip tone="attention">확인 필요 {unresolvedLoans}</StatusChip> : null}
+      <ChevronRight className="text-muted-foreground/60 size-5 shrink-0" aria-hidden="true" />
     </Link>
   );
 }

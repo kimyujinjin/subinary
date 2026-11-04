@@ -5,7 +5,9 @@ import { Suspense, useCallback, useMemo } from "react";
 
 import { HomeConsumptionCard } from "@/components/home-consumption-card";
 import { HomeHousingCard } from "@/components/home-housing-card";
-import { HomeAssetRow, HomeBudgetSummary } from "@/components/home-summary-rows";
+import { HomeAssetSection, HomeBudgetSummary } from "@/components/home-summary-rows";
+import { useAuth } from "@/lib/auth-context";
+import { useHousehold } from "@/lib/household-context";
 import { useTodoCounts } from "@/components/widgets";
 import { currentMonth } from "@/lib/format";
 import { useManualHousingPlans } from "@/lib/manual-finance-client";
@@ -33,6 +35,8 @@ function HomeView() {
     selectedMonth && isMonthKey(selectedMonth) ? selectedMonth : thisMonth;
   // 자산 공개 범위는 기존 카드 내역의 공개 정책과 별도로 유지한다.
   const scope = "household" as const;
+  const { householdId } = useHousehold();
+  const { user } = useAuth();
   const assets = useFinancialOverview(scope);
   const housing = useManualHousingPlans(scope);
   const monthly = useMonthly(month, { refetchInterval: POLL_INTERVAL_MS });
@@ -98,12 +102,16 @@ function HomeView() {
           error={housing.isError}
         />
       ) : null}
-      <HomeAssetRow
+      {householdId && user ? (
+      <HomeAssetSection
+        householdId={householdId}
+        userId={user.id}
         summary={assets.data?.summary}
         loading={assets.isPending}
         error={assets.isError}
         unresolvedLoans={assets.data?.unresolvedLoans}
       />
+      ) : null}
     </div>
   );
 }
