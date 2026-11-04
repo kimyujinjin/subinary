@@ -35,6 +35,7 @@ import type {
 
 import { clearAiChatHistory } from "./ai-chat-history";
 import { ApiError, api, type AccessToken } from "./api-client";
+import { isRetriableFailure } from "./session-failure";
 import {
   authenticateBiometricResilient,
   getBiometricPref,
@@ -86,20 +87,6 @@ type AuthStatus =
   | "authenticated"
   | "unauthenticated"
   | "offline";
-
-/**
- * 부트스트랩 실패를 "재시도하면 복구될 수 있음"과 "세션이 죽었음"으로 가른다.
- *
- * ApiError가 아니면 HTTP 응답 자체가 없었던 것(오프라인·DNS·타임아웃·CORS)이다 —
- * status가 없는 실패를 인증 실패로 뭉개면, 지하철에서 앱을 연 것만으로 1년 세션이
- * 날아간다. 5xx/429는 서버·프록시 사정이라 세션과 무관하다(터널 재연결 중 502).
- * 그 밖의 4xx는 예상 못 한 계약 위반이므로 보수적으로 세션을 파기해 기존 동작
- * (로그인 화면)을 유지한다 — 무한 재시도 화면에 갇히는 것보다 낫다.
- */
-function isRetriableFailure(error: unknown): boolean {
-  if (!(error instanceof ApiError)) return true;
-  return error.status >= 500 || error.status === 429;
-}
 
 interface AuthContextValue {
   user: UserSummary | null;
@@ -222,7 +209,12 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
           setStatus("authenticated");
           return await fn(refreshed.tokens.accessToken);
         } catch (refreshError) {
-          clearSession();
+          // 부트스트랩과 같은 기준으로 세션이 정말 끝난 응답(401 등)만 로그아웃한다.
+          // 네트워크·5xx·시간 초과·보안 저장소 오류까지 로그아웃하면, 서버가 새 토큰을 이미
+          // 발급했는데 응답만 잃은 경우에도 로그인 화면으로 튕긴다(2026-11-04 실측: 앱에서
+          // 하루 6회, 서버엔 버려진 세션 48개). 저장 토큰은 보존되고 다음 갱신에서 회전
+          // 유예(24시간)로 복구되므로 이 요청만 실패시킨다.
+          if (!isRetriableFailure(refreshError)) clearSession();
           throw refreshError;
         }
       }
