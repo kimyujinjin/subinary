@@ -201,9 +201,8 @@ export function assetBreakdown(
       .filter((holding) => holding.kind === "loan")
       .map((holding) => ({
         key: holding.id,
-        label: holding.own
-          ? holding.label
-          : `${holding.label} · ${holding.ownerName}`,
+        // 누구의 대출인지 항상 적는다(본인 것 포함).
+        label: `${holding.label} · ${holding.ownerName}`,
         amount: holding.totalKrw,
         missing: holding.totalKrw === null ? 1 : 0,
       })),

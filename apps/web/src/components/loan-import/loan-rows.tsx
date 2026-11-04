@@ -20,7 +20,7 @@ export function loanInclusionLabel(item: ImportedLoanRecord): string {
     : "합계 제외 · 반영 설정 확인 필요";
 }
 
-export function LoanOverviewRow({ item }: { item: ImportedLoanRecord }) {
+export function LoanOverviewRow({ item, owner = null }: { item: ImportedLoanRecord; owner?: string | null }) {
   const checkedAt = new Intl.DateTimeFormat("ko-KR", {
     timeZone: "Asia/Seoul",
     year: "numeric",
@@ -37,7 +37,7 @@ export function LoanOverviewRow({ item }: { item: ImportedLoanRecord }) {
         <div className="min-w-0 flex-1">
           <h3 className="text-body break-words font-semibold">{item.label}</h3>
           <p className="text-caption text-muted-foreground">
-            {item.loanType === "jeonse" ? "전세 대출" : "중도금 대출"} · 끝 {item.accountLast4}
+            {owner ? `${owner} · ` : ""}{item.loanType === "jeonse" ? "전세 대출" : "중도금 대출"}
           </p>
         </div>
         <div className="min-w-0 text-right">

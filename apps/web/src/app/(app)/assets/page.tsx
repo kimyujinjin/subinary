@@ -14,6 +14,7 @@ import { EmptyState, Fab, StatusChip } from "@/components/widgets";
 import { connectionMoney } from "@/components/finance-connections/model";
 import { useAuth } from "@/lib/auth-context";
 import { useHousehold } from "@/lib/household-context";
+import { useHouseholdMembers } from "@/lib/queries";
 import { manualFinanceApi, useManualAssets } from "@/lib/manual-finance-client";
 import { useFinancialOverview } from "@/lib/loan-import-client";
 import { LoanOverviewRow } from "@/components/loan-import/loan-rows";
@@ -52,7 +53,7 @@ function HoldingRow({ holding, fxRate, fxDate }: { holding: ConnectedHolding; fx
           holding.usd !== null ? `미국 ${connectionMoney(holding.usd, "USD")}` : null,
         ].filter(Boolean)
       : [`기준일 ${new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" }).format(new Date(holding.observedAt))}`];
-  if (!holding.own) parts.unshift(holding.ownerName);
+  parts.unshift(holding.ownerName);
   const href = holding.own ? `/more/connections?provider=${holding.provider}` : "/assets";
   return (
     <Link href={href} className="-mx-2 flex min-h-16 w-[calc(100%+1rem)] min-w-0 items-center justify-between gap-3 rounded-control px-2 py-3 hover:bg-muted/50">
@@ -111,6 +112,11 @@ function ScopedAssets({
     [queryClient, householdId, user?.id]
   );
   const fx = useUsdKrwReference();
+  // 누구의 자산인지(§8): 명의자를 적었으면 명의자, 아니면 등록한 구성원 이름.
+  const members = useHouseholdMembers();
+  const nameByUser = new Map((members.data ?? []).map((member) => [member.userId, member.name]));
+  const ownerOf = (item: { ownerUserId: string; legalOwnerLabel?: string | null }) =>
+    item.legalOwnerLabel ?? nameByUser.get(item.ownerUserId) ?? null;
   // 연결 계좌는 따로 두지 않고 같은 목록·합계에 섞는다(§8). 본인 것 + 공유에 동의한 가족 것. 달러는 ECB 기준환율로 환산.
   const holdings = scope === "household" ? toHoldings(connected.data?.holdings, fx.data) : [];
   const readSession = useRef(createManualSaveSession());
@@ -243,7 +249,11 @@ function ScopedAssets({
               summary={overview.data.summary}
               scope={scope}
               holdings={holdings}
-              breakdown={assetBreakdown(overview.data.manualItems, overview.data.loanItems, holdings)}
+              breakdown={assetBreakdown(
+                overview.data.manualItems.map((item) => ({ ...item, label: ownerOf(item) ? `${item.label} · ${ownerOf(item)}` : item.label })),
+                overview.data.loanItems.map((item) => ({ ...item, label: ownerOf(item) ? `${item.label} · ${ownerOf(item)}` : item.label })),
+                holdings
+              )}
             />
           ) : null}
           {scope === "household" ? <ConnectedSharingPrompt /> : null}
@@ -319,7 +329,7 @@ function ScopedAssets({
                                 {item.label}
                               </strong>
                               <span className="text-caption text-muted-foreground block">
-                                기준일 {item.asOfDate ?? "미입력"}
+                                {ownerOf(item) ? `${ownerOf(item)} · ` : ""}기준일 {item.asOfDate ?? "미입력"}
                                 {opening === item.id ? " · 여는 중" : ""}
                               </span>
                               {replaced ? (
@@ -346,7 +356,7 @@ function ScopedAssets({
                         );
                       })}
                       {groupLoans.map((item) => (
-                        <LoanOverviewRow key={item.id} item={item} />
+                        <LoanOverviewRow key={item.id} item={item} owner={ownerOf(item)} />
                       ))}
                       {groupHoldings.map((holding) => (
                         <HoldingRow key={holding.id} holding={holding} fxDate={fx.data?.asOfDate ?? null} fxRate={fx.data?.rate ?? null} />
