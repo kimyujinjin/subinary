@@ -50,13 +50,13 @@ def main() -> None:
     source = Path(__file__).with_name('worker.py').resolve()
     target, state, intent_path = support / 'worker.py', support / 'state.json', support / 'install.json'
     plist = Path.home() / 'Library/LaunchAgents' / (LABEL + '.plist')
-    executable, codex = shutil.which('python3'), Path.home() / '.local/bin/codex'
-    if not executable or not codex.is_file():
-        raise RuntimeError('기존 Python과 Codex 설치를 확인해 주세요.')
+    executable, aside = shutil.which('python3'), Path.home() / '.local/bin/aside'
+    if not executable or not aside.is_file():
+        raise RuntimeError('Python과 Aside CLI 설치를 확인해 주세요.')
     domain = 'gui/' + str(os.getuid())
     loaded = subprocess.run(['/bin/launchctl', 'print', domain + '/' + LABEL], capture_output=True, text=True)
     expected_sha = hashlib.sha256(source.read_bytes()).hexdigest()
-    record = {'Label': LABEL, 'ProgramArguments': [executable, '-B', str(target), '--state', str(state), '--codex', str(codex)],
+    record = {'Label': LABEL, 'ProgramArguments': [executable, '-B', str(target), '--state', str(state)],
         'WorkingDirectory': str(support), 'RunAtLoad': True, 'KeepAlive': {'SuccessfulExit': False},
         'ThrottleInterval': 30, 'ProcessType': 'Background', 'Umask': 0o077,
         'EnvironmentVariables': {'PATH': '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin', 'TZ': 'Asia/Seoul', 'NODE_OPTIONS': '--max-old-space-size=1024'},
@@ -86,7 +86,7 @@ def main() -> None:
             if set(pair) != {'pairId', 'secret', 'userCode', 'label'}:
                 raise RuntimeError('진행 중인 실행기 상태를 보존했습니다.')
         else:
-            pair = {'pairId': str(uuid.uuid4()), 'secret': secrets.token_hex(32), 'userCode': secrets.token_hex(16), 'label': '이 Mac의 Codex'}
+            pair = {'pairId': str(uuid.uuid4()), 'secret': secrets.token_hex(32), 'userCode': secrets.token_hex(16), 'label': '이 Mac'}
             write_private(state, pair)
         Api(str(pair['secret'])).call('/v1/mac-bank-runner/pair', pair)
         intent['phase'] = 'paired'; write_private(intent_path, intent)

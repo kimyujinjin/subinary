@@ -418,20 +418,7 @@ class ReplSessionTests(unittest.TestCase):
             self.session.call('anything', 1)
 
 
-class EngineSelectionTests(unittest.TestCase):
-    def test_default_is_repl_and_codex_needs_private_file(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            self.assertEqual(worker.selected_engine(root), 'repl')
-            (root / 'engine').write_text('codex\n'); (root / 'engine').chmod(0o600)
-            self.assertEqual(worker.selected_engine(root), 'codex')
-            (root / 'engine').chmod(0o666)
-            with self.assertRaises(worker.Stopped):
-                worker.selected_engine(root)
-            (root / 'engine').chmod(0o600); (root / 'engine').write_text('gpt')
-            with self.assertRaises(worker.Stopped):
-                worker.selected_engine(root)
-
+class RunPhaseTests(unittest.TestCase):
     def test_run_phase_uses_repl_and_completes_with_same_claim(self):
         with tempfile.TemporaryDirectory() as folder:
             state_path = Path(folder) / 'state.json'
@@ -441,9 +428,8 @@ class EngineSelectionTests(unittest.TestCase):
             api = Mock(); api.call.side_effect = lambda path, body: {'paired': True, 'job': job} if path.endswith('/heartbeat') else {}
             observation = {'pageKind': 'deposit_account_list'}
             engine = Mock(return_value={'outcome': 'succeeded', 'logoutConfirmed': True, 'observations': [observation]})
-            with patch.object(worker, 'shinhan_repl', return_value=SimpleNamespace(repl_phase=engine)), patch.object(worker, 'codex_phase') as codex:
+            with patch.object(worker, 'shinhan_repl', return_value=SimpleNamespace(repl_phase=engine)):
                 worker.run_phase(SimpleNamespace(state=state_path, codex='fixture', aside='/fixture/aside'), api, job, state)
-            codex.assert_not_called()
             self.assertEqual(engine.call_args.args[0], '/fixture/aside')
             self.assertIs(engine.call_args.args[4], worker.capture)
             paths = [call.args[0] for call in api.call.call_args_list]
