@@ -73,8 +73,10 @@ describe('Mac 전용 grant와 본인 작업 서비스', () => {
   });
   it('첫 claim의 INSERT 이후 갱신 시각과 TTL은 ISO 문자열로 전달한다', async () => {
     const queued = { ...job('queued'), claim_id: null, claimed_at: null };
-    const { service, rows } = harness([...worker(), [], [queued], [], [job()]]);
+    const { service, rows } = harness([...worker(), [], [queued], [job()]]);
     expect((await service.claim(secret, { claimId })).job?.state).toBe('claimed');
+    // 직전 claim 시각으로 막지 않는다(조회 간격 제한 없음).
+    expect(rows.mock.calls.some(([, query]) => dialect.sqlToQuery(query as SQL).sql.includes('claimed_at>'))).toBe(false);
     const parameters = rows.mock.calls.flatMap(([, query]) => dialect.sqlToQuery(query as SQL).params);
     expect(parameters.includes(now.toISOString())).toBe(true);
     expect(parameters.includes(new Date(now.getTime() + 600_000).toISOString())).toBe(true);
@@ -168,6 +170,14 @@ describe('Mac 전용 grant와 본인 작업 서비스', () => {
     const queued = { ...job('queued'), claim_id: null, claimed_at: null };
     const next = harness([...authorized(), [], [], [forever], [queued]]);
     expect((await next.service.enqueue(user, { householdId: home, requestId: jobId })).job.state).toBe('queued');
+  });
+  it('조회 간격 제한 없이 진행 중인 작업만 새 요청을 막는다', async () => {
+    const queued = { ...job('queued'), claim_id: null, claimed_at: null };
+    const { service, rows } = harness([...authorized(), [], [], [runner()], [queued]]);
+    expect((await service.enqueue(user, { householdId: home, requestId: jobId })).job.state).toBe('queued');
+    expect(rows.mock.calls.some(([, query]) => dialect.sqlToQuery(query as SQL).sql.includes('claimed_at>'))).toBe(false);
+    const busy = harness([...authorized(), [], [{ id: uuid(30) }]]);
+    await expect(busy.service.enqueue(user, { householdId: home, requestId: jobId })).rejects.toBeInstanceOf(ConflictException);
   });
   it('동일 requestId의 기존 결과는 반환하고 새 작업을 생성하지 않는다', async () => {
     const { service, execute } = harness([...authorized(), [job()]]);

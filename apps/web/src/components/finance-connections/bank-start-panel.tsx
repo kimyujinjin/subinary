@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { Loader2 } from "lucide-react";
 import {
   MAC_BANK_RUNNER_CONSENT_TEXT,
   type MacBankJob,
@@ -303,6 +304,7 @@ export function BankStartPanel({
               disabled={startDisabled}
               onClick={(event) => { if (event.detail <= 1) void write("start"); }}
             >
+              {busy || active ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
               {busy ? "요청 중…" : active ? "Mac에서 조회 중…" : "지금 조회하기"}
             </Button>
           )}

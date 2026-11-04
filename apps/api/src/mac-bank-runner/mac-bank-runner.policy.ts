@@ -4,7 +4,6 @@ import { bankObservationSchema, type BankObservation, type MacBankJobState } fro
 export const MAC_BANK_ACTIVE_STATES = ['queued', 'claimed', 'running', 'authentication_required', 'reading', 'logging_out'] as const;
 export const MAC_BANK_ONLINE_MS = 30_000;
 export const MAC_BANK_JOB_TTL_MS = 600_000;
-export const MAC_BANK_INTERVAL_MS = 900_000;
 
 /** 소유자에 결박한 승인만 유효하며 만료 없음도 명시적 철회를 넘을 수 없다. */
 export function macBankGrantActive(ownerBound: boolean, expiresAt: Date | null, revoked: boolean, now: Date): boolean {

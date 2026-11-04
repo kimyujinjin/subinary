@@ -10,7 +10,7 @@ import { macBankPairSchema, macBankApproveSchema, macBankScopeSchema, macBankJob
   type MacBankHeartbeat, type MacBankJobState, type BankConnectionError } from '@family/contracts';
 import { DB } from '../database/database.constants';
 import { FinanceVault, type VaultEnvelope } from '../finance-connections/finance-vault';
-import { MAC_BANK_ONLINE_MS, MAC_BANK_JOB_TTL_MS, MAC_BANK_INTERVAL_MS, macBankActive, macBankTransition,
+import { MAC_BANK_ONLINE_MS, MAC_BANK_JOB_TTL_MS, macBankActive, macBankTransition,
   macBankClaimLive, macBankMembershipMatches, macBankRequestMatches, macBankObservations, macBankGrantActive } from './mac-bank-runner.policy';
 
 type Tx = Pick<Db, 'execute'>;
@@ -292,9 +292,9 @@ export class MacBankRunnerService {
           || !macBankMembershipMatches(existing.member_id, date(existing.member_joined_at), member.id, date(member.joined_at))) throw conflict();
         return { job: this.dto(existing) };
       }
-      const recent = await this.rows<{ id: string }>(tx, sql`select id from mac_bank_runner_jobs where owner_user_id=${user}
-        and (state in ${active} or claimed_at>${new Date(now.getTime() - MAC_BANK_INTERVAL_MS).toISOString()}) limit 1`);
-      if (recent.length) throw conflict();
+      // 한 사람의 진행 중 작업은 하나뿐이다. 조회 간격 제한은 두지 않는다 — 진행 중에는 앱 버튼이 막는다(2026-11-04 결정).
+      const running = await this.rows<{ id: string }>(tx, sql`select id from mac_bank_runner_jobs where owner_user_id=${user} and state in ${active} limit 1`);
+      if (running.length) throw conflict();
       const [runner] = await this.rows<RunnerRow>(tx, sql`select * from mac_bank_runners where owner_user_id=${user} and household_id=${value.householdId}
         and member_id=${member.id} and member_joined_at=${iso(member.joined_at)} and revoked_at is null
         and (grant_expires_at is null or grant_expires_at>${now.toISOString()})
@@ -315,9 +315,6 @@ export class MacBankRunnerService {
       if (prior) return { job: macBankClaimLive(prior.state, prior.claim_id, value.claimId, date(prior.expires_at), now) ? this.dto(prior) : null };
       const [job] = await this.rows<JobRow>(tx, sql`select * from mac_bank_runner_jobs where runner_id=${runner.id} and state in ${active} order by created_at limit 1 for update`);
       if (!job || job.state !== 'queued') return { job: null };
-      const recent = await this.rows<{ id: string }>(tx, sql`select id from mac_bank_runner_jobs where owner_user_id=${runner.owner_user_id}
-        and claimed_at>${new Date(now.getTime() - MAC_BANK_INTERVAL_MS).toISOString()} limit 1`);
-      if (recent.length) return { job: null };
       const [claimed] = await this.rows<JobRow>(tx, sql`update mac_bank_runner_jobs set state='claimed',claim_id=${value.claimId},claimed_at=${now.toISOString()},
         expires_at=${new Date(now.getTime() + MAC_BANK_JOB_TTL_MS).toISOString()},updated_at=${now.toISOString()} where id=${job.id} and state='queued' returning *`);
       return { job: this.dto(claimed) };
