@@ -32,6 +32,7 @@ import {
   manualFinanceCanCreate,
   manualFinanceEditorContext,
   manualEditorUnavailable,
+  savingsPlanLine,
 } from "@/components/manual-finance/model";
 import {
   FinanceLoading,
@@ -326,7 +327,7 @@ function ScopedAssets({
                         return {
                           key: item.id,
                           title: item.label,
-                          subtitle: [ownerOf(item), opening === item.id ? "여는 중" : null].filter(Boolean).join(" · "),
+                          subtitle: [ownerOf(item), savingsPlanLine(item.savingsPlan), opening === item.id ? "여는 중" : null].filter(Boolean).join(" · "),
                           amount: item.amount === null ? null : BigInt(item.amount),
                           counted: !replaced,
                           chip: replaced ? ["neutral", "합계 제외"] : null,

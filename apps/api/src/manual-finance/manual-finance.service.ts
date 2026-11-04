@@ -14,10 +14,10 @@ import {
   type ManualFinanceDeleteResponse, type ManualFinanceListQuery, type ManualFinanceScope,
   type ManualHousingPayment, type ManualHousingPaymentInput, type ManualHousingPlan,
   type ManualHousingPlanCreateRequest, type ManualHousingPlanListResponse,
-  type ManualHousingPlanResponse, type ManualHousingPlanUpdateRequest,
+  type ManualHousingPlanResponse, type ManualHousingPlanUpdateRequest, type ManualSavingsPlan,
 } from '@family/contracts';
 import { schema, type Db } from '@family/database';
-import { summarizeManualAssets, summarizeManualHousingPlans } from '@family/shared';
+import { manualFinanceSeoulDate, manualSavingsView, summarizeManualAssets, summarizeManualHousingPlans } from '@family/shared';
 import { DB } from '../database/database.constants';
 import { RealtimePublisherService } from '../realtime/realtime-publisher.service';
 
@@ -68,17 +68,36 @@ function assetFields(input: ManualAssetCreateRequest | ManualAssetUpdateRequest)
     asOfDate: input.asOfDate, source: input.source, legalOwnerLabel: input.legalOwnerLabel, note: input.note };
 }
 
+/** 적금 자동 납입 열. 계획이 없으면 셋 다 null(DB manual_assets_contribution_check). */
+function savingsColumns(plan: ManualSavingsPlan | null) {
+  return { contributionAmount: plan?.monthlyAmount ?? null, contributionDay: plan?.day ?? null,
+    contributionEndDate: plan?.endDate ?? null };
+}
+
+/**
+ * 수정 요청의 자동 납입 열. 키가 없으면(옛 앱) 기존 계획을 두되, 적금이 아니게 바뀌었거나 금액을
+ * 지웠으면 계획도 지운다 — 남겨 두면 DB 제약에 걸려 저장 자체가 실패한다.
+ */
+function nextSavingsColumns(input: ManualAssetUpdateRequest, current: AssetRow) {
+  if (input.savingsPlan !== undefined) return savingsColumns(input.savingsPlan);
+  if (input.kind !== 'saving' || input.amount === null) return savingsColumns(null);
+  return { contributionAmount: current.contributionAmount, contributionDay: current.contributionDay,
+    contributionEndDate: current.contributionEndDate };
+}
+
 function planFields(input: ManualHousingPlanCreateRequest | ManualHousingPlanUpdateRequest) {
   return { label: input.label, visibility: input.visibility, occupancyYear: input.occupancyYear,
     contractStage: input.contractStage, fundingNote: input.fundingNote };
 }
 
-function toAsset(row: AssetRow, userId: string, canWrite: boolean): ManualAsset {
+/** amount·asOfDate는 적금 자동 납입을 더한 현재 값이다(manualSavingsView). */
+function toAsset(row: AssetRow, userId: string, canWrite: boolean, today = manualFinanceSeoulDate()): ManualAsset {
   return { id: row.id, householdId: row.householdId, ownerUserId: row.ownerUserId,
-    kind: row.kind, label: row.label, visibility: row.visibility, amount: row.amount,
-    currency: 'KRW', asOfDate: row.asOfDate, source: row.source, legalOwnerLabel: row.legalOwnerLabel,
+    kind: row.kind, label: row.label, visibility: row.visibility,
+    currency: 'KRW', source: row.source, legalOwnerLabel: row.legalOwnerLabel,
     note: row.note, version: row.version, createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(), canEdit: canWrite && row.ownerUserId === userId };
+    updatedAt: row.updatedAt.toISOString(), canEdit: canWrite && row.ownerUserId === userId,
+    ...manualSavingsView(row, today) };
 }
 
 function toPlan(row: PlanRow, userId: string, canWrite: boolean): ManualHousingPlan {
@@ -183,7 +202,8 @@ export class ManualFinanceService {
       const rows = await tx.select().from(schema.manualAssets)
         .where(this.visible(schema.manualAssets, householdId, userId, input.scope))
         .orderBy(asc(schema.manualAssets.createdAt), asc(schema.manualAssets.id));
-      const items = rows.map(row => toAsset(row, userId, access.canWrite));
+      const today = manualFinanceSeoulDate();
+      const items = rows.map(row => toAsset(row, userId, access.canWrite, today));
       return { items, summary: summarizeManualAssets(items) };
     }, true);
   }
@@ -209,6 +229,7 @@ export class ManualFinanceService {
       const access = await this.member(tx, input.householdId, userId, true);
       const [created] = await tx.insert(schema.manualAssets).values({ id: input.id,
         householdId: input.householdId, ownerUserId: userId, ...assetFields(input),
+        ...savingsColumns(input.savingsPlan ?? null),
         currency: 'KRW', version: 1, creationPayloadHash: hash }).onConflictDoNothing({ target: schema.manualAssets.id }).returning();
       if (created) {
         await this.audit(tx, input.householdId, userId, 'asset', created.id, 'create', created.version);
@@ -235,7 +256,7 @@ export class ManualFinanceService {
         .for('update').limit(1);
       if (!current) throw notFound();
       const version = this.nextVersion(current.version, input.expectedVersion);
-      const [row] = await tx.update(schema.manualAssets).set({ ...assetFields(input), version, updatedAt: new Date() })
+      const [row] = await tx.update(schema.manualAssets).set({ ...assetFields(input), ...nextSavingsColumns(input, current), version, updatedAt: new Date() })
         .where(and(eq(schema.manualAssets.id, id), eq(schema.manualAssets.householdId, householdId),
           eq(schema.manualAssets.ownerUserId, userId), eq(schema.manualAssets.version, input.expectedVersion), isNull(schema.manualAssets.deletedAt))).returning();
       if (!row) throw stale();

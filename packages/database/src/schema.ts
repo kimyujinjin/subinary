@@ -4666,6 +4666,10 @@ export const manualAssets = pgTable('manual_assets', {
   source: text('source').$type<'manual'>(),
   legalOwnerLabel: text('legal_owner_label'),
   note: text('note'),
+  /** 적금 자동 납입(0073): 매월 contributionDay일 contributionAmount원. 없으면 셋 다 null. 현재 적립액은 읽을 때 계산한다. */
+  contributionAmount: numeric('contribution_amount', { precision: 20, scale: 0 }),
+  contributionDay: integer('contribution_day'),
+  contributionEndDate: date('contribution_end_date', { mode: 'string' }),
   version: integer('version').notNull().default(1),
   /** 최초 입력의 SHA-256. 수정·삭제 뒤에도 같은 작성 요청이 재생성되지 않는다. */
   creationPayloadHash: text('creation_payload_hash').notNull(),
@@ -4684,6 +4688,7 @@ export const manualAssets = pgTable('manual_assets', {
   check('manual_assets_notes_check', sql`(${table.legalOwnerLabel} IS NULL OR char_length(btrim(${table.legalOwnerLabel})) BETWEEN 1 AND 100) AND (${table.note} IS NULL OR char_length(btrim(${table.note})) BETWEEN 1 AND 1000)`),
   check('manual_assets_version_check', sql`${table.version} > 0`),
   check('manual_assets_creation_hash_check', sql`${table.creationPayloadHash} ~ '^[0-9a-f]{64}$'`),
+  check('manual_assets_contribution_check', sql`(${table.contributionAmount} IS NULL AND ${table.contributionDay} IS NULL AND ${table.contributionEndDate} IS NULL) OR (${table.kind} = 'saving' AND ${table.amount} IS NOT NULL AND ${table.contributionAmount} IS NOT NULL AND ${table.contributionAmount} > 0 AND ${table.contributionDay} IS NOT NULL AND ${table.contributionDay} BETWEEN 1 AND 31)`),
 ]);
 export type ManualAssetRecord = typeof manualAssets.$inferSelect;
 export type NewManualAssetRecord = typeof manualAssets.$inferInsert;

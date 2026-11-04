@@ -580,3 +580,54 @@ describe('shared manual-record cache hints', () => {
     expect(rows.manual_housing_plans).toHaveLength(1);
   });
 });
+
+describe('적금 자동 납입', () => {
+  // 만기일을 과거로 두면 오늘 날짜와 상관없이 결과가 정해진다: 1/15·2/15·3/15 세 번.
+  const saving = (extra: Partial<ManualAssetCreateRequest> = {}) => assetInput({
+    kind: 'saving', label: '합성 적금', visibility: 'household', amount: '1000000', asOfDate: '2026-01-01', source: 'manual',
+    savingsPlan: { monthlyAmount: '500000', day: 15, endDate: '2026-03-31' }, ...extra,
+  });
+
+  it('저장된 기준에 납입을 더한 현재 값을 목록·합계에 쓰고, DB의 기준 금액은 그대로 둔다', async () => {
+    const { service, rows } = setup();
+    const created = await service.createAsset(U, saving());
+    expect(created.item).toMatchObject({
+      amount: '2500000', asOfDate: '2026-03-15',
+      savingsPlan: { monthlyAmount: '500000', day: 15, endDate: '2026-03-31', baseAmount: '1000000', baseAsOfDate: '2026-01-01', contributions: 3 },
+    });
+    expect(rows.manual_assets[0]).toMatchObject({ amount: '1000000', asOfDate: '2026-01-01', contributionAmount: '500000', contributionDay: 15, contributionEndDate: '2026-03-31' });
+    const shared = await service.listAssets(O, { householdId: H, scope: 'household' });
+    expect(shared.items[0]!.amount).toBe('2500000');
+    expect(shared.summary.grossAssets).toBe('2500000');
+  });
+
+  it('계획 키가 없는 수정(옛 앱)은 계획을 지키고, 적금이 아니게 바꾸면 계획을 지운다', async () => {
+    const { service, rows } = setup();
+    await service.createAsset(U, saving());
+    const { id: _id, householdId: _household, savingsPlan: _plan, ...fields } = saving();
+    await service.updateAsset(U, H, A, { ...fields, label: '이름만 바꾼 적금', expectedVersion: 1 });
+    expect(rows.manual_assets[0]).toMatchObject({ contributionAmount: '500000', contributionDay: 15 });
+    const changed = await service.updateAsset(U, H, A, { ...fields, kind: 'account', expectedVersion: 2 });
+    expect(rows.manual_assets[0]).toMatchObject({ contributionAmount: null, contributionDay: null, contributionEndDate: null });
+    expect(changed.item.amount).toBe('1000000');
+    expect(Object.keys(changed.item)).not.toContain('savingsPlan');
+  });
+
+  it('null을 보내면 계획을 지우고, 계획 없는 자산 응답에는 savingsPlan 키가 없다(옛 앱 번들 호환)', async () => {
+    const { service, rows } = setup();
+    await service.createAsset(U, saving());
+    const { id: _id, householdId: _household, ...fields } = saving();
+    const removed = await service.updateAsset(U, H, A, { ...fields, savingsPlan: null, expectedVersion: 1 });
+    expect(rows.manual_assets[0]!.contributionAmount).toBeNull();
+    expect(Object.keys(removed.item)).not.toContain('savingsPlan');
+  });
+
+  it('금액이 있는 적금이 아니면 자동 납입을 받지 않는다', async () => {
+    const { service, queries } = setup();
+    await expect(service.createAsset(U, saving({ kind: 'account' }))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.createAsset(U, saving({ amount: null, asOfDate: null, source: null }))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.createAsset(U, saving({ savingsPlan: { monthlyAmount: '0', day: 15, endDate: null } }))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.createAsset(U, saving({ savingsPlan: { monthlyAmount: '500000', day: 32, endDate: null } }))).rejects.toBeInstanceOf(BadRequestException);
+    expect(queries).toHaveLength(0);
+  });
+});

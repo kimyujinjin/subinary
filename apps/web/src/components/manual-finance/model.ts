@@ -10,6 +10,7 @@ import {
   type ManualHousingPaymentKind,
   type ManualHousingPlan,
   type ManualHousingPlanCreateRequest,
+  type ManualSavingsPlan,
 } from "@family/contracts";
 
 export const ASSET_LABELS: Record<ManualAssetKind, string> = {
@@ -58,6 +59,16 @@ interface AssetDraft {
   asOfDate: string;
   legalOwnerLabel: string;
   note: string;
+  /** 적금 자동 납입. 적금일 때만 요청에 실린다. */
+  autoSave: boolean;
+  monthlyAmount: string;
+  contributionDay: string;
+  endDate: string;
+}
+
+/** 목록 부제: "매월 15일 +500,000원". 계획이 없으면 null. */
+export function savingsPlanLine(plan: ManualAsset["savingsPlan"]): string | null {
+  return plan ? `매월 ${plan.day}일 +${displayManualKrw(plan.monthlyAmount)}` : null;
 }
 export function assetDraft(item?: ManualAsset): AssetDraft {
   return item
@@ -69,6 +80,11 @@ export function assetDraft(item?: ManualAsset): AssetDraft {
         asOfDate: item.asOfDate ?? "",
         legalOwnerLabel: item.legalOwnerLabel ?? "",
         note: item.note ?? "",
+        // 화면의 금액·기준일은 납입을 더한 현재 값이다. 그대로 저장하면 그 값이 새 기준이 된다(같은 값).
+        autoSave: Boolean(item.savingsPlan),
+        monthlyAmount: item.savingsPlan?.monthlyAmount ?? "",
+        contributionDay: item.savingsPlan ? String(item.savingsPlan.day) : "",
+        endDate: item.savingsPlan?.endDate ?? "",
       }
     : {
         kind: "account",
@@ -78,6 +94,10 @@ export function assetDraft(item?: ManualAsset): AssetDraft {
         asOfDate: "",
         legalOwnerLabel: "",
         note: "",
+        autoSave: false,
+        monthlyAmount: "",
+        contributionDay: "",
+        endDate: "",
       };
 }
 
@@ -87,6 +107,7 @@ export function assetRequest(
   id: string,
   householdId: string
 ): Validation<ManualAssetCreateRequest> {
+  const { autoSave, monthlyAmount, contributionDay, endDate, ...fields } = draft;
   const amount = parseManualKrwInput(draft.amount);
   if (!draft.label.trim())
     return { ok: false, message: "자산 이름을 입력해 주세요." };
@@ -97,10 +118,23 @@ export function assetRequest(
     };
   if (amount === null && draft.asOfDate)
     return { ok: false, message: "금액을 입력하지 않았다면 기준일도 비워 주세요." };
+  let savingsPlan: ManualSavingsPlan | null = null;
+  if (draft.kind === "saving" && autoSave) {
+    const monthly = parseManualKrwInput(monthlyAmount);
+    if (!monthly || monthly === "0")
+      return { ok: false, message: "매월 넣는 금액을 1원 이상, 소수점 없이 입력해 주세요." };
+    const day = Number(contributionDay);
+    if (!Number.isInteger(day) || day < 1 || day > 31)
+      return { ok: false, message: "매월 넣는 날을 골라 주세요." };
+    if (amount === null)
+      return { ok: false, message: "자동 납입을 쓰려면 현재 적립액과 기준일을 입력해 주세요." };
+    savingsPlan = { monthlyAmount: monthly, day, endDate: endDate || null };
+  }
   const result = manualAssetCreateRequestSchema.safeParse({
     id,
     householdId,
-    ...draft,
+    ...fields,
+    savingsPlan,
     label: draft.label.trim(),
     amount,
     asOfDate: draft.asOfDate || null,
@@ -113,7 +147,9 @@ export function assetRequest(
       ok: false,
       message: result.error.issues.some((issue) => issue.path[0] === "asOfDate")
         ? "금액을 확인한 날짜를 입력해 주세요. 미래 날짜는 사용할 수 없어요."
-        : "이름·메모의 길이와 금액·공개 범위를 확인해 주세요.",
+        : result.error.issues.some((issue) => issue.path[0] === "savingsPlan")
+          ? "자동 납입의 만기일을 확인해 주세요."
+          : "이름·메모의 길이와 금액·공개 범위를 확인해 주세요.",
     };
   return { ok: true, body: result.data };
 }

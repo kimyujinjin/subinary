@@ -202,6 +202,14 @@ export {
   summarizeManualHousingPlans,
 } from './manual-finance.js';
 
+export { manualSavingsView, projectManualSavings } from './manual-savings.js';
+export type {
+  ManualSavingsPlanInput,
+  ManualSavingsProjection,
+  ManualSavingsRow,
+  ManualSavingsStatus,
+} from './manual-savings.js';
+
 export { composeFinancialOverview } from './loan-overview.js';
 export type {
   LoanOverviewManualItem,

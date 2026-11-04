@@ -10,6 +10,7 @@ import type {
 import {
   assetDraft,
   assetRequest,
+  savingsPlanLine,
   createManualSaveSession,
   displayManualKrw,
   hideManualSharedEditor,
@@ -61,6 +62,10 @@ describe("manual recorded values", () => {
       asOfDate: "",
       legalOwnerLabel: "",
       note: "",
+      autoSave: false,
+      monthlyAmount: "",
+      contributionDay: "",
+      endDate: "",
     });
     expect(planDraft()).toEqual({
       label: "",
@@ -562,5 +567,53 @@ describe("manual save lifetime", () => {
     expect(manualFailureMessage(new Error("SYNTHETIC_PRIVATE"))).not.toContain(
       "SYNTHETIC_PRIVATE"
     );
+  });
+});
+
+describe("적금 자동 납입 입력", () => {
+  const saving = {
+    ...assetDraft(),
+    kind: "saving" as const,
+    label: "합성 적금",
+    amount: "1,000,000",
+    asOfDate: "2026-01-01",
+    autoSave: true,
+    monthlyAmount: "500,000",
+    contributionDay: "15",
+    endDate: "",
+  };
+
+  it("적금이면 매월 넣는 날·금액·만기일을 요청에 싣는다", () => {
+    const result = assetRequest(saving, id, householdId);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.body.savingsPlan).toEqual({ monthlyAmount: "500000", day: 15, endDate: null });
+      expect(result.body.amount).toBe("1000000");
+      // 편집용 필드가 strict 요청에 새지 않는다.
+      expect(Object.keys(result.body)).not.toContain("autoSave");
+    }
+    const ended = assetRequest({ ...saving, endDate: "2027-06-30" }, id, householdId);
+    expect(ended.ok && ended.body.savingsPlan?.endDate).toBe("2027-06-30");
+  });
+
+  it("끄거나 적금이 아니면 계획을 지운다(null)", () => {
+    for (const draft of [{ ...saving, autoSave: false }, { ...saving, kind: "account" as const }]) {
+      const result = assetRequest(draft, id, householdId);
+      expect(result.ok && result.body.savingsPlan).toBeNull();
+    }
+  });
+
+  it("금액·날·기준 금액이 없으면 이유를 말하고 막는다", () => {
+    expect(assetRequest({ ...saving, monthlyAmount: "0" }, id, householdId)).toMatchObject({ ok: false, message: expect.stringContaining("1원 이상") });
+    expect(assetRequest({ ...saving, contributionDay: "" }, id, householdId)).toMatchObject({ ok: false, message: expect.stringContaining("넣는 날") });
+    expect(assetRequest({ ...saving, amount: "", asOfDate: "" }, id, householdId)).toMatchObject({ ok: false, message: expect.stringContaining("현재 적립액과 기준일") });
+  });
+
+  it("저장된 계획을 편집 초안으로 되살리고 목록 부제를 만든다", () => {
+    const plan = { monthlyAmount: "500000", day: 15, endDate: null, baseAmount: "1000000", baseAsOfDate: "2026-01-01", contributions: 10 };
+    const draft = assetDraft({ ...({} as ManualAsset), kind: "saving", label: "합성 적금", visibility: "household", amount: "6000000", asOfDate: "2026-10-15", legalOwnerLabel: null, note: null, savingsPlan: plan });
+    expect(draft).toMatchObject({ amount: "6000000", asOfDate: "2026-10-15", autoSave: true, monthlyAmount: "500000", contributionDay: "15", endDate: "" });
+    expect(savingsPlanLine(plan)).toBe("매월 15일 +500,000원");
+    expect(savingsPlanLine(undefined)).toBeNull();
   });
 });

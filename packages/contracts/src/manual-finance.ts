@@ -30,6 +30,26 @@ function seoulToday(): string {
 
 export const manualFinanceDateSchema = z.string().refine(calendarDate, '실제 날짜를 YYYY-MM-DD 형식으로 입력해 주세요.');
 const recordedDateSchema = manualFinanceDateSchema.refine((value) => value <= seoulToday(), '기준일·지급일은 서울 기준 오늘 이후일 수 없습니다.');
+
+/**
+ * 적금 자동 납입(2026-11-04). 기준일 다음 날부터 매월 `day`일(그 달에 없으면 말일)에 `monthlyAmount`를
+ * 더해 현재 적립액을 계산한다. 원금만 더하고 이자는 넣지 않는다. 만기일이 있으면 그날까지만 더한다.
+ */
+export const manualSavingsPlanSchema = z.object({
+  monthlyAmount: manualKrwAmountSchema.refine((value) => value !== '0', '매월 넣는 금액은 1원 이상이어야 해요.'),
+  day: z.number().int().min(1).max(31),
+  endDate: manualFinanceDateSchema.nullable(),
+}).strict();
+export type ManualSavingsPlan = z.infer<typeof manualSavingsPlanSchema>;
+/** 응답의 자동 납입 상태. 자산의 amount·asOfDate는 기준 금액에 납입을 더한 현재 값이다. */
+export const manualSavingsStatusSchema = manualSavingsPlanSchema.extend({
+  /** 사용자가 입력한 기준 금액·기준일. */
+  baseAmount: manualKrwAmountSchema,
+  baseAsOfDate: manualFinanceDateSchema,
+  /** 기준일 다음 날부터 지금까지 더한 납입 횟수. */
+  contributions: z.number().int().nonnegative(),
+}).strict();
+export type ManualSavingsStatus = z.infer<typeof manualSavingsStatusSchema>;
 const nullableNote = z.string().trim().min(1).max(1000).nullable();
 const labelSchema = z.string().trim().min(1).max(100);
 const versionSchema = z.number().int().positive().max(2147483647);
@@ -45,11 +65,15 @@ const assetFields = {
   note: nullableNote,
 };
 
-function checkAsset(input: { amount: string | null; asOfDate: string | null; source: 'manual' | null }, ctx: z.RefinementCtx): void {
+function checkAsset(input: { kind: ManualAssetKind; amount: string | null; asOfDate: string | null; source: 'manual' | null; savingsPlan?: object | null }, ctx: z.RefinementCtx): void {
   if (input.amount === null) {
     if (input.asOfDate !== null || input.source !== null) ctx.addIssue({ code: 'custom', path: ['amount'], message: '금액 미입력 시 기준일과 출처도 미입력으로 남겨 주세요.' });
   } else if (input.asOfDate === null || input.source !== 'manual') {
     ctx.addIssue({ code: 'custom', path: ['asOfDate'], message: '금액에는 기준일과 직접 입력 출처가 필요합니다.' });
+  }
+  // 자동 납입은 기준 금액이 있는 적금에만 둔다(DB manual_assets_contribution_check와 같다).
+  if (input.savingsPlan && (input.kind !== 'saving' || input.amount === null)) {
+    ctx.addIssue({ code: 'custom', path: ['savingsPlan'], message: '자동 납입은 현재 적립액과 기준일을 입력한 적금에만 쓸 수 있어요.' });
   }
 }
 
@@ -59,11 +83,14 @@ export const manualAssetCreateRequestSchema = z.object({
   householdId: z.string().uuid(),
   ...assetFields,
   visibility: manualFinanceVisibilitySchema.default('private'),
+  savingsPlan: manualSavingsPlanSchema.nullable().optional(),
 }).strict().superRefine(checkAsset);
 export type ManualAssetCreateRequest = z.infer<typeof manualAssetCreateRequestSchema>;
 export const manualAssetUpdateRequestSchema = z.object({
   expectedVersion: versionSchema,
   ...assetFields,
+  /** 없으면(옛 앱) 기존 계획을 유지하고, null이면 지운다. */
+  savingsPlan: manualSavingsPlanSchema.nullable().optional(),
 }).strict().superRefine(checkAsset);
 export type ManualAssetUpdateRequest = z.infer<typeof manualAssetUpdateRequestSchema>;
 
@@ -71,7 +98,8 @@ const recordFields = {
   id: z.string().uuid(), householdId: z.string().uuid(), ownerUserId: z.string().uuid(),
   version: versionSchema, createdAt: z.string(), updatedAt: z.string(), canEdit: z.boolean(),
 };
-export const manualAssetSchema = z.object({ ...recordFields, ...assetFields, currency: z.literal('KRW') }).strict().superRefine(checkAsset);
+/** `savingsPlan`은 계획이 있는 자산에만 붙는다 — 계획이 없을 때 키를 만들지 않아야 옛 앱 번들(strict)이 읽는다. */
+export const manualAssetSchema = z.object({ ...recordFields, ...assetFields, currency: z.literal('KRW'), savingsPlan: manualSavingsStatusSchema.optional() }).strict().superRefine(checkAsset);
 export type ManualAsset = z.infer<typeof manualAssetSchema>;
 const completenessSchema = z.enum(['empty', 'partial', 'complete']);
 const aggregateAmountSchema = z.string().regex(/^(0|[1-9]\d*)$/);

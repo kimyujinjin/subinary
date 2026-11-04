@@ -20,6 +20,7 @@ import {
   assetRequest,
   displayManualKrw,
 } from "./model";
+import { SavingsPlanFields } from "./savings-plan-fields";
 import { ConfirmAction, RecordDialog, VisibilityField } from "./shared";
 import { useRecordEditor } from "./use-record-editor";
 
@@ -217,6 +218,16 @@ export function AssetEditor({
             금액을 확인한 날짜예요. 금액을 입력하면 꼭 적어주세요.
           </span>
         </label>
+        {editor.draft.kind === "saving" ? (
+          <SavingsPlanFields
+            draft={editor.draft}
+            disabled={disabled}
+            status={editor.current?.item.savingsPlan ?? null}
+            onChange={(patch) =>
+              editor.setDraft((old) => ({ ...old, ...patch }))
+            }
+          />
+        ) : null}
         <p className="bg-muted rounded-lg p-3 text-xs">
           출처: {editor.draft.amount.trim() ? "직접 입력" : "금액 미입력"}
         </p>

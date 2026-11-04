@@ -13,7 +13,7 @@ import {
   type LoanImportUpdateRequest, type ManualAsset, type ManualFinanceScope,
 } from '@family/contracts';
 import { schema, type Db } from '@family/database';
-import { composeFinancialOverview } from '@family/shared';
+import { composeFinancialOverview, manualFinanceSeoulDate, manualSavingsView } from '@family/shared';
 import { DB } from '../database/database.constants';
 import { RealtimePublisherService } from '../realtime/realtime-publisher.service';
 import { assertLoanCaptureTime, loanCommitHash } from './loan-import.policy';
@@ -58,11 +58,13 @@ function reviewFields(input: Review, member: Member) {
       : null,
   };
 }
-function manualDto(row: AssetRow, userId: string, canWrite: boolean): ManualAsset {
+/** amount·asOfDate는 적금 자동 납입을 더한 현재 값이다 — 자산 목록(manual-finance)과 같은 계산. */
+function manualDto(row: AssetRow, userId: string, canWrite: boolean, today = manualFinanceSeoulDate()): ManualAsset {
   return { id: row.id, householdId: row.householdId, ownerUserId: row.ownerUserId, kind: row.kind,
-    label: row.label, visibility: row.visibility, amount: row.amount, currency: 'KRW', asOfDate: row.asOfDate,
+    label: row.label, visibility: row.visibility, currency: 'KRW',
     source: row.source, legalOwnerLabel: row.legalOwnerLabel, note: row.note, version: row.version,
-    createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(), canEdit: canWrite && row.ownerUserId === userId };
+    createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(), canEdit: canWrite && row.ownerUserId === userId,
+    ...manualSavingsView(row, today) };
 }
 function loanDto(row: LoanRow, snapshot: SnapshotRow, userId: string, canWrite: boolean, sharingValid = true): ImportedLoanRecord {
   return {
@@ -172,7 +174,8 @@ export class LoanImportService {
         : and(eq(schema.loanRecords.visibility, 'household'), this.sharingActive()),
     )).orderBy(asc(schema.loanRecords.createdAt), asc(schema.loanRecords.id));
     const current = await this.snapshots(tx, rows);
-    return composeFinancialOverview(manualRows.map(row => manualDto(row, userId, member.canWrite)),
+    const today = manualFinanceSeoulDate();
+    return composeFinancialOverview(manualRows.map(row => manualDto(row, userId, member.canWrite, today)),
       rows.map(row => ({ item: loanDto(row, current.get(row.id)!, userId, member.canWrite),
         accountFingerprint: row.accountFingerprint, sharingValid: true })));
   }
