@@ -3,37 +3,52 @@ import { shinhanHoldings, tossHolding } from "./connected-accounts.service";
 
 const owner = "00000000-0000-4000-8000-000000000001";
 const fp = "a".repeat(64);
+const common = {
+  formatVersion: 1,
+  provider: "shinhan",
+  source: "browser_assisted",
+  origin: "https://bank.shinhan.com",
+  bankAsOfDate: null,
+} as const;
+// 저장된 관측은 시간대가 붙은 시각일 수 있다(2026-11-04 운영에서 이 차이로 행이 빠졌다).
+const deposit = {
+  ...common,
+  pageKind: "deposit_account_list",
+  capturedAt: "2026-11-03T21:17:00+09:00",
+  accountFingerprint: fp,
+  accountLast4: "9029",
+  currency: "KRW",
+  balanceKind: "ledger",
+  balanceKrw: "2612734",
+};
+const loan = {
+  ...common,
+  pageKind: "loan_account_list",
+  capturedAt: "2026-11-03T21:17:00+09:00",
+  accountFingerprint: "b".repeat(64),
+  accountLast4: "0444",
+  loanType: "interim",
+  outstandingPrincipalKrw: "111440000",
+  maturityDate: "2029-04-30",
+};
 
 describe("shinhanHoldings", () => {
-  it("maps deposit balances to 통장·현금 and loans to 대출 without exposing fingerprints in labels", () => {
+  it("maps offset-timestamped deposits to 통장·현금 and loans to 대출, normalizing time to UTC", () => {
     const rows = shinhanHoldings(
-      {
-        id: "job1",
-        owner_user_id: owner,
-        observations: [
-          {
-            pageKind: "deposit_account_list",
-            accountFingerprint: fp,
-            accountLast4: "9029",
-            capturedAt: "2026-11-03T12:17:00.000Z",
-            balanceKrw: "2612734",
-          },
-          {
-            pageKind: "loan_account_list",
-            accountFingerprint: "b".repeat(64),
-            accountLast4: "0444",
-            capturedAt: "2026-11-03T12:17:00.000Z",
-            outstandingPrincipalKrw: "111440000",
-            loanType: "interim",
-          },
-        ],
-      },
+      { id: "job1", owner_user_id: owner, observations: [deposit, loan] },
       "이수빈",
       true
     );
-    expect(rows.map((row) => [row.kind, row.label, row.krw])).toEqual([
-      ["account", "신한 통장 · 끝 9029", "2612734"],
-      ["loan", "신한 중도금대출 · 끝 0444", "111440000"],
+    expect(
+      rows.map((row) => [row.kind, row.label, row.krw, row.observedAt])
+    ).toEqual([
+      ["account", "신한 통장 · 끝 9029", "2612734", "2026-11-03T12:17:00.000Z"],
+      [
+        "loan",
+        "신한 중도금대출 · 끝 0444",
+        "111440000",
+        "2026-11-03T12:17:00.000Z",
+      ],
     ]);
     expect(JSON.stringify(rows.map((row) => row.label))).not.toContain(fp);
   });

@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Inject, Injectable } from '@ne
 import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
+  bankObservationSchema,
   CONNECTED_ACCOUNT_SHARING_CONSENT_VERSION,
   connectedAccountSharingRequestSchema,
   financeConnectionSnapshotSchema,
@@ -17,17 +18,6 @@ type Executor = Db | Tx;
 
 const householdIdSchema = z.string().uuid();
 
-/** Mac 조회 관측 한 건 중 합계에 필요한 필드만. 나머지(지문 원문 등)는 응답에 싣지 않는다. */
-const observationSchema = z.object({
-  pageKind: z.enum(['deposit_account_list', 'loan_account_list']),
-  accountFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
-  accountLast4: z.string().regex(/^\d{4}$/),
-  capturedAt: z.string().datetime(),
-  balanceKrw: z.string().regex(/^-?\d+$/).optional(),
-  outstandingPrincipalKrw: z.string().regex(/^\d+$/).optional(),
-  loanType: z.enum(['interim', 'jeonse']).optional(),
-}).passthrough();
-
 interface MemberRow { user_id: string; name: string; consented_at: Date | string | null; revoked_at: Date | string | null }
 interface TossRow { id: string; owner_user_id: string; status: string; payload: unknown }
 interface JobRow { id: string; owner_user_id: string; observations: unknown }
@@ -36,20 +26,28 @@ function iso(value: Date | string | null): string | null {
   return value === null ? null : new Date(value).toISOString();
 }
 
-/** 신한 Mac 조회 관측 → 자산 목록 행. 통장은 통장·현금, 대출은 대출 묶음에 들어간다. */
+/** 저장 형식(시간대 포함 가능)과 상관없이 응답은 UTC ISO 시각으로 통일한다. */
+function utc(value: string): string {
+  return new Date(value).toISOString();
+}
+
+/**
+ * 신한 Mac 조회 관측 → 자산 목록 행. 통장은 통장·현금, 대출은 대출 묶음에 들어간다.
+ * 저장 때 쓴 계약 스키마(bankObservationSchema)로 다시 읽는다 — 별도 스키마를 두면 시각 형식
+ * (`+09:00` 등) 같은 차이로 행이 조용히 빠진다(2026-11-04 실제로 그랬다).
+ */
 export function shinhanHoldings(job: JobRow, ownerName: string, own: boolean): ConnectedAccountHolding[] {
-  const parsed = z.array(observationSchema).safeParse(job.observations);
-  if (!parsed.success) return [];
-  return parsed.data.flatMap((o): ConnectedAccountHolding[] => {
-    const base = { ownerUserId: job.owner_user_id, ownerName, own, provider: 'shinhan_bank' as const, usd: null, observedAt: o.capturedAt, stale: false };
-    if (o.pageKind === 'deposit_account_list' && o.balanceKrw !== undefined) {
-      return [{ ...base, id: `${job.id}:${o.accountFingerprint}`, kind: 'account', label: `신한 통장 · 끝 ${o.accountLast4}`, krw: o.balanceKrw }];
+  if (!Array.isArray(job.observations)) return [];
+  return job.observations.flatMap((value): ConnectedAccountHolding[] => {
+    const parsed = bankObservationSchema.safeParse(value);
+    if (!parsed.success) return [];
+    const o = parsed.data;
+    const base = { id: `${job.id}:${o.accountFingerprint}`, ownerUserId: job.owner_user_id, ownerName, own, provider: 'shinhan_bank' as const, usd: null, observedAt: utc(o.capturedAt), stale: false };
+    if (o.pageKind === 'deposit_account_list') {
+      return [{ ...base, kind: 'account', label: `신한 통장 · 끝 ${o.accountLast4}`, krw: o.balanceKrw }];
     }
-    if (o.pageKind === 'loan_account_list' && o.outstandingPrincipalKrw !== undefined) {
-      const name = o.loanType === 'jeonse' ? '전세대출' : '중도금대출';
-      return [{ ...base, id: `${job.id}:${o.accountFingerprint}`, kind: 'loan', label: `신한 ${name} · 끝 ${o.accountLast4}`, krw: o.outstandingPrincipalKrw }];
-    }
-    return [];
+    const name = o.loanType === 'jeonse' ? '전세대출' : '중도금대출';
+    return [{ ...base, kind: 'loan', label: `신한 ${name} · 끝 ${o.accountLast4}`, krw: o.outstandingPrincipalKrw }];
   });
 }
 
@@ -60,7 +58,7 @@ export function tossHolding(row: TossRow, ownerName: string, own: boolean): Conn
   const total = (currency: 'KRW' | 'USD') => parsed.data.totals.find((item) => item.currency === currency)?.marketValue ?? null;
   return {
     id: row.id, ownerUserId: row.owner_user_id, ownerName, own, provider: 'toss_securities', kind: 'stock', label: '토스증권',
-    krw: total('KRW'), usd: total('USD'), observedAt: parsed.data.observedAt, stale: row.status !== 'ready',
+    krw: total('KRW'), usd: total('USD'), observedAt: utc(parsed.data.observedAt), stale: row.status !== 'ready',
   };
 }
 
