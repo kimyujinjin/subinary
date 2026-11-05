@@ -196,6 +196,8 @@ describe('카테고리 충돌을 사용자가 푸는 경로 (resolveCategoryId)'
       // 사람이 확정한 것이므로 특정 예측의 산물이 아니다.
       predictionTraceId: null,
       writeFeedbackEvent: true,
+      // 대표의 사람 확정(cat-grocery)이 바뀐다 — 그 label이 든 스냅샷은 revoke 대상이다.
+      replacesRuleId: 'r-canonical',
     });
   });
 
@@ -245,5 +247,152 @@ describe('카테고리 충돌을 사용자가 푸는 경로 (resolveCategoryId)'
     });
     expect(plan.conflict).toBeNull();
     expect(plan.canonicalUpsert).toBeNull();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+
+describe('사용자가 고른 카테고리는 규칙 출처와 무관하게 따른다', () => {
+  /**
+   * 화면은 고른 이름들의 카테고리가 갈리면(출처 구분 없이) "어느 쪽으로 합칠까요?"를
+   * 묻는다. 종전 계획은 사람 확정끼리 갈렸을 때만 그 답을 받아서, 한쪽이 모델 예측이면
+   * 사용자가 고른 답이 조용히 버려지고 사람 확정 쪽이 이겼다(2026-11-05 진단).
+   */
+  const ACTOR = 'user-actor';
+
+  it('사람 확정과 모델 예측이 갈릴 때 모델 쪽을 골라도 그 카테고리로 통일한다', () => {
+    const plan = planMerchantRuleMerge({
+      canonical: '스타벅스',
+      actorUserId: ACTOR,
+      resolveCategoryId: 'cat-food',
+      rules: [
+        rule({ id: 'r1', merchantPattern: '스타벅스', categoryId: 'cat-cafe', source: 'human_confirmed', createdBy: 'u1' }),
+        rule({ id: 'r2', merchantPattern: 'starbucks', categoryId: 'cat-food' }),
+      ],
+    });
+    expect(plan.conflict).toBeNull();
+    expect(plan.canonicalUpsert).toMatchObject({
+      categoryId: 'cat-food',
+      source: 'human_confirmed',
+      predictionTraceId: null,
+      // 그 카테고리를 먼저 확정한 사람이 없으므로 지금 고른 사람의 확정이다.
+      createdBy: ACTOR,
+      confirmedAt: null,
+      fromPattern: 'starbucks',
+      writeFeedbackEvent: true,
+      // 대표 규칙의 카테고리가 바뀌므로 그 규칙이 든 학습 스냅샷을 revoke해야 한다.
+      replacesRuleId: 'r1',
+    });
+    // 고른 답을 담은 모델 예측 규칙은 대표가 승계했으므로 지운다.
+    expect(plan.deleteRuleIds).toEqual(['r2']);
+  });
+
+  it('둘 다 모델 예측이어도 고른 카테고리를 사람 확정으로 남긴다', () => {
+    const plan = planMerchantRuleMerge({
+      canonical: '스타벅스',
+      actorUserId: ACTOR,
+      resolveCategoryId: 'cat-cafe',
+      rules: [
+        rule({ id: 'r1', merchantPattern: '스타벅스', categoryId: 'cat-cafe' }),
+        rule({ id: 'r2', merchantPattern: 'starbucks', categoryId: 'cat-food' }),
+      ],
+    });
+    expect(plan.conflict).toBeNull();
+    // 대표가 이미 그 카테고리를 갖고 있어도 모델 예측이면 사람 확정으로 올린다.
+    expect(plan.canonicalUpsert).toMatchObject({
+      categoryId: 'cat-cafe',
+      source: 'human_confirmed',
+      createdBy: ACTOR,
+      fromPattern: '스타벅스',
+      writeFeedbackEvent: true,
+      // 카테고리는 그대로고 출처만 사람 확정으로 오른다 — 바뀐 label이 없다.
+      replacesRuleId: null,
+    });
+    expect(plan.deleteRuleIds).toEqual(['r2']);
+  });
+
+  it('고른 카테고리를 먼저 확정한 사람이 있으면 그 계보를 잇는다', () => {
+    const confirmedAt = AT('2026-07-01T00:00:00Z');
+    const plan = planMerchantRuleMerge({
+      canonical: '스타벅스',
+      actorUserId: ACTOR,
+      resolveCategoryId: 'cat-cafe',
+      rules: [
+        rule({ id: 'r1', merchantPattern: '스타벅스', categoryId: 'cat-food' }),
+        rule({ id: 'r2', merchantPattern: 'starbucks', categoryId: 'cat-cafe', source: 'human_confirmed', createdBy: 'u1', confirmedAt }),
+      ],
+    });
+    expect(plan.canonicalUpsert).toMatchObject({
+      categoryId: 'cat-cafe',
+      createdBy: 'u1',
+      confirmedAt,
+      fromPattern: 'starbucks',
+    });
+  });
+
+  it('고른 답이 후보 밖이면 사람 확정끼리 충돌하지 않아도 거부한다', () => {
+    // 화면이 본 상태와 서버 상태가 갈렸다. 다른 카테고리로 조용히 진행하면 고른 답이
+    // 버려진 것을 사용자가 모른다.
+    const plan = planMerchantRuleMerge({
+      canonical: '스타벅스',
+      resolveCategoryId: 'cat-transport',
+      rules: [
+        rule({ id: 'r1', merchantPattern: '스타벅스', categoryId: 'cat-cafe', source: 'human_confirmed' }),
+        rule({ id: 'r2', merchantPattern: 'starbucks', categoryId: 'cat-food' }),
+      ],
+    });
+    expect(plan.conflict?.reason).toBe(CATEGORY_NOT_IN_CONFLICT);
+    expect(plan.conflict?.categoryIds).toEqual(['cat-cafe', 'cat-food']);
+    expect(plan.canonicalUpsert).toBeNull();
+    expect(plan.deleteRuleIds).toEqual([]);
+  });
+});
+
+describe('이미 별칭이던 이름의 규칙은 주장으로 세지 않는다', () => {
+  /**
+   * `B -> A`로 묶을 때 B의 사람 확정은 계보로 남는다(규칙 3). 그 뒤 `A -> C`로 묶으면
+   * B도 C로 재지정되는데, B의 옛 규칙까지 주장으로 세면 화면이 보여 주지 않은 충돌로
+   * 병합이 막힌다 — 화면은 고른 이름(A·C)의 카테고리만 안다.
+   */
+  it('계보로 남은 다른 카테고리 때문에 병합을 막지 않는다', () => {
+    const plan = planMerchantRuleMerge({
+      canonical: '지에스25',
+      inertPatterns: new Set(['쥐에스25']),
+      rules: [
+        rule({ id: 'r1', merchantPattern: 'gs25', categoryId: 'cat-grocery', source: 'human_confirmed' }),
+        rule({ id: 'r2', merchantPattern: '쥐에스25', categoryId: 'cat-food', source: 'human_confirmed' }),
+      ],
+    });
+    expect(plan.conflict).toBeNull();
+    expect(plan.canonicalUpsert).toMatchObject({ categoryId: 'cat-grocery', fromPattern: 'gs25' });
+    // 지우지 않는 판단은 그대로다 — 계보가 붙어 있다.
+    expect(plan.keptRules).toContainEqual({ id: 'r2', merchantPattern: '쥐에스25', reason: 'human_lineage' });
+  });
+
+  it('계보만 남은 규칙을 대표가 승계하지 않는다', () => {
+    // 사용자가 대표 규칙을 지운 뒤에도 옛 별칭의 확정이 되살아나면 지운 판단이 무시된다.
+    const plan = planMerchantRuleMerge({
+      canonical: '지에스25',
+      inertPatterns: new Set(['쥐에스25']),
+      rules: [rule({ id: 'r2', merchantPattern: '쥐에스25', categoryId: 'cat-food', source: 'human_confirmed' })],
+    });
+    expect(plan.conflict).toBeNull();
+    expect(plan.canonicalUpsert).toBeNull();
+    expect(plan.deleteRuleIds).toEqual([]);
+  });
+
+  it('계보 규칙의 카테고리는 고를 수 있는 답이 아니다', () => {
+    const plan = planMerchantRuleMerge({
+      canonical: '지에스25',
+      inertPatterns: new Set(['쥐에스25']),
+      resolveCategoryId: 'cat-food',
+      rules: [
+        rule({ id: 'r0', merchantPattern: '지에스25', categoryId: 'cat-etc' }),
+        rule({ id: 'r1', merchantPattern: 'gs25', categoryId: 'cat-grocery', source: 'human_confirmed' }),
+        rule({ id: 'r2', merchantPattern: '쥐에스25', categoryId: 'cat-food', source: 'human_confirmed' }),
+      ],
+    });
+    expect(plan.conflict?.reason).toBe(CATEGORY_NOT_IN_CONFLICT);
+    expect(plan.conflict?.categoryIds).toEqual(['cat-etc', 'cat-grocery']);
   });
 });

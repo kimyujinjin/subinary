@@ -426,6 +426,31 @@ export class RecurringService {
     return withRecurringTransaction(this.db, series.householdId, async (tx) => {
       const actorMemberId = await this.requireMembership(series.householdId, actorUserId, tx);
 
+      // 이미 그 상태인 행에 같은 판단이 다시 오면 **아무것도 바꾸지 않는다.** 예전에는
+      // 확정된 행의 "정기 결제 맞아요"를 또 누르면 아래 patch가 `stoppedDismissedAt`을
+      // 지워, 앞서 받은 "계속 써요" 답이 사라지고 해지 질문이 다시 떴다. 판단 시각·판단자도
+      // 그대로 둔다 — 같은 답을 한 번 더 한 것은 새 판단이 아니다.
+      if (decision !== 'still_active') {
+        const [current] = await tx
+          .select({
+            id: schema.recurringSeries.id,
+            status: schema.recurringSeries.status,
+          })
+          .from(schema.recurringSeries)
+          .where(
+            and(
+              eq(schema.recurringSeries.id, seriesId),
+              this.visibleToActor(actorMemberId, tx),
+            ),
+          )
+          .limit(1);
+        // 볼 수 없는 series는 "권한 없음"이 아니라 "없음"이다(아래 update와 같은 규칙).
+        if (!current) throw new NotFoundException('recurring series not found');
+        if (current.status === decision) {
+          return { id: current.id, status: current.status };
+        }
+      }
+
       const now = new Date();
       // `still_active`("계속 써요")는 **상태를 바꾸지 않는다.** 상태를 건드리면 그 series가
       // `/upcoming`(confirmed만 조회)에서 빠져 이번 달 예상 총액이 줄어드는데, 사용자는

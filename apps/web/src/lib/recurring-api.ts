@@ -13,7 +13,6 @@
  * ------------------------------------------------------------------------- */
 import type {
   RecurringDecisionResponse,
-  RecurringRecomputeResponse,
   RecurringSeriesListResponse,
   RecurringUpcomingResponse,
 } from "@family/contracts";
@@ -49,18 +48,6 @@ export function decideRecurringSeries(
     `/v1/recurring/series/${seriesId}/decision`,
     { method: "POST", accessToken, body: { decision } },
   );
-}
-
-/** 후보 재계산. 별칭을 정리한 뒤 한 번 돌리면 후보가 현재 가맹점 신원과 맞는다. */
-export function recomputeRecurringSeries(
-  accessToken: string | null,
-  householdId: string,
-): Promise<RecurringRecomputeResponse> {
-  return apiFetch<RecurringRecomputeResponse>(`/v1/recurring/recompute`, {
-    method: "POST",
-    accessToken,
-    body: { householdId },
-  });
 }
 
 export const recurringUpcomingQueryKey = (

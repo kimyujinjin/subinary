@@ -388,6 +388,12 @@ export class AnalyticsService {
     userId: string,
     householdId: string | undefined,
     query: PeriodQuery,
+    /**
+     * 돌려줄 가맹점 수. 화면은 상위 {@link TOP_MERCHANTS}곳이면 되지만, AI가 "스타벅스 얼마?"를
+     * 답할 때 21번째 가맹점을 "결제가 없어요"라고 하면 자신 있는 오답이라 더 넓게 받는다. 집계
+     * 조건은 이 메서드 하나에만 둔다(ADR-0026 지출 합계 단일 정의).
+     */
+    options?: { limit?: number },
   ): Promise<MerchantBreakdown> {
     const hh = this.requireHouseholdId(householdId);
     const actorMemberId = await this.requireMembership(hh, userId);
@@ -423,7 +429,7 @@ export class AnalyticsService {
       .where(and(...conds))
       .groupBy(sql`1`)
       .orderBy(desc(netExpr))
-      .limit(TOP_MERCHANTS);
+      .limit(options?.limit ?? TOP_MERCHANTS);
 
     const total = await this.sumNet(conds);
     const items = rows.map((r) => {

@@ -87,6 +87,24 @@ export const merchantListResponseSchema = z.object({
    * 빈 배열은 "제안할 것이 없다"이고 정상이다 — 실측에서 이 값은 2묶음이다.
    */
   identityCandidates: z.array(merchantIdentityCandidateSchema),
+  /**
+   * 카드사가 **잘라 보낸** 이름 묶음(`findTruncationCandidates`). 사용자가 거절한 묶음은
+   * **이미 빠져 있다** — 브랜드 제안과 같은 이유로 서버가 거른다(거절 신원이 해시다).
+   *
+   * 옛 서버는 이 필드를 보내지 않는다. 그때 화면은 목록으로 직접 계산한다(거절은 못 거른다).
+   */
+  truncationCandidates: z
+    .array(
+      z.object({
+        /** 제안하는 대표 — 묶음에서 가장 긴 이름. */
+        canonical: z.string(),
+        aliases: z.array(z.string()),
+        /** 묶었을 때 합쳐지는 거래 건수·순지출. 확정 전 미리보기다. */
+        transactionCount: z.number().int(),
+        netTotal: z.number().int(),
+      }),
+    )
+    .optional(),
 });
 export type MerchantListResponse = z.infer<typeof merchantListResponseSchema>;
 
@@ -101,13 +119,14 @@ export const merchantAliasCreateRequestSchema = z.object({
   canonical: z.string().trim().min(1).max(200),
   aliases: z.array(z.string().trim().min(1).max(200)).min(1).max(50),
   /**
-   * 묶는 이름들에 **사람이 확정한 카테고리가 갈렸을 때** 사용자가 고른 답.
+   * 묶는 이름들의 **카테고리가 갈렸을 때** 사용자가 고른 답(규칙 출처 무관).
    *
-   * 없으면 서버가 409로 거부한다 — 시스템이 임의로 고르면 그 판단이 틀렸을 때
-   * 되돌릴 근거가 남지 않는다(ADR-0029). 이 값이 있으면 **사람이 고른 것**이므로
-   * 그 원칙을 지키면서 진행할 수 있다.
+   * 사람이 확정한 카테고리끼리 갈렸는데 이 값이 없으면 서버가 409로 거부한다 — 시스템이
+   * 임의로 고르면 그 판단이 틀렸을 때 되돌릴 근거가 남지 않는다(ADR-0029). 이 값이 있으면
+   * **사람이 고른 것**이므로 그 카테고리로 통일하고 사람 확정으로 남긴다. 한쪽이 모델
+   * 예측이어도 마찬가지다 — 화면이 물었으면 답을 따른다.
    *
-   * 갈린 카테고리 중 하나여야 한다. 무관한 값이면 409 — 사용자가 보지 못한 제3의
+   * 묶는 이름들의 카테고리 중 하나여야 한다. 무관한 값이면 409 — 사용자가 보지 못한 제3의
    * 카테고리로 과거 거래가 옮겨가면 확정이 아니라 사고다.
    */
   categoryId: z.string().uuid().optional(),
@@ -163,12 +182,17 @@ export type MerchantAliasDeleteResponse = z.infer<
  * `brand`·`reason`은 제안이 **무엇을 근거로** 올라왔는지를 남긴다. 정밀도를 유형별로
  * 볼 수 있어야 어느 규칙이 틀리는지 말할 수 있다 — 전체 정밀도 하나로는
  * "표기 차이는 잘 맞고 지점 절단이 틀린다"를 구분할 수 없다.
+ *
+ * `truncation`은 잘린 이름 제안의 거절이다. 같은 질문("같은 가게인가")의 답이라 같은
+ * 계보에 남기고, 브랜드를 거치지 않는 제안이므로 `brand`가 없다(브랜드 제안이면 서버가
+ * `brand`를 요구한다).
  */
 export const merchantIdentityRejectRequestSchema = z.object({
   householdId: z.string().uuid(),
+  /** 목록에 뜬 이름 그대로(대표 포함). 서버는 이 이름으로 거절 키를 만든다. */
   names: z.array(z.string().trim().min(1).max(200)).min(2).max(50),
-  brand: z.string().trim().min(1).max(100),
-  reason: z.enum(['brand_notation', 'brand_branch_prefix']),
+  brand: z.string().trim().min(1).max(100).optional(),
+  reason: z.enum(['brand_notation', 'brand_branch_prefix', 'truncation']),
 });
 export type MerchantIdentityRejectRequest = z.infer<
   typeof merchantIdentityRejectRequestSchema

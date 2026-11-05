@@ -13,6 +13,7 @@
  *   사용자 기대에 맞는다. 원문(`merchant_raw`)은 건드리지 않으므로 되돌릴 수 있다.
  */
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Inject,
@@ -20,6 +21,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  REDACTED_MERCHANT_LABEL,
   redactedMerchantLabel,
   schema,
   visibilityScope,
@@ -38,6 +40,7 @@ import type {
   MerchantIdentityCandidate,
   MerchantIdentityRejectRequest,
   MerchantIdentityRejectResponse,
+  MerchantListResponse,
   MerchantSummary,
 } from '@family/contracts';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
@@ -62,6 +65,11 @@ const ADMIN_ROLES = ['owner', 'admin'] as const;
  */
 const IDENTITY_TARGET_TYPE = 'merchant-identity';
 const IDENTITY_LABEL_SCHEMA = 'merchant-identity-v1';
+
+/** 잘린 이름 제안 한 묶음(목록 응답의 `truncationCandidates` 원소). */
+type MerchantTruncationCandidate = NonNullable<
+  MerchantListResponse['truncationCandidates']
+>[number];
 
 /**
  * ## 제안 정밀도를 어떻게 세는가
@@ -102,6 +110,7 @@ export class MerchantService {
   ): Promise<{
     items: MerchantSummary[];
     identityCandidates: MerchantIdentityCandidate[];
+    truncationCandidates: MerchantTruncationCandidate[];
   }> {
     const actorMemberId = await this.requireMembership(householdId, userId);
 
@@ -217,34 +226,54 @@ export class MerchantService {
         ),
       );
     const rejected = new Set(rejectedRows.map((r) => r.targetId));
+    /**
+     * 거절 키는 목록에 뜬 이름 그대로 만든다(`rejectIdentityCandidate`). 2026-11-05 이전
+     * 거절은 이름을 한 번 더 정규화해 저장했으므로 그 키도 함께 본다 — 정규화가 이름을
+     * 바꾸는 경우(수기로 고친 이름 등) 예전 거절이 "거절했는데 또 뜬다"가 되지 않게.
+     */
+    const isRejected = (names: readonly string[]): boolean =>
+      rejected.has(createMerchantIdentityTargetId(householdId, names)) ||
+      rejected.has(
+        createMerchantIdentityTargetId(
+          householdId,
+          names.map((n) => normalizeMerchant(n)).filter((n) => n.length > 0),
+        ),
+      );
 
     /**
      * 브랜드/지점 병합 후보.
      *
      * 절단 후보가 다루는 이름은 제외한다 — 실측에서 겹치는 쌍이 있고
      * (`씨유영등포` ⊂ `씨유영등포도림`), 같은 묶음이 두 블록에 나오면 사용자가
-     * 같은 가게를 두 번 처리한다. 절단 쪽은 화면이 계산하므로 여기서 **같은 함수를
-     * 한 번 더** 부른다(그 결과는 내려주지 않는다).
+     * 같은 가게를 두 번 처리한다.
      *
      * 이 목록은 타인의 `private`/`summary_only` 거래가 접힌 뒤의 이름만 담는다 —
      * `items`가 이미 `redactedMerchantLabel`을 통과했기 때문이다. 후보를 원본
      * 이름으로 다시 계산하면 접어 둔 이름이 제안에 실려 새어 나간다(P0-6).
      */
+    const truncationGroups = findTruncationCandidates(items);
+    // 거절한 절단 묶음의 이름도 계속 뺀다 — "다른 가게예요"라고 답한 이름들이 브랜드
+    // 제안으로 다시 올라오면 같은 질문을 두 번 받는 것이다.
     const truncationNames = new Set(
-      findTruncationCandidates(items).flatMap((g) => [g.canonical, ...g.aliases]),
+      truncationGroups.flatMap((g) => [g.canonical, ...g.aliases]),
     );
+    /**
+     * 잘린 이름 제안 — 화면이 계산하던 것을 여기서 계산해 **거절한 묶음을 걸러** 내려준다.
+     * 브랜드 제안과 같은 이유다: 거절 기록의 신원이 `node:crypto` 해시라 브라우저가
+     * 같은 키를 만들 수 없다. 화면은 이 필드가 없는 옛 서버에서만 스스로 계산한다.
+     */
+    const truncationCandidates = truncationGroups
+      .filter((g) => !isRejected([g.canonical, ...g.aliases]))
+      .map((g) => ({
+        canonical: g.canonical,
+        aliases: g.aliases,
+        transactionCount: g.transactionCount,
+        netTotal: g.netTotal,
+      }));
     const identityCandidates = findMerchantIdentityCandidates(items, {
       excludeNames: truncationNames,
     })
-      .filter(
-        (g) =>
-          !rejected.has(
-            createMerchantIdentityTargetId(householdId, [
-              g.canonical,
-              ...g.aliases,
-            ]),
-          ),
-      )
+      .filter((g) => !isRejected([g.canonical, ...g.aliases]))
       .map((g) => ({
         brand: g.brand,
         reason: g.reason,
@@ -255,7 +284,7 @@ export class MerchantService {
         evidence: g.evidence.map((e) => ({ ...e })),
       }));
 
-    return { items, identityCandidates };
+    return { items, identityCandidates, truncationCandidates };
   }
 
   /**
@@ -273,9 +302,15 @@ export class MerchantService {
     input: MerchantIdentityRejectRequest,
   ): Promise<MerchantIdentityRejectResponse> {
     await this.requireMembership(input.householdId, userId, ADMIN_ROLES);
-    // 이름은 목록에 뜬 그대로 오지만, 화면과 서버가 같은 키를 계산해야 하므로
-    // 정규화를 한 번 더 통과시킨다(화면이 보낸 값을 그대로 믿지 않는다).
-    const names = input.names.map((n) => normalizeMerchant(n)).filter((n) => n.length > 0);
+    // 브랜드 제안은 판정 근거(브랜드)를 함께 남긴다. 잘린 이름 제안에는 브랜드가 없다.
+    if (input.reason !== 'truncation' && !input.brand) {
+      throw new BadRequestException('브랜드 제안에는 브랜드가 필요해요.');
+    }
+    // 키는 목록에 뜬 이름 **그대로** 만든다 — 목록 필터(`listMerchants`)가 같은 이름으로
+    // 키를 다시 만들기 때문이다. 종전처럼 한 번 더 정규화하면, 정규화가 이름을 바꾸는
+    // 경우(수기로 고친 이름 등) 키가 갈려 거절한 묶음이 다시 뜨거나, 두 이름이 하나로
+    // 합쳐져 거절 자체가 실패할 수 있다.
+    const names = [...new Set(input.names.map((n) => n.trim()))].filter((n) => n.length > 0);
     if (names.length < 2) {
       throw new ConflictException('후보를 이루는 이름이 2개 미만입니다');
     }
@@ -289,7 +324,7 @@ export class MerchantService {
       // 데이터셋 스냅샷으로 흘러간다(`createMerchantIdentityTargetId` 주석).
       label: {
         decision: 'rejected',
-        brand: input.brand,
+        ...(input.brand ? { brand: input.brand } : {}),
         reason: input.reason,
         nameCount: names.length,
       },
@@ -313,6 +348,11 @@ export class MerchantService {
     userId: string,
     input: MerchantAliasCreateRequest,
   ): Promise<MerchantAliasCreateResponse> {
+    // '(비공개)'는 다른 구성원의 요약 공개 결제를 접은 표시일 뿐 가맹점이 아니다. 대표로 고르면
+    // 아래 백필이 묶은 가맹점 거래 전부의 이름을 '(비공개)'로 덮어쓴다(2026-11-05 발견).
+    if (input.canonical === REDACTED_MERCHANT_LABEL || input.aliases.includes(REDACTED_MERCHANT_LABEL)) {
+      throw new BadRequestException('비공개 결제는 묶을 수 없어요.');
+    }
     await this.requireMembership(input.householdId, userId, ADMIN_ROLES);
     const { householdId } = input;
 
@@ -447,6 +487,13 @@ export class MerchantService {
       const plan = planMerchantRuleMerge({
         canonical,
         resolveCategoryId: input.categoryId,
+        actorUserId: userId,
+        // 예전 병합으로 이미 별칭이던 이름 — 그 규칙은 계보일 뿐 지금의 주장이 아니다.
+        // 화면은 고른 이름들의 카테고리만 알므로, 이것까지 세면 보여 주지 않은 충돌로 막힌다.
+        inertPatterns: new Set([
+          ...dependents.map((d) => d.alias),
+          ...(input.canonical !== canonical ? [input.canonical] : []),
+        ]),
         rules: rules.map((rule) => ({
           ...rule,
           source: rule.source as MerchantRuleSource,
@@ -464,11 +511,12 @@ export class MerchantService {
         //
         // 사용자가 답을 고르면(`categoryId`) 이 분기에 오지 않는다 — 화면은 카테고리가
         // 갈린 것을 **묶기 전에** 알 수 있으므로(`MerchantSummary.categoryId`) 대표를
-        // 고를 때 카테고리도 함께 묻는다. 실측 2026-09-05에 제안 3건이 전부 이 충돌에
-        // 걸려 있었고, 그때 화면은 "묶으세요"라고 한 뒤 거부만 했다.
+        // 고를 때 카테고리도 함께 묻고, 고른 답은 규칙 출처와 무관하게 따른다. 실측
+        // 2026-09-05에 제안 3건이 전부 이 충돌에 걸려 있었고, 그때 화면은 "묶으세요"라고
+        // 한 뒤 거부만 했다.
         if (plan.conflict.reason === CATEGORY_NOT_IN_CONFLICT) {
           throw new ConflictException(
-            '고른 카테고리가 이 가맹점들에 확정된 것 중에 없어요.',
+            '고른 카테고리가 이 가맹점들의 카테고리에 없어요. 다시 열어 골라 주세요.',
           );
         }
         throw new ConflictException(

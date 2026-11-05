@@ -54,6 +54,7 @@ import {
   buildMerchantAliasIndex,
   normalizeMerchant,
   resolveCanonicalMerchant,
+  type MerchantAliasIndex,
 } from '@family/shared';
 
 import { DB } from '../database/database.constants';
@@ -105,7 +106,18 @@ export class RecategorizeService {
     actor: Actor,
     merchant: string,
   ): Promise<{ canonical: string; targets: Target[] }> {
-    const aliasIndex = buildMerchantAliasIndex(
+    const aliasIndex = await this.loadAliasIndex(householdId);
+    const canonical = this.canonicalOf(merchant, householdId, aliasIndex);
+    const byCanonical = await this.loadTargetsByCanonical(
+      householdId,
+      actor,
+      aliasIndex,
+    );
+    return { canonical, targets: byCanonical.get(canonical) ?? [] };
+  }
+
+  private async loadAliasIndex(householdId: string): Promise<MerchantAliasIndex> {
+    return buildMerchantAliasIndex(
       await this.db
         .select({
           householdId: schema.merchantAliases.householdId,
@@ -115,14 +127,43 @@ export class RecategorizeService {
         .from(schema.merchantAliases)
         .where(eq(schema.merchantAliases.householdId, householdId)),
     );
+  }
 
-    const canonical =
+  /** 가맹점명(요청값·규칙 패턴)의 대표 신원. 정규화 결과가 비면 빈 문자열이다. */
+  private canonicalKey(
+    merchant: string,
+    householdId: string,
+    aliasIndex: MerchantAliasIndex,
+  ): string {
+    return (
       resolveCanonicalMerchant(merchant, householdId, aliasIndex) ??
-      normalizeMerchant(merchant);
+      normalizeMerchant(merchant)
+    );
+  }
+
+  /** 요청한 가맹점명의 대표 신원. 비면 무엇을 바꿀지 정할 수 없다. */
+  private canonicalOf(
+    merchant: string,
+    householdId: string,
+    aliasIndex: MerchantAliasIndex,
+  ): string {
+    const canonical = this.canonicalKey(merchant, householdId, aliasIndex);
     if (canonical.length === 0) {
       throw new BadRequestException('가맹점 이름이 비어 있어요');
     }
+    return canonical;
+  }
 
+  /**
+   * 이 액터가 보고 바꿀 수 있는 승인 거래 전부를 **대표 신원별로** 묶는다 — 대상 선정의
+   * 유일한 쿼리다. 규칙 목록은 이 결과 하나에서 규칙마다 고른다(예전에는 규칙마다 같은
+   * 두 쿼리를 다시 돌려 규칙 300개면 600번이었다).
+   */
+  private async loadTargetsByCanonical(
+    householdId: string,
+    actor: Actor,
+    aliasIndex: MerchantAliasIndex,
+  ): Promise<Map<string, Target[]>> {
     const rows = await this.db
       .select({
         id: schema.cardTransactions.id,
@@ -146,21 +187,24 @@ export class RecategorizeService {
         ),
       );
 
-    const targets: Target[] = [];
+    const byCanonical = new Map<string, Target[]>();
     for (const row of rows) {
       const rowCanonical = row.merchantRaw
         ? resolveCanonicalMerchant(row.merchantRaw, householdId, aliasIndex)
         : row.merchantNormalized;
-      if (rowCanonical !== canonical) continue;
-      targets.push({
+      if (!rowCanonical) continue;
+      const target: Target = {
         id: row.id,
         categoryId: row.categoryId,
         netAmount: row.netAmount,
         // 집계 창과 같은 규약 — approvedAt이 없어도 빠지지 않는다.
         at: row.approvedAt ?? row.createdAt,
-      });
+      };
+      const bucket = byCanonical.get(rowCanonical);
+      if (bucket) bucket.push(target);
+      else byCanonical.set(rowCanonical, [target]);
     }
-    return { canonical, targets };
+    return byCanonical;
   }
 
   /* ---------------------------------------------------------------------- */
@@ -388,12 +432,12 @@ export class RecategorizeService {
    * 아니라 "그래서 과거는 어떻게 되어 있는지"를 보여주는 것이다. 규칙과 다른 카테고리로
    * 남은 거래가 0건이면 소급할 것이 없고, 그때 버튼을 띄우면 눌러도 아무 일이 없다.
    *
-   * 대상 판정은 {@link collectTargets}를 그대로 쓴다 — 목록의 숫자와 미리보기의 숫자가
-   * 갈리면 사용자는 둘 중 어느 것도 믿지 않는다.
+   * 대상 판정은 {@link collectTargets}와 같은 재료·같은 신원 해석을 쓴다(거래는 한 번만
+   * 읽는다) — 목록의 숫자와 미리보기의 숫자가 갈리면 사용자는 둘 중 어느 것도 믿지 않는다.
    */
   async listRules(userId: string, householdId: string): Promise<CategoryRuleList> {
     const actor = await this.requireMembership(householdId, userId);
-    const rows = await this.db
+    const rulesQuery = this.db
       .select({
         id: schema.merchantCategoryRules.id,
         merchantPattern: schema.merchantCategoryRules.merchantPattern,
@@ -411,10 +455,17 @@ export class RecategorizeService {
       .where(eq(schema.merchantCategoryRules.householdId, householdId))
       .orderBy(desc(schema.merchantCategoryRules.updatedAt))
       .limit(300);
+    // 규칙 목록과 대상 재료는 서로 기다릴 필요가 없다. 대상은 한 번만 읽어 규칙마다 고른다.
+    const [rows, aliasIndex] = await Promise.all([
+      rulesQuery,
+      this.loadAliasIndex(householdId),
+    ]);
+    const byCanonical = await this.loadTargetsByCanonical(householdId, actor, aliasIndex);
 
     const items = [];
     for (const row of rows) {
-      const { targets } = await this.collectTargets(householdId, actor, row.merchantPattern);
+      const canonical = this.canonicalKey(row.merchantPattern, householdId, aliasIndex);
+      const targets = canonical ? (byCanonical.get(canonical) ?? []) : [];
       items.push({
         id: row.id,
         merchantPattern: row.merchantPattern,
@@ -467,12 +518,13 @@ export class RecategorizeService {
   }
 
   async listBatches(userId: string, householdId: string): Promise<RecategorizeBatchList> {
-    await this.requireMembership(householdId, userId);
+    const actor = await this.requireMembership(householdId, userId);
     const rows = await this.db
       .select({
         id: schema.categoryRecategorizeBatches.id,
         merchantCanonical: schema.categoryRecategorizeBatches.merchantCanonical,
         appliedCount: schema.categoryRecategorizeBatches.appliedCount,
+        appliedBy: schema.categoryRecategorizeBatches.appliedBy,
         appliedAt: schema.categoryRecategorizeBatches.appliedAt,
         revertedAt: schema.categoryRecategorizeBatches.revertedAt,
         revertedCount: schema.categoryRecategorizeBatches.revertedCount,
@@ -496,7 +548,10 @@ export class RecategorizeService {
         appliedAt: row.appliedAt.toISOString(),
         revertedAt: row.revertedAt ? row.revertedAt.toISOString() : null,
         revertedCount: row.revertedCount,
-        revertable: row.revertedAt === null,
+        // `revert`와 같은 권한 규칙 — 일반 구성원은 직접 적용한 기록만 되돌린다. 버튼을
+        // 보여 놓고 403을 돌려주면 화면이 거짓말을 한 것이 된다.
+        revertable:
+          row.revertedAt === null && (actor.privileged || row.appliedBy === userId),
       })),
     };
   }

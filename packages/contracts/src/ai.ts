@@ -148,16 +148,24 @@ export type FinanceQueryItem = z.infer<typeof financeQueryItemSchema>;
 
 /**
  * The aggregation summary a finance-query answer is grounded in. All amounts
- * are computed in SQL by the analytics service (never by the LLM): `totalNet`
- * is the resolved scope's net spend (the matched category's net when
- * `categorySlug` resolved), `items` are the top breakdown rows for
- * byCategory/byMerchant questions.
+ * are computed in SQL (never by the LLM).
+ *
+ * - A **specific subject** — the question named a category (`categoryName` set;
+ *   `categorySlug` is null for 미분류) or a merchant/brand (`merchantName` set) —
+ *   makes `totalNet`/`transactionCount` that subject's own net and count, and
+ *   `items` its rows (the brand's stores for a brand).
+ * - Otherwise `totalNet` is the month's net spend and `items` are the top
+ *   breakdown rows for byCategory/byMerchant questions.
+ *
+ * `merchantName` is optional so older app bundles (which ignore it) and older
+ * servers (which never send it) stay compatible.
  */
 export const financeQueryDataSchema = z.object({
   month: z.string(),
   aggregate: financeAggregateKindSchema,
   categorySlug: z.string().nullable(),
   categoryName: z.string().nullable(),
+  merchantName: z.string().nullable().optional(),
   totalNet: z.number().int(),
   transactionCount: z.number().int(),
   items: z.array(financeQueryItemSchema).optional(),

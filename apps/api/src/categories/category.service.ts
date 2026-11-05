@@ -156,9 +156,43 @@ export class CategoryService {
   async deleteCategory(userId: string, id: string): Promise<void> {
     const cat = await this.getCustomOrThrow(id);
     const householdId = cat.householdId as string;
-    await this.requireMembership(householdId, userId);
+    const role = await this.memberRole(householdId, userId);
 
     await this.db.transaction(async (tx) => {
+      // 예산에 쓰는 카테고리를 지우면 그 예산도 지워진다 — 예산을 만들 수 있는 사람(소유자·관리자)만.
+      const [budget] = await tx
+        .select({ id: schema.budgets.id })
+        .from(schema.budgets)
+        .where(and(eq(schema.budgets.scopeType, 'category'), eq(schema.budgets.scopeRefId, id)))
+        .limit(1);
+      if (budget && role !== 'owner' && role !== 'admin') {
+        throw new ForbiddenException('예산에 쓰는 카테고리는 가족 관리자만 지울 수 있어요.');
+      }
+      // '지난 거래 다시 분류' 기록과 학습 자료는 이 카테고리·규칙을 가리킨다(FK NO ACTION). 기록을
+      // 지우면 되돌리기·학습 계보가 끊기므로 지우지 않는다 — 예전에는 여기서 FK 위반 500이 났다.
+      const [batch] = await tx
+        .select({ id: schema.categoryRecategorizeBatches.id })
+        .from(schema.categoryRecategorizeBatches)
+        .where(eq(schema.categoryRecategorizeBatches.toCategoryId, id))
+        .limit(1);
+      const [item] = await tx
+        .select({ batchId: schema.categoryRecategorizeItems.batchId })
+        .from(schema.categoryRecategorizeItems)
+        .where(eq(schema.categoryRecategorizeItems.previousCategoryId, id))
+        .limit(1);
+      const [snapshot] = await tx
+        .select({ id: schema.datasetSnapshotItems.id })
+        .from(schema.datasetSnapshotItems)
+        .innerJoin(
+          schema.merchantCategoryRules,
+          eq(schema.merchantCategoryRules.id, schema.datasetSnapshotItems.merchantCategoryRuleId),
+        )
+        .where(eq(schema.merchantCategoryRules.categoryId, id))
+        .limit(1);
+      if (batch || item || snapshot) {
+        throw new ConflictException('지난 분류 변경 기록에 쓰인 카테고리라 지울 수 없어요. 이름을 바꿔 계속 쓸 수 있어요.');
+      }
+
       // 이 카테고리를 쓰던 거래는 '미분류'로 되돌린다.
       await tx
         .update(schema.cardTransactions)
@@ -193,6 +227,23 @@ export class CategoryService {
    * Enforces that `userId` is an active member of `householdId` (403 otherwise,
    * without disclosing whether the household exists — PRD §26).
    */
+  /** 활성 구성원의 역할. 구성원이 아니면 403(요구 사항은 requireMembership과 같다). */
+  private async memberRole(householdId: string, userId: string): Promise<string> {
+    const [member] = await this.db
+      .select({ role: schema.householdMembers.role })
+      .from(schema.householdMembers)
+      .where(
+        and(
+          eq(schema.householdMembers.householdId, householdId),
+          eq(schema.householdMembers.userId, userId),
+          eq(schema.householdMembers.status, 'active'),
+        ),
+      )
+      .limit(1);
+    if (!member) throw new ForbiddenException('not a household member');
+    return member.role;
+  }
+
   private async requireMembership(
     householdId: string,
     userId: string,

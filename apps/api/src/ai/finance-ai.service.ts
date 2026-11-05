@@ -22,6 +22,10 @@
  * {@link ./finance-intent}에 있고, 거부 기준은 "분류 경로"가 아니라 "분류 결과"다
  * — LLM이 한 번 흔들렸다고 답할 수 있는 질문까지 거부하지 않는다.
  *
+ * 대상 해석(AI 도우미 오답 P1): 질문이 카테고리·가맹점 이름을 대면 그 대상의 금액만
+ * 답한다({@link ./finance-subject}). 예전에는 "스타벅스 얼마 썼어?"가 의도 해석에서
+ * `total`로 떨어져 월 총지출이 그 가맹점의 금액처럼 나갔다.
+ *
  * 관측(로드맵 C-6): 질의 1건 = `pipeline_runs`/`pipeline_step_runs` 1건으로 남겨
  * 거부율·폴백율을 SQL로 셀 수 있게 한다. 원문은 담지 않고 집계 축·거부 여부·거부
  * 갈래만 `metrics`에 남긴다.
@@ -33,11 +37,12 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { and, desc, eq, isNull, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { ProviderSet } from '@family/ai-providers';
 import type {
+  CategoryBreakdown,
   FinanceQueryData,
   FinanceQueryItem,
   FinanceQueryResponse,
@@ -72,6 +77,15 @@ import {
   type SupportedFinanceIntent,
   type UnsupportedKind,
 } from './finance-intent';
+import {
+  UNCATEGORIZED_LABEL,
+  UNKNOWN_MERCHANT_LABEL,
+  asksForWholeTotal,
+  resolveFinanceSubject,
+  type CategorySpend,
+  type FinanceSubject,
+  type MerchantSpend,
+} from './finance-subject';
 
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
@@ -80,6 +94,9 @@ import {
 /** UUID v4-ish shape guard (query-string 파라미터 방어 — 잘못된 값은 400). */
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** 질문 속 가맹점을 찾을 때 받는 가맹점 수(한 가족의 한두 달 가맹점은 이보다 훨씬 적다). */
+const MERCHANT_SUBJECT_LIMIT = 1000;
 
 /** byCategory/byMerchant 응답 data.items 상위 노출 개수. */
 const TOP_ITEMS = 5;
@@ -99,8 +116,8 @@ const ANOMALY_MULTIPLIER = 3;
  */
 const MIN_ELAPSED_RATE = 1 / 31;
 
-/** 타 구성원 summary_only 가맹점 마스킹 라벨(analytics.merchants와 동일). */
-const LABEL_UNKNOWN_MERCHANT = '미확인 가맹점';
+/** 이름 없는 가맹점 라벨(analytics.merchants와 동일 — 대상 해석과 같은 정의). */
+const LABEL_UNKNOWN_MERCHANT = UNKNOWN_MERCHANT_LABEL;
 
 /** 예산 이름이 없을 때 스코프별 대체 라벨. */
 const BUDGET_SCOPE_LABEL: Record<string, string> = {
@@ -184,7 +201,7 @@ export class FinanceAiService {
     // 권한(403)은 관측 블록 **밖에서** 먼저 확인한다. 안에서 던지면
     // trackPipelineExecution이 이를 `pipeline_failed` critical 운영 알림으로
     // 승격시켜, 사용자의 잘못된 householdId 하나가 당직을 깨운다.
-    await this.requireMembership(householdId, userId);
+    const actorMemberId = await this.requireMembership(householdId, userId);
 
     // summarize는 execute가 끝난 뒤 같은 클로저에서 실행되므로, 응답에 실리지 않는
     // 관측 축(분류 경로·거부 갈래)을 여기에 담아 넘긴다.
@@ -195,6 +212,7 @@ export class FinanceAiService {
       refused: boolean;
       unsupportedKind: UnsupportedKind | null;
       categoryResolved: boolean;
+      merchantResolved: boolean;
     } | null = null;
 
     return trackPipelineExecution<FinanceQueryResponse>(
@@ -240,6 +258,7 @@ export class FinanceAiService {
             refused: true,
             unsupportedKind,
             categoryResolved: false,
+            merchantResolved: false,
           };
           this.logger.log(
             `finance-query refused household=${householdId} ` +
@@ -255,11 +274,17 @@ export class FinanceAiService {
 
         // ② 집계 — analytics의 SQL 집계 재사용(공개범위 스코프 포함).
         //    권한 오류(403)는 그대로 전파한다(폴백 대상이 아님 — LLM 실패만 폴백).
-        const data = await this.aggregate(userId, householdId, {
-          month: intent.month,
-          categorySlug: intent.categorySlug,
-          aggregate: resolved,
-        });
+        const data = await this.aggregate(
+          userId,
+          householdId,
+          actorMemberId,
+          {
+            month: intent.month,
+            categorySlug: intent.categorySlug,
+            aggregate: resolved,
+          },
+          question,
+        );
 
         // ③ 답변 생성 — LLM(JSON 강제), 실패/무효 시 집계값 직접 포맷 템플릿.
         let answer: string;
@@ -282,7 +307,9 @@ export class FinanceAiService {
           aggregate: data.aggregate,
           refused: false,
           unsupportedKind: null,
-          categoryResolved: data.categorySlug !== null,
+          // 가족 카테고리·미분류는 slug가 시스템 목록에 없으므로 이름으로 센다.
+          categoryResolved: data.categoryName !== null,
+          merchantResolved: data.merchantName != null,
         };
 
         // 로그는 식별자/경로/집계형태만(질문 원문·금액 미포함).
@@ -407,6 +434,8 @@ export class FinanceAiService {
         '"aggregate": "total"|"byCategory"|"byMerchant"|"unsupported"}\n' +
         `categorySlug는 다음 중 하나만 사용: ${slugGuide}. ` +
         '해당 없으면 생략하세요. month가 특정되지 않으면 생략하세요.\n' +
+        '목록에 없는 카테고리(가족이 만든 카테고리)나 특정 가맹점·브랜드의 지출을 ' +
+        '물으면 categorySlug를 생략하고 각각 byCategory·byMerchant로 하세요.\n' +
         '이 시스템이 답할 수 있는 것은 특정 기간의 지출 금액·건수를 전체(total)/' +
         '카테고리별(byCategory)/가맹점별(byMerchant)로 집계하는 것뿐입니다. ' +
         '기간 비교, 미래 예측, 지출과 무관한 질문처럼 이 셋으로 답할 수 없는 ' +
@@ -416,7 +445,7 @@ export class FinanceAiService {
       maxTokens: 256,
       metadata: {
         task: 'finance-intent',
-        promptVersion: 'finance-intent-v2',
+        promptVersion: 'finance-intent-v3',
         pipelineRunId,
       },
     });
@@ -449,22 +478,43 @@ export class FinanceAiService {
   /* ② 집계(analytics 재사용 — 권한/공개범위는 그 안에서 강제)                  */
   /* ---------------------------------------------------------------------- */
 
-  /** 의도에 맞는 SQL 집계 요약을 구성한다(모든 수치는 analytics SQL 결과). */
+  /**
+   * 의도에 맞는 SQL 집계 요약을 구성한다(모든 수치는 SQL 집계 결과).
+   *
+   * 먼저 질문이 **이름을 댄 대상**(카테고리·가맹점)을 찾는다. 의도 해석은
+   * "스타벅스 얼마 썼어?"를 `total`로 읽고 가족이 만든 카테고리를 모른다 — 그대로 두면
+   * 월 총지출이 그 대상의 금액처럼 나간다. 대상을 찾으면 그 대상의 금액만 답하고,
+   * 못 찾거나 전체를 물으면("총지출", "전체") 의도 해석 결과대로 집계한다.
+   * LLM이 고른 의도든 휴리스틱이든 같은 규칙을 지난다.
+   */
   private async aggregate(
     userId: string,
     householdId: string,
+    actorMemberId: string,
     // 'unsupported'가 여기까지 흘러올 수 없게 타입으로 막는다(거부는 이 앞에서 끝난다).
     intent: SupportedFinanceIntent,
+    question: string,
   ): Promise<FinanceQueryData> {
+    let categoryBreakdown: CategoryBreakdown | null = null;
+    if (!asksForWholeTotal(question)) {
+      const resolved = await this.resolveSubject(
+        userId,
+        householdId,
+        actorMemberId,
+        intent.month,
+        question,
+      );
+      if (resolved.subject) return subjectData(intent.month, resolved.subject);
+      categoryBreakdown = resolved.categories;
+    }
+
     const query = { month: intent.month };
     const monthly = await this.analytics.monthly(userId, householdId, query);
 
     if (intent.aggregate === 'byCategory') {
-      const breakdown = await this.analytics.categories(
-        userId,
-        householdId,
-        query,
-      );
+      const breakdown =
+        categoryBreakdown ??
+        (await this.analytics.categories(userId, householdId, query));
 
       if (intent.categorySlug !== null) {
         const matched = breakdown.items.find(
@@ -542,6 +592,107 @@ export class FinanceAiService {
     };
   }
 
+  /**
+   * 질문이 이름을 댄 대상을 찾는다({@link resolveFinanceSubject}). 찾지 못해도 이번 달
+   * 카테고리 집계는 돌려준다 — 이어지는 byCategory 집계가 같은 쿼리를 다시 돌지 않게.
+   *
+   * 후보는 셋이다.
+   *  - 카테고리: 이번 달 지출(가족 카테고리 포함) + 지출이 없는 카테고리 목록 + 미분류.
+   *    지출이 0인 것도 넣어야 "이번 달에는 ○○ 지출이 없어요"라고 답할 수 있다.
+   *  - 가맹점: 이번 달 전체(상위 N개로 자르지 않는다).
+   *  - 직전 2개월 가맹점 이름: 이번 달 결제가 없는 가맹점을 알아보는 데만 쓴다.
+   */
+  private async resolveSubject(
+    userId: string,
+    householdId: string,
+    actorMemberId: string,
+    month: string,
+    question: string,
+  ): Promise<{ subject: FinanceSubject | null; categories: CategoryBreakdown }> {
+    const current = seoulMonthRange(month);
+    const recentFrom = seoulMonthRange(previousMonth(previousMonth(month))).from;
+    const [breakdown, catalogue, merchants, recent] = await Promise.all([
+      this.analytics.categories(userId, householdId, { month }),
+      this.listCategoryCatalogue(householdId),
+      this.merchantSpend(userId, householdId, current.from, current.to),
+      this.merchantSpend(userId, householdId, recentFrom, current.from),
+    ]);
+
+    // 지출이 있는 카테고리를 앞에 둔다(같은 길이의 이름이 겹치면 앞선 것이 이긴다).
+    const categories: CategorySpend[] = breakdown.items.map((item) => ({
+      slug: item.categorySlug,
+      name: item.categoryName,
+      net: item.net,
+      count: item.count,
+    }));
+    const seen = new Set(categories.map((category) => category.name));
+    for (const entry of [
+      ...catalogue,
+      { slug: null, name: UNCATEGORIZED_LABEL },
+    ]) {
+      if (seen.has(entry.name)) continue;
+      seen.add(entry.name);
+      categories.push({ slug: entry.slug, name: entry.name, net: 0, count: 0 });
+    }
+
+    const subject = resolveFinanceSubject(question, {
+      categories,
+      merchants,
+      recentMerchantLabels: recent.map((row) => row.label),
+    });
+    return { subject, categories: breakdown };
+  }
+
+  /**
+   * 가족이 쓸 수 있는 카테고리(시스템 + 가족 카테고리) — CategoryService.listCategories와
+   * 같은 범위다. 자산 이동 카테고리는 뺀다: 지출 집계에서 빠지는 것이라 대상으로 삼으면
+   * "지출이 없어요"가 거짓이 된다.
+   */
+  private async listCategoryCatalogue(
+    householdId: string,
+  ): Promise<{ slug: string; name: string }[]> {
+    return this.db
+      .select({
+        slug: schema.expenseCategories.slug,
+        name: schema.expenseCategories.name,
+      })
+      .from(schema.expenseCategories)
+      .where(
+        and(
+          or(
+            isNull(schema.expenseCategories.householdId),
+            eq(schema.expenseCategories.householdId, householdId),
+          ),
+          eq(schema.expenseCategories.isTransfer, false),
+        ),
+      )
+      .orderBy(asc(schema.expenseCategories.name));
+  }
+
+  /**
+   * 기간 `[from, to)`의 가맹점별 지출. 집계는 analytics.merchants 한 곳에서만 한다(ADR-0026 —
+   * 지출 합계 단일 정의). 타인의 `summary_only` 행은 `(비공개)`로 접히고, `private` 행은 빠진다.
+   * 상위 20곳으로 자르면 21번째 가맹점에 "결제가 없어요"라는 자신 있는 오답이 나오므로 넉넉히 받는다.
+   */
+  private async merchantSpend(
+    userId: string,
+    householdId: string,
+    from: Date,
+    to: Date,
+  ): Promise<MerchantSpend[]> {
+    const breakdown = await this.analytics.merchants(
+      userId,
+      householdId,
+      { from: from.toISOString(), to: to.toISOString() },
+      { limit: MERCHANT_SUBJECT_LIMIT },
+    );
+    return breakdown.items.map((item) => ({
+      label: item.merchant,
+      net: item.net,
+      count: item.count,
+    }));
+  }
+
   /* ---------------------------------------------------------------------- */
   /* ③ 답변 생성                                                              */
   /* ---------------------------------------------------------------------- */
@@ -557,6 +708,10 @@ export class FinanceAiService {
         '당신은 가족 가계부 도우미입니다. 근거 자료(집계 JSON)에 제공된 수치만 ' +
         '사용해 한국어 해요체 한두 문장으로 답하세요. 수치를 새로 계산하거나 ' +
         '추측하지 마세요. 금액은 천단위 콤마와 "원"으로 표기하세요. ' +
+        '근거 자료에 categoryName이나 merchantName이 있으면 totalNet·' +
+        'transactionCount는 그 대상 하나의 금액·건수입니다 — 전체 지출이라고 말하지 ' +
+        '마세요. 건수가 0이면 그 기간에 그 대상의 지출이 없다고 답하세요. 둘 다 없으면 ' +
+        'totalNet은 그 달 전체 지출이고 items는 상위 항목입니다. ' +
         '출력은 JSON 객체 하나만: {"answer": "..."} — 설명·코드펜스 금지.',
       question,
       context: [{ id: 'aggregate-summary', text: JSON.stringify(data) }],
@@ -564,7 +719,7 @@ export class FinanceAiService {
       maxTokens: 512,
       metadata: {
         task: 'finance-answer',
-        promptVersion: 'finance-answer-v1',
+        promptVersion: 'finance-answer-v2',
         pipelineRunId,
       },
     });
@@ -576,12 +731,22 @@ export class FinanceAiService {
   private templateAnswer(data: FinanceQueryData): string {
     const monthKo = monthLabel(data.month);
 
-    if (data.aggregate === 'byCategory' && data.categorySlug !== null) {
-      const name = data.categoryName ?? data.categorySlug;
+    // 특정 카테고리는 이름으로 판정한다 — 미분류는 slug가 없고, 가족 카테고리 slug는
+    // 시스템 목록에 없다.
+    if (data.aggregate === 'byCategory' && data.categoryName !== null) {
+      const name = data.categoryName;
       if (data.transactionCount === 0) {
         return `${monthKo}에는 ${name} 지출이 없어요.`;
       }
       return `${monthKo} ${name} 지출은 ${formatWon(data.totalNet)}이에요. (${data.transactionCount}건)`;
+    }
+
+    if (data.aggregate === 'byMerchant' && data.merchantName) {
+      const name = data.merchantName;
+      if (data.transactionCount === 0) {
+        return `${monthKo}에는 ${name} 결제가 없어요.`;
+      }
+      return `${monthKo} ${name} 결제는 ${formatWon(data.totalNet)}이에요. (${data.transactionCount}건)`;
     }
 
     const top = data.items?.[0];
@@ -911,6 +1076,58 @@ function extractJson(text: string): unknown {
     throw new SyntaxError('no JSON payload found');
   }
   return JSON.parse(text.slice(start, end + 1)) as unknown;
+}
+
+/**
+ * 해석된 대상 → 응답 data. `totalNet`·`transactionCount`는 **그 대상 하나의** 값이다
+ * (총지출이 아니다). 브랜드는 매장별 SQL 합계를 더한 값이고 `items`가 그 매장들이다.
+ */
+function subjectData(month: string, subject: FinanceSubject): FinanceQueryData {
+  if (subject.kind === 'category') {
+    const { category } = subject;
+    return {
+      month,
+      aggregate: 'byCategory',
+      categorySlug: category.slug,
+      categoryName: category.name,
+      totalNet: category.net,
+      transactionCount: category.count,
+      ...(category.count > 0
+        ? {
+            items: [
+              { label: category.name, net: category.net, count: category.count },
+            ],
+          }
+        : {}),
+    };
+  }
+  const totalNet = subject.rows.reduce((sum, row) => sum + row.net, 0);
+  const transactionCount = subject.rows.reduce((sum, row) => sum + row.count, 0);
+  return {
+    month,
+    aggregate: 'byMerchant',
+    categorySlug: null,
+    categoryName: null,
+    merchantName: subject.name,
+    totalNet,
+    transactionCount,
+    ...(subject.rows.length > 0
+      ? {
+          items: subject.rows.slice(0, TOP_ITEMS).map((row) => ({
+            label: row.label,
+            net: row.net,
+            count: row.count,
+          })),
+        }
+      : {}),
+  };
+}
+
+/** SQL 집계 문자열(bigint/numeric) → 정수(analytics의 toInt와 같은 규칙). */
+function toInteger(value: string | number | null | undefined): number {
+  if (value === null || value === undefined) return 0;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : 0;
 }
 
 /** KRW 정수 → '123,456원' (로케일/ICU 비의존 결정적 포맷, 음수 지원). */

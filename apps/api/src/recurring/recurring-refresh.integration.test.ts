@@ -136,6 +136,22 @@ describe.skipIf(!DATABASE_URL)('정기결제 자동 갱신 — 격리 Postgres',
     expect(await firstSeries()).toMatchObject({ id: before.id, status: decision, statusChangedBy: userId });
   });
 
+  it('확정된 행에 확정을 다시 보내도 "계속 써요" 답과 판단 시각을 지우지 않는다', async () => {
+    await addMonthly();
+    await service.recompute(userId, householdId);
+    const before = await firstSeries();
+    await service.decide(userId, before.id, 'confirmed');
+    await service.decide(userId, before.id, 'still_active');
+    const answered = await firstSeries();
+    expect(answered.stoppedDismissedAt).not.toBeNull();
+    expect(await service.decide(userId, before.id, 'confirmed')).toEqual({ id: before.id, status: 'confirmed' });
+    expect(await firstSeries()).toMatchObject({
+      status: 'confirmed',
+      stoppedDismissedAt: answered.stoppedDismissedAt,
+      statusChangedAt: answered.statusChangedAt,
+    });
+  });
+
   it.each(['rejected', 'ended'] as const)('근거가 사라져도 %s 결제를 자동으로 되살리지 않는다', async (decision) => {
     await addMonthly();
     await service.recompute(userId, householdId);

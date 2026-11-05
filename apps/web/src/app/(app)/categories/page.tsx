@@ -1,33 +1,22 @@
 "use client";
 /* ---------------------------------------------------------------------------
- * Family Memory AI — web · 카테고리 관리 (/categories)
+ * Family Memory AI — web · 카테고리 (/categories)
  *
- * 우리 가족만의 커스텀 지출 카테고리를 만들고(이름만), 이름 수정·삭제한다.
- * 시스템 기본 카테고리는 읽기 전용(수정/삭제 불가). 삭제 시 그 카테고리를 쓰던
- * 거래는 서버에서 '미분류'로 되돌아간다(파괴적이라 AlertDialog로 확인).
- * 여기서 만든 커스텀 카테고리는 이후 AI 자동분류 후보에도 자동 포함된다.
+ * 우리 가족만의 커스텀 지출 카테고리를 만들고(이름만), 이름을 바꾸거나 지운다.
+ * 시스템 기본 카테고리는 읽기 전용(수정/삭제 불가). 지우면 그 카테고리를 쓰던 거래가
+ * 서버에서 '미분류'로 되돌아가므로 ⋯ 메뉴 안에 두고 한 번 더 확인한다(리뉴얼 §3.3).
+ * 행을 누르면 그 카테고리의 거래 목록(`/transactions?categoryId=`)으로 간다.
+ * 여기서 만든 커스텀 카테고리는 이후 자동 분류 후보에도 자동 포함된다.
+ *
+ * 가맹점 분류 검토는 '자동 분류 규칙'(/more/category-rules)으로 옮겼다(2026-11-05,
+ * 소유자 승인) — 이 화면은 카테고리 자체만 다룬다.
  * ------------------------------------------------------------------------- */
-import {
-  ArrowRight,
-  BrainCircuit,
-  Check,
-  Loader2,
-  Pencil,
-  Plus,
-  RotateCcw,
-  Tags,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Check, Loader2, Plus, RotateCcw, Tags, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import type {
-  CategorySummary,
-  MerchantLabelCandidate,
-} from "@family/contracts";
+import type { CategorySummary } from "@family/contracts";
 
-import { ListLoading, PageBackHeader } from "@/components/widgets";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,24 +26,21 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  EmptyState,
+  ListLoading,
+  ListRow,
+  OverflowMenu,
+  PageBackHeader,
+  SectionHeader,
+} from "@/components/widgets";
 import {
   useCategoryList,
-  useConfirmMerchantLabel,
   useCreateCategory,
   useDeleteCategory,
-  useMerchantLabelCandidates,
   useUpdateCategory,
 } from "@/lib/queries";
 
@@ -62,89 +48,26 @@ function errMsg(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback;
 }
 
+/** 그 카테고리의 거래 목록. 거래 화면이 첫 렌더에 URL의 `categoryId`를 필터로 읽는다. */
+function transactionsHref(categoryId: string): string {
+  return `/transactions?categoryId=${encodeURIComponent(categoryId)}`;
+}
+
 export default function CategoriesPage() {
   const categoriesQuery = useCategoryList();
   const createMut = useCreateCategory();
   const updateMut = useUpdateCategory();
   const deleteMut = useDeleteCategory();
-  const labelCandidatesQuery = useMerchantLabelCandidates();
-  const confirmLabelMut = useConfirmMerchantLabel();
 
   const [newName, setNewName] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
-  const [selectedLabels, setSelectedLabels] = useState<
-    Record<string, string>
-  >({});
-  const [deferredCandidateIds, setDeferredCandidateIds] = useState<string[]>(
-    [],
-  );
-  const [confirmedThisSession, setConfirmedThisSession] = useState(0);
+  /** 삭제를 확인 중인 카테고리. null이면 확인 시트가 닫혀 있다. */
+  const [deleteTarget, setDeleteTarget] = useState<CategorySummary | null>(null);
 
   const all = categoriesQuery.data ?? [];
   const system = all.filter((c) => c.isSystem);
   const custom = all.filter((c) => !c.isSystem);
-  const labelCandidates = labelCandidatesQuery.data?.items ?? [];
-  const deferredCandidates = new Set(deferredCandidateIds);
-  const reviewQueue = labelCandidates.filter(
-    (candidate) =>
-      !deferredCandidates.has(candidate.representativeTransactionId),
-  );
-  const activeCandidate = reviewQueue[0] ?? null;
-  const deferredInBatch = labelCandidates.length - reviewQueue.length;
-  const trainingReadiness = labelCandidatesQuery.data?.trainingReadiness;
-  const labelProgress = trainingReadiness
-    ? Math.min(
-        100,
-        Math.round(
-          (trainingReadiness.humanConfirmedLabels /
-            trainingReadiness.requiredLabels) *
-            100,
-        ),
-      )
-    : 0;
-
-  function selectedCategory(candidate: MerchantLabelCandidate): string {
-    return (
-      selectedLabels[candidate.representativeTransactionId] ??
-      candidate.suggestedCategoryId ??
-      ""
-    );
-  }
-
-  async function onConfirmLabel(candidate: MerchantLabelCandidate) {
-    const categoryId = selectedCategory(candidate);
-    if (!categoryId || confirmLabelMut.isPending) return;
-    try {
-      await confirmLabelMut.mutateAsync({
-        transactionId: candidate.representativeTransactionId,
-        categoryId,
-      });
-      setSelectedLabels((current) => {
-        const next = { ...current };
-        delete next[candidate.representativeTransactionId];
-        return next;
-      });
-      setDeferredCandidateIds((current) =>
-        current.filter(
-          (transactionId) =>
-            transactionId !== candidate.representativeTransactionId,
-        ),
-      );
-      setConfirmedThisSession((current) => current + 1);
-      toast.success("가맹점 카테고리를 사람 확정 라벨로 저장했어요.");
-    } catch (err) {
-      toast.error(errMsg(err, "가맹점 라벨을 저장하지 못했어요."));
-    }
-  }
-
-  function onDeferLabel(candidate: MerchantLabelCandidate) {
-    setDeferredCandidateIds((current) =>
-      current.includes(candidate.representativeTransactionId)
-        ? current
-        : [...current, candidate.representativeTransactionId],
-    );
-  }
 
   async function onCreate() {
     const name = newName.trim();
@@ -173,153 +96,23 @@ export default function CategoriesPage() {
   async function onDelete(cat: CategorySummary) {
     try {
       await deleteMut.mutateAsync(cat.id);
-      toast.success(`'${cat.name}' 카테고리를 삭제했어요.`);
+      setDeleteTarget(null);
+      toast.success(`'${cat.name}' 카테고리를 지웠어요.`);
     } catch (err) {
-      toast.error(errMsg(err, "삭제하지 못했어요."));
+      toast.error(errMsg(err, "카테고리를 지우지 못했어요."));
     }
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
-      <PageBackHeader
-        title="카테고리 관리"
-      />
+    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
+      <PageBackHeader title="카테고리" />
 
-      {/* 모델 학습에는 AI 예측이 아니라 사용자가 명시적으로 확정한 규칙만 사용한다. */}
-      <Card className="flex flex-col gap-4 p-4">
-        <div className="flex items-start gap-3">
-          <BrainCircuit className="text-primary mt-0.5 size-6 shrink-0" aria-hidden="true" />
-          <div className="min-w-0 flex-1">
-            <h2 className="text-heading">가맹점 분류 검토</h2>
-            <p className="text-caption text-muted-foreground">
-              직접 확인한 항목만 자동 분류에 써요.
-            </p>
-          </div>
-        </div>
-
-        {/* 학습 준비도(라벨·클래스·계보)는 운영 지표라 사용자 화면에 두지 않는다 — /ai-operations가 소유한다. */}
-        {confirmedThisSession > 0 ? (
-          <p className="text-caption text-muted-foreground">이번에 {confirmedThisSession}개 확정했어요</p>
-        ) : null}
-
-        {labelCandidatesQuery.isLoading ? (
-          <div className="text-muted-foreground flex items-center gap-2 py-3 text-sm">
-            <Loader2 className="size-4 animate-spin" /> 검토 항목을 불러오는 중…
-          </div>
-        ) : labelCandidatesQuery.isError ? (
-          <p className="text-destructive text-sm">
-            검토할 가맹점을 불러오지 못했어요.
-          </p>
-        ) : labelCandidates.length === 0 ? (
-          <div className="bg-muted/60 rounded-lg px-3 py-4 text-center text-sm">
-            현재 확인할 가맹점이 없어요.
-          </div>
-        ) : activeCandidate === null ? (
-          <div className="bg-muted/60 flex flex-col items-center gap-3 rounded-lg px-3 py-4 text-center text-sm">
-            <p>
-              이번 목록의 {deferredInBatch}개 항목을 모두 나중으로 미뤘어요.
-            </p>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setDeferredCandidateIds([])}
-            >
-              <RotateCcw className="size-4" /> 다시 검토
-            </Button>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-3 text-xs">
-              <span className="text-muted-foreground">
-                현재 목록에서 {reviewQueue.length}개 남음
-              </span>
-              <span className="font-medium">
-                {activeCandidate.source === "model_prediction"
-                  ? "AI 추천 우선"
-                  : "거래 빈도 우선"}
-              </span>
-            </div>
-            <div className="flex flex-col gap-3 rounded-lg border p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="break-all text-sm font-medium">
-                    {activeCandidate.merchantNormalized}
-                  </p>
-                  <p className="text-muted-foreground text-xs">
-                    확인 가능한 거래 {activeCandidate.transactionCount}건
-                    {activeCandidate.source === "model_prediction"
-                      ? " · AI 추천 있음"
-                      : " · 미분류"}
-                  </p>
-                </div>
-              </div>
-              <Select
-                value={selectedCategory(activeCandidate)}
-                disabled={confirmLabelMut.isPending}
-                onValueChange={(categoryId) =>
-                  setSelectedLabels((current) => ({
-                    ...current,
-                    [activeCandidate.representativeTransactionId]: categoryId,
-                  }))
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="카테고리 선택" />
-                </SelectTrigger>
-                <SelectContent>
-                  {all.map((category) => (
-                    <SelectItem key={category.id} value={category.id}>
-                      {category.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="flex-1"
-                  disabled={confirmLabelMut.isPending}
-                  onClick={() => onDeferLabel(activeCandidate)}
-                >
-                  나중에
-                </Button>
-                <Button
-                  type="button"
-                  className="flex-1"
-                  disabled={
-                    !selectedCategory(activeCandidate) ||
-                    confirmLabelMut.isPending
-                  }
-                  onClick={() => void onConfirmLabel(activeCandidate)}
-                >
-                  {confirmLabelMut.isPending ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <ArrowRight className="size-4" />
-                  )}
-                  확정 후 다음
-                </Button>
-              </div>
-            </div>
-            {labelCandidatesQuery.data?.hasMore ? (
-              <p className="text-muted-foreground text-center text-xs">
-                먼저 표시된 항목을 확인하면 다음 가맹점이 이어서 나타나요.
-              </p>
-            ) : null}
-          </div>
-        )}
-      </Card>
-
-      {/* 새 카테고리 만들기 */}
-      <Card className="flex flex-col gap-3 p-4">
-        <label htmlFor="new-category" className="text-sm font-medium">
-          새 카테고리
-        </label>
+      {/* 새 카테고리 — 이 화면의 주 행동이라 채움 버튼은 여기 하나뿐이다. */}
+      <section className="finance-panel min-w-0 px-5 pt-3 pb-5">
+        <SectionHeader title="새 카테고리" />
         <div className="flex gap-2">
           <Input
-            id="new-category"
+            aria-label="새 카테고리 이름"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => {
@@ -333,61 +126,63 @@ export default function CategoriesPage() {
             disabled={createMut.isPending}
           />
           <Button
+            className="h-12 shrink-0"
             onClick={() => void onCreate()}
             disabled={createMut.isPending || newName.trim() === ""}
           >
-            {createMut.isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Plus className="size-4" />
-            )}
+            {createMut.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
             추가
           </Button>
         </div>
-      </Card>
+      </section>
 
       {/* 커스텀 카테고리 */}
-      <div className="flex flex-col gap-2">
-        <h2 className="text-muted-foreground px-1 text-[13px] font-medium">
-          우리 가족 카테고리
-        </h2>
+      <section className="finance-panel min-w-0 overflow-hidden pt-3 pb-1">
+        <SectionHeader
+          className="px-5"
+          title="우리 가족 카테고리"
+          trailing={
+            custom.length > 0 ? (
+              <span className="text-caption text-muted-foreground tabular-nums">
+                {custom.length}개
+              </span>
+            ) : undefined
+          }
+        />
         {categoriesQuery.isLoading ? (
-          <ListLoading rows={4} label="카테고리를 불러오는 중이에요." />
+          <ListLoading rows={3} label="카테고리를 불러오는 중이에요." className="px-5 pb-4" />
         ) : categoriesQuery.isError ? (
           // 조회 실패를 "없음"으로 보여주면 사용자가 이미 있는 카테고리를 다시 만들려
           // 하거나(유니크 충돌) 데이터가 사라졌다고 오인한다 — 에러와 빈 상태는 다르다.
-          <Card
-            className="text-destructive flex flex-col items-center gap-3 p-8 text-center text-sm"
-            role="alert"
-          >
-            카테고리를 불러오지 못했어요.
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => void categoriesQuery.refetch()}
-              disabled={categoriesQuery.isFetching}
-            >
-              <RotateCcw className="size-4" /> 다시 시도
-            </Button>
-          </Card>
+          <div role="alert">
+            <EmptyState
+              title="카테고리를 불러오지 못했어요"
+              action={
+                <Button
+                  variant="weak"
+                  className="w-full"
+                  onClick={() => void categoriesQuery.refetch()}
+                  disabled={categoriesQuery.isFetching}
+                >
+                  <RotateCcw /> 다시 시도
+                </Button>
+              }
+            />
+          </div>
         ) : custom.length === 0 ? (
-          <Card className="text-muted-foreground flex flex-col items-center gap-2 p-8 text-center text-sm">
-            <Tags className="size-6" />
-            아직 만든 카테고리가 없어요. 위에서 추가해 보세요.
-          </Card>
+          <EmptyState
+            icon={<Tags />}
+            title="아직 만든 카테고리가 없어요"
+            description="위에서 이름을 넣고 추가해 보세요."
+          />
         ) : (
-          <Card className="gap-0 overflow-hidden p-0">
-            {custom.map((cat, i) => (
-              <div
-                key={cat.id}
-                className={`flex items-center gap-2 px-4 py-3 ${
-                  i > 0 ? "border-t" : ""
-                }`}
-              >
+          <ul className="divide-border/60 divide-y px-4">
+            {custom.map((cat) => (
+              <li key={cat.id} className="flex min-w-0 items-center gap-1">
                 {editingId === cat.id ? (
-                  <>
+                  <div className="flex min-h-16 min-w-0 flex-1 items-center gap-1 py-2">
                     <Input
+                      aria-label={`${cat.name} 새 이름`}
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
                       onKeyDown={(e) => {
@@ -404,100 +199,117 @@ export default function CategoriesPage() {
                     <Button
                       size="icon"
                       variant="ghost"
-                      aria-label="저장"
+                      aria-label="이름 저장"
                       onClick={() => void onRename(cat.id)}
                       disabled={updateMut.isPending || editName.trim() === ""}
                     >
-                      <Check className="size-4" />
+                      <Check />
                     </Button>
                     <Button
                       size="icon"
                       variant="ghost"
-                      aria-label="취소"
+                      aria-label="이름 바꾸기 그만두기"
                       onClick={() => setEditingId(null)}
                       disabled={updateMut.isPending}
                     >
-                      <X className="size-4" />
+                      <X />
                     </Button>
-                  </>
+                  </div>
                 ) : (
                   <>
-                    <span className="flex-1 text-[15px]">{cat.name}</span>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      aria-label="이름 수정"
-                      onClick={() => {
-                        setEditingId(cat.id);
-                        setEditName(cat.name);
-                      }}
-                    >
-                      <Pencil className="size-4" />
-                    </Button>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          aria-label="삭제"
-                          className="text-destructive"
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>
-                            '{cat.name}' 카테고리를 삭제할까요?
-                          </AlertDialogTitle>
-                          <AlertDialogDescription>
-                            이 카테고리로 분류된 거래는 '미분류'로 되돌아가고,
-                            관련 자동분류 규칙·예산도 함께 삭제돼요. 되돌릴 수
-                            없어요.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>취소</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={() => void onDelete(cat)}
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                          >
-                            삭제하기
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                    <ListRow
+                      className="flex-1"
+                      href={transactionsHref(cat.id)}
+                      ariaLabel={`${cat.name} 거래 보기`}
+                      title={cat.name}
+                      titleClassName="font-medium"
+                      chevron
+                    />
+                    <OverflowMenu
+                      label={`${cat.name} 메뉴`}
+                      className="-mr-2 shrink-0"
+                      actions={[
+                        {
+                          label: "이름 바꾸기",
+                          onSelect: () => {
+                            setEditingId(cat.id);
+                            setEditName(cat.name);
+                          },
+                        },
+                        {
+                          label: "삭제",
+                          destructive: true,
+                          disabled: deleteMut.isPending,
+                          onSelect: () => setDeleteTarget(cat),
+                        },
+                      ]}
+                    />
                   </>
                 )}
-              </div>
+              </li>
             ))}
-          </Card>
+          </ul>
         )}
-      </div>
+      </section>
 
       {/* 시스템 기본 카테고리(읽기 전용).
-          조회 실패·로딩 중에는 섹션 자체를 감춘다 — 빈 카드에 "수정·삭제할 수 없어요"만
-          남으면 기본 카테고리가 없어진 것처럼 읽힌다(위 에러 카드가 이미 상황을 말한다). */}
+          조회 실패·로딩 중에는 섹션 자체를 감춘다 — 빈 목록에 "바꿀 수 없어요"만
+          남으면 기본 카테고리가 없어진 것처럼 읽힌다(위 오류 안내가 이미 상황을 말한다). */}
       {system.length > 0 ? (
-        <div className="flex flex-col gap-2">
-          <h2 className="text-muted-foreground px-1 text-[13px] font-medium">
-            기본 카테고리
-          </h2>
-          <Card className="flex flex-wrap gap-2 p-4">
-            {system.map((cat) => (
-              <span
-                key={cat.id}
-                className="bg-muted text-muted-foreground rounded-full px-3 py-1 text-[13px]"
-              >
-                {cat.name}
-              </span>
-            ))}
-          </Card>
-          <p className="text-muted-foreground px-1 text-[12px]">
-            기본 카테고리는 수정·삭제할 수 없어요.
+        <section className="finance-panel min-w-0 overflow-hidden pt-3 pb-1">
+          <SectionHeader className="px-5" title="기본 카테고리" />
+          <p className="text-caption text-muted-foreground px-5">
+            기본 카테고리는 이름을 바꾸거나 지울 수 없어요.
           </p>
-        </div>
+          <ul className="divide-border/60 divide-y px-4">
+            {system.map((cat) => (
+              <li key={cat.id}>
+                <ListRow
+                  href={transactionsHref(cat.id)}
+                  ariaLabel={`${cat.name} 거래 보기`}
+                  title={cat.name}
+                  titleClassName="font-medium"
+                  chevron
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
+
+      {/* 삭제 확인 — ⋯ 메뉴에서 열고 한 번 더 확인한다(되돌릴 수 없는 행동). */}
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              &lsquo;{deleteTarget?.name}&rsquo; 카테고리를 지울까요?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              거래는 미분류로 돌아가고 이 카테고리의 자동 분류 규칙과 예산도 함께
+              지워지며, 되돌릴 수 없어요.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>닫기</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteMut.isPending}
+              onClick={(event) => {
+                // 실패하면 시트를 열어 둔 채 오류를 보여 준다(성공 시 onDelete가 닫는다).
+                event.preventDefault();
+                if (deleteTarget) void onDelete(deleteTarget);
+              }}
+            >
+              {deleteMut.isPending ? "지우는 중…" : "지우기"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
