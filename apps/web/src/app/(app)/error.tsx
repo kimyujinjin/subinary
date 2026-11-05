@@ -33,10 +33,10 @@ export default function AppError({
           <CircleAlert className="size-6" aria-hidden="true" />
         </span>
         <div className="flex flex-col gap-2">
-          <h1 className="text-lg font-bold tracking-tight">
+          <h1 className="text-heading font-bold tracking-tight">
             화면을 표시하지 못했어요
           </h1>
-          <p className="text-muted-foreground text-sm">
+          <p className="text-muted-foreground text-body">
             일시적인 문제일 수 있어요. 다시 시도해도 같으면 홈으로 돌아가 주세요.
             저장된 데이터는 그대로 있어요.
           </p>
@@ -51,7 +51,7 @@ export default function AppError({
         </div>
         {/* digest는 서버 로그와 화면을 맞춰보는 유일한 단서다(운영자 = 사용자). */}
         {error.digest ? (
-          <p className="text-muted-foreground font-mono text-[11px]">
+          <p className="text-muted-foreground text-micro font-mono">
             {error.digest}
           </p>
         ) : null}

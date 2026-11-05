@@ -4,13 +4,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import type { FinanceConnection, FinanceConnectionList, FinanceConnectionResult } from "@family/contracts";
 import { Button } from "@/components/ui/button";
-import { StatusChip } from "@/components/widgets/status-chip";
+import { InlineNotice } from "@/components/widgets/inline-notice";
 import { FinanceLoading } from "@/components/manual-finance/shared";
 import { useAuth } from "@/lib/auth-context";
 import { financeConnectionsApi, useOwnedFinanceConnections } from "@/lib/finance-connections-client";
 import { ConnectionCard } from "./connection-card";
 import { ConnectionRegistrationForm, type ConnectionCredentials } from "./registration-form";
 import { canRefreshOnOpen, connectionFailureMessage, connectionFailureStatus, connectionListDuringRead, createConnectionSession, reconcileConnectionOperation, registrationFormVisible, type ConnectionOperation } from "./model";
+
+/** 연결 해제가 끝났을 때의 안내 — 이것만 완료(success)이고 나머지 안내는 모두 실패·미확인이다. */
+const DISCONNECTED_NOTICE = "연결을 해제했어요. 모아에서 더 이상 조회하지 않아요.";
 
 /** headless 모드에서 부모(자산 목록)가 받는 값. 읽기·권한 확인·열 때 조회는 여전히 이 화면이 소유한다. */
 export interface ConnectionSnapshot {
@@ -22,7 +25,14 @@ export interface ConnectionSnapshot {
   uncertainId: string | null;
 }
 
-/** `embedded`는 기관 상세(토스증권) 본문, `headless`는 자산 화면이 열 때 조회만 맡기는 모드다. */
+/**
+ * `embedded`는 기관 상세(토스증권) 본문, `headless`는 자산 화면이 열 때 조회만 맡기는 모드다.
+ *
+ * 결과 안내는 카드 목록 바로 아래, 연결 추가 버튼 바로 위 한 자리에 둔다(InlineNotice — 실패는 role="alert",
+ * 완료는 role="status"). 예전에는 화면 맨 위 회색 한 줄이라 누른 버튼에서 멀고 성공·실패가 같은 모양이었다.
+ * 채움 버튼은 한 화면에 하나: 연결이 없으면 '토스증권 연결하기', 있으면 카드 한 장의 다음 행동(primaryCardId)이고
+ * '연결 추가하기'는 약한 버튼이다.
+ */
 export function ConnectionScreen({ householdId, userId, canManage, presentation = "embedded", onSnapshot }: {
   householdId: string; userId: string; canManage: boolean; presentation?: "embedded" | "headless";
   onSnapshot?: (snapshot: ConnectionSnapshot) => void;
@@ -120,7 +130,7 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
     setNotice(null);
     await session.run(request, ({ item }) => {
       setData((current) => current ? { ...current, items: [...current.items.filter((entry) => entry.id !== item.id), item] } : current);
-      setNotice(item.status === "disconnected" ? "연결을 해제했어요. 모아에서 더 이상 조회하지 않아요." : null);
+      setNotice(item.status === "disconnected" ? DISCONNECTED_NOTICE : null);
       setBusy(false);
     }, (error) => {
       const status = connectionFailureStatus(error);
@@ -185,33 +195,35 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
   if (presentation === "headless") return null;
   const items = data?.items.filter((item) => item.status !== "disconnected") ?? [];
   const pendingRegistration = items.some((item) => item.status === "connecting");
-  const reread = <Button variant="weak" size="sm" disabled={busy || owned.isFetching} onClick={() => { void owned.reread(); }}>{busy ? "확인 중…" : "다시 확인"}</Button>;
+  // 화면의 채움 버튼을 받을 카드: 계좌를 고를 차례인 카드가 먼저, 없으면 조회하는 첫 카드.
+  // 등록 폼이 열려 있으면 그 폼의 '동의하고 연결하기'가 주 버튼이라 카드는 모두 약한 버튼이다.
+  const primaryCardId = showForm ? null : (items.find((item) => !item.selectedAccountId && item.status === "select_account") ?? items.find((item) => item.selectedAccountId))?.id ?? null;
+  const reread = <Button variant="weak" disabled={busy || owned.isFetching} onClick={() => { void owned.reread(); }}>{busy ? "확인 중…" : "다시 확인하기"}</Button>;
+  const success = notice === DISCONNECTED_NOTICE;
   return (
     <div className="flex min-w-0 flex-col gap-5">
-      {notice ? <section role="alert" className="flex items-center justify-between gap-3">
-        <p className="text-caption text-muted-foreground">{notice}{uncertain ? " 결과가 확인될 때까지 새 요청은 보내지 않아요." : ""}</p>
-        {reread}
-      </section> : null}
       {!data && !showForm && (busy || owned.isPending) ? <FinanceLoading /> : null}
-      {data && !data.enabled ? <section role="status" className="finance-panel flex items-center justify-between gap-3 p-5">
-        <div className="min-w-0">
-          <h2 className="text-heading">연결 준비 중이에요</h2>
-          <p className="text-caption text-muted-foreground mt-1">준비가 끝나면 여기서 연결할 수 있어요.</p>
-        </div>
-        <StatusChip tone="pending">준비 중</StatusChip>
+      {/* 제목이 이미 상태를 말하므로 '준비 중' 칩을 덧붙이지 않는다. */}
+      {data && !data.enabled ? <section role="status" className="finance-panel p-5">
+        <h2 className="text-heading">연결 준비 중이에요</h2>
+        <p className="text-caption text-muted-foreground mt-1">준비가 끝나면 여기서 연결할 수 있어요.</p>
       </section> : null}
       {data && !canManage ? <p className="text-caption text-muted-foreground">현재 가족에서는 조회만 할 수 있어요.</p> : null}
       {data?.enabled && items.length === 0 && !showForm ? <section className="finance-panel p-5">
         <h2 className="text-heading">연결한 계좌가 없어요</h2>
         <p className="text-caption text-muted-foreground mt-1">본인 명의 토스증권 계좌만 연결할 수 있어요.</p>
       </section> : null}
-      {items.map((item) => <ConnectionCard key={`${item.id}/${item.version}`} item={item} disabled={busy || !!uncertain} unconfirmed={uncertain?.id === item.id} canManage={canManage} enabled={!!data?.enabled}
+      {items.map((item) => <ConnectionCard key={`${item.id}/${item.version}`} item={item} disabled={busy || !!uncertain} unconfirmed={uncertain?.id === item.id} canManage={canManage} enabled={!!data?.enabled} primary={item.id === primaryCardId}
         onSelect={(accountId) => selectAccount(item, accountId)} onRefresh={() => refresh(item)} onDisconnect={() => disconnect(item)} />)}
+      {notice ? <div className="flex flex-col items-start gap-2">
+        <InlineNotice tone={success ? "success" : "error"} className="w-full">{notice}{uncertain ? " 결과가 확인될 때까지 새 요청은 보내지 않아요." : ""}</InlineNotice>
+        {success ? null : reread}
+      </div> : null}
       {!notice && items.some((item) => item.status === "connecting" || item.status === "refreshing") ? <div className="flex items-center justify-between gap-3">
         <p className="text-caption text-muted-foreground">처리 중이에요.</p>{reread}
       </div> : null}
       {registrationFormVisible({ open: showForm, canManage, data, busy }) ? <ConnectionRegistrationForm busy={busy} onSubmit={register} onClose={() => { setShowForm(false); }} /> : null}
-      {data?.enabled && canManage && !showForm ? <Button size="lg" className="w-full" disabled={busy || !!uncertain || pendingRegistration} onClick={() => setShowForm(true)}><Plus aria-hidden="true" />토스증권 연결</Button> : null}
+      {data?.enabled && canManage && !showForm ? <Button size="lg" variant={items.length > 0 ? "weak" : "default"} className="w-full" disabled={busy || !!uncertain || pendingRegistration} onClick={() => setShowForm(true)}><Plus aria-hidden="true" />{items.length > 0 ? "연결 추가하기" : "토스증권 연결하기"}</Button> : null}
     </div>
   );
 }

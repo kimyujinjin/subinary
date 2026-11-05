@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CANCELLATION_FILTER_OPTIONS,
   cancellationFilterChange,
   cancellationFilterLabel,
   cancellationFilterValue,
@@ -29,7 +30,7 @@ const choices: TransactionFilterChoices = {
     { value: "approval", label: "승인" },
   ],
   status: [
-    { value: "pending_review", label: "확인필요" },
+    { value: "pending_review", label: "확인 필요" },
     { value: "approved", label: "승인" },
   ],
 };
@@ -78,10 +79,21 @@ describe("가계부 필터 칩", () => {
         choices
       )
     ).toBe("부분 취소된 결제");
+    expect(
+      cancellationFilterLabel({ ...empty, type: "cancellation" }, choices)
+    ).toBe("환불 기록");
     expect(cancellationFilterLabel(empty, choices)).toBeNull();
   });
 
-  it("칩 목록에 없는 URL 값(승인·확인필요)도 원래 이름으로 보여 지울 수 있다", () => {
+  it("선택지 이름은 앱 전체 규칙을 따른다 — 원래 결제는 취소, 취소로 생긴 기록은 환불", () => {
+    expect(CANCELLATION_FILTER_OPTIONS.map((option) => option.label)).toEqual([
+      "취소된 결제",
+      "부분 취소된 결제",
+      "환불 기록",
+    ]);
+  });
+
+  it("칩 목록에 없는 URL 값(승인·확인 필요)도 원래 이름으로 보여 지울 수 있다", () => {
     expect(
       cancellationFilterLabel({ ...empty, status: "approved" }, choices)
     ).toBe("상태: 승인");
@@ -90,6 +102,6 @@ describe("가계부 필터 칩", () => {
     ).toBe("유형: 승인");
     expect(
       cancellationFilterLabel({ ...empty, status: "pending_review" }, choices)
-    ).toBe("상태: 확인필요");
+    ).toBe("상태: 확인 필요");
   });
 });

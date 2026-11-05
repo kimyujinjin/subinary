@@ -63,12 +63,16 @@ export function hasTransactionConditions(
  * 예전에는 '유형: 승인·취소'와 '상태: 승인·부분취소·취소·확인필요·중복의심'이 따로 있어 '취소'가 두 군데 나왔다.
  * 확인 필요·중복 의심은 '확인할 거래' 칩이 맡고(서버의 review 필터와 같다), 승인만 보기는 쓸 일이 거의 없어 뺐다.
  * URL로 들어온 값(예: status=approved)은 그대로 보여 주고 '전체'로 지울 수 있다.
+ *
+ * 이름은 앱 전체 규칙을 따른다(2026-11-05 HIG 검수 3·4단계) — 원래 결제는 '취소됨'·'부분 취소',
+ * 취소로 생긴 기록은 '환불'이라, 고르는 말도 '취소된 결제'·'부분 취소된 결제'·'환불 기록'이다.
+ * 고른 이름이 칩에 그대로 보인다(`cancellationFilterLabel`).
  */
 export const CANCELLATION_FILTER_OPTIONS: ReadonlyArray<TransactionFilterOption> =
   [
     { value: "status:cancelled", label: "취소된 결제" },
     { value: "status:partially_cancelled", label: "부분 취소된 결제" },
-    { value: "type:cancellation", label: "취소·환불 거래" },
+    { value: "type:cancellation", label: "환불 기록" },
   ];
 
 /** 지금 유형·상태 값을 '취소·환불' 칩의 값으로 바꾼다. 둘 다 있으면 유형이 먼저다. */

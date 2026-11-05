@@ -7,9 +7,13 @@
  * 실패해 모든 거래가 cardId=null 로 남았다. 이 페이지가 그 끊긴 UI 한 겹을 잇는다.
  *
  * - 카드 = ListRow(카드 아이콘 · alias + 상태 칩 · '소유자 · 카드사 •••• 1234' 한 줄 ·
- *   이번 달 사용액 · 매월 N일 결제). 행 전체가 그 카드의 사용 내역 링크다.
+ *   이번 달 사용액 · 매월 N일 결제 · ›). 행 전체가 그 카드의 사용 내역 링크라 폰에서도 ›를 단다.
  *   소유자 본인 또는 owner/admin 만 행 끝 ⋯(수정 / 뒤 4자리 정정 / 비활성·재활성)을
- *   본다(서버 §5.1과 일치). 비활성화는 확인을 거친다.
+ *   본다(서버 §5.1과 일치). 비활성화는 확인을 거친다. 뒤 4자리 정정은 이 ⋯ 메뉴에서만 연다 —
+ *   수정 창 안의 '정정' 링크는 입력 폼 위에 입력 폼, 그 위에 버리기 확인까지 세 겹을 쌓아서 없앴다.
+ * - 등록·수정 창의 고르는 값은 설정 앱 스타일 한 목록이다(./card-fields.tsx).
+ * - 결과가 목록에 그대로 보이는 저장·비활성화는 토스트를 띄우지 않는다. 등록 때 지난 거래를
+ *   연결한 건수처럼 화면에 안 보이는 결과만 알린다.
  * - maskedNumber '뒤 4자리'는 자동연결의 유일한 조인 키 → 강하게 유도(숫자 4자리 제한,
  *   미입력/중복 시 경고). 전체 PAN 붙여넣기는 maxLength=4+숫자필터로 UI 레벨 차단.
  * - visibility 는 이후 자동연결 거래에 '그 시점 값'으로 상속된다(소급 없음).
@@ -50,16 +54,10 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   EmptyState,
+  ErrorState,
+  InlineNotice,
   ListLoading,
   ListRow,
   Money,
@@ -87,6 +85,7 @@ import { canCorrectCardLast4 } from "@/lib/card-last4-correction";
 import { CardLast4CorrectionDialog } from "@/components/card-last4-correction-dialog";
 import { useCardLast4Correction } from "@/lib/queries";
 
+import { CardEditFields, CardRegisterFields } from "./card-fields";
 import {
   billingDayLabel,
   cardMonthSpend,
@@ -96,116 +95,13 @@ import {
   lastFour,
   ownerOptionsFor,
   spendByCardId,
-  type OwnerOption,
 } from "./card-rows";
-
-/** 표준 카드사 목록 — 분석 라벨('alias · issuer') 표기 일관성을 위해 자유입력 대신 고정. */
-const ISSUER_OPTIONS = [
-  "신한",
-  "삼성",
-  "현대",
-  "KB국민",
-  "롯데",
-  "하나",
-  "우리",
-  "BC",
-  "NH농협",
-  "카카오뱅크",
-  "토스뱅크",
-  "기타",
-] as const;
-
-/** visibility 선택지 + 설명(이후 자동연결 거래에 상속되는 프라이버시 값). */
-const VISIBILITY_OPTIONS: ReadonlyArray<{
-  value: CardVisibility;
-  label: string;
-  description: string;
-}> = [
-  {
-    value: "household",
-    label: "가족 공개",
-    description: "가맹점과 금액을 가족과 모두 공유해요.",
-  },
-  {
-    value: "summary_only",
-    label: "요약만 공유",
-    description: "금액만 공유하고 가맹점은 가족에게 비공개예요.",
-  },
-  {
-    value: "private",
-    label: "나만 보기",
-    description: "가족에게 보이지 않고 가족 합계에서도 빠져요.",
-  },
-];
-
-/** 결제일 선택지(매월 1~31일). 그 달에 없는 날은 말일로 본다. */
-const BILLING_DAYS = Array.from({ length: 31 }, (_, index) => index + 1);
 
 /** owner/admin 은 소유하지 않은 카드도 관리할 수 있다(서버 §5.1과 일치). */
 const MANAGER_ROLES = ["owner", "admin"] as const;
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback;
-}
-
-/**
- * 소유자 선택 + 실시간 색 미리보기. 좌측 큰 아이콘은 선택된 소유자의 색을 즉시
- * 반영해(카드 목록의 아이콘과 동일 규칙) "소유자를 바꾸면 색이 바뀐다"를 폼에서
- * 바로 보여준다. 각 선택지에도 해당 구성원 색 스와치를 붙인다.
- */
-function OwnerSelect({
-  id,
-  members,
-  value,
-  onChange,
-  colorClassOf,
-}: {
-  id: string;
-  members: OwnerOption[];
-  value: string;
-  onChange: (memberId: string) => void;
-  colorClassOf: (memberId: string) => string;
-}) {
-  return (
-    <div className="flex items-center gap-3">
-      <span
-        className={cn(
-          "flex size-10 shrink-0 items-center justify-center rounded-full transition-colors",
-          value ? colorClassOf(value) : "bg-muted text-muted-foreground",
-        )}
-        aria-hidden="true"
-      >
-        <CreditCard className="size-5" />
-      </span>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger id={id} className="min-h-12 w-full">
-          <SelectValue placeholder="소유자를 선택하세요" />
-        </SelectTrigger>
-        <SelectContent>
-          {members.map((m) => (
-            <SelectItem
-              key={m.memberId}
-              value={m.memberId}
-              disabled={m.disabled}
-            >
-              <span className="flex items-center gap-2">
-                <span
-                  className={cn(
-                    "flex size-5 items-center justify-center rounded-full",
-                    colorClassOf(m.memberId),
-                  )}
-                  aria-hidden="true"
-                >
-                  <CreditCard className="size-3" />
-                </span>
-                {m.name}
-              </span>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
 }
 
 export default function CardsPage() {
@@ -273,7 +169,9 @@ export default function CardsPage() {
   const [visibility, setVisibility] = useState<CardVisibility>("household");
   // 소유자(빈 값이면 본인 myMemberId로 폴백). 아이콘 색이 이 선택을 따른다.
   const [ownerMemberId, setOwnerMemberId] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
+  // 등록 폼 오류는 그 칸 아래에 보인다(폼 맨 아래에 모으면 긴 폼에서 어느 칸 문제인지 안 보인다).
+  const [issuerError, setIssuerError] = useState<string | null>(null);
+  const [aliasError, setAliasError] = useState<string | null>(null);
   const createOwnerId = ownerMemberId || myMemberId || "";
 
   // 일반 수정과 뒤 4자리 정정은 별도 요청/상태를 사용한다.
@@ -292,14 +190,15 @@ export default function CardsPage() {
   const [editIsShared, setEditIsShared] = useState(false);
   /** 매월 결제일(""=선택 안 함). 홈 '다가오는 지출'이 결제일과 지난달 사용액을 보여준다. */
   const [editBillingDay, setEditBillingDay] = useState("");
-  const [editError, setEditError] = useState<string | null>(null);
+  const [editAliasError, setEditAliasError] = useState<string | null>(null);
+  const [editSharedError, setEditSharedError] = useState<string | null>(null);
   // 수정 창의 소유자 선택지 — 지금 소유자가 나간 사람이면 고를 수 없는 항목으로 이름만 남긴다.
   const editOwnerOptions = useMemo(
     () =>
       ownerOptionsFor(membersQuery.data ?? [], user?.id, editing?.ownerMemberId),
     [membersQuery.data, user?.id, editing?.ownerMemberId],
   );
-  // 수정 중인 카드의 최신 값 — 수정 창에서 연 뒤 4자리 정정이 끝나면 목록이 새로 온다.
+  // 수정 중인 카드의 최신 값(창 머리의 카드사·뒤 4자리) — 목록이 새로 오면 그 값을 쓴다.
   const editingCard = editing
     ? (cards.find((c) => c.id === editing.id) ?? editing)
     : null;
@@ -331,21 +230,21 @@ export default function CardsPage() {
       authedFetch((token) => api.cards.create(token, body)),
     onSuccess: (result) => {
       invalidateCards();
-      // 소급 연결(backfill)이 과거 거래를 건드렸으면 거래 스코프 전체를 갱신하고 알린다.
+      // 소급 연결(backfill)이 지난 거래를 건드렸으면 거래 스코프 전체를 갱신하고 알린다 —
+      // 연결한 건수는 이 화면에 보이지 않는다. 새 카드 줄은 목록에 바로 보이므로 따로 알리지 않는다.
       if (result.linkedTransactionCount > 0) {
         invalidateTransactionScope(queryClient);
         toast.success(
-          `'${result.alias}' 카드를 등록하고 과거 거래 ${result.linkedTransactionCount}건을 연결했어요.`,
+          `'${result.alias}' 카드에 지난 거래 ${result.linkedTransactionCount}건을 연결했어요.`,
         );
-      } else {
-        toast.success(`'${result.alias}' 카드를 등록했어요.`);
       }
       setIssuer("");
       setAlias("");
       setMasked("");
       setVisibility("household");
       setOwnerMemberId("");
-      setFormError(null);
+      setIssuerError(null);
+      setAliasError(null);
       setRegisterOpen(false);
     },
   });
@@ -353,43 +252,35 @@ export default function CardsPage() {
   const updateMutation = useMutation({
     mutationFn: (input: { id: string; body: CardUpdateRequest }) =>
       authedFetch((token) => api.cards.update(token, input.id, input.body)),
-    onSuccess: (updated) => {
+    // 바뀐 값은 목록 줄(별칭·칩·결제일·아이콘 색)에 그대로 보인다 — 토스트를 띄우지 않는다.
+    onSuccess: () => {
       invalidateCards();
       setEditing(null);
-      toast.success(`'${updated.alias}' 카드를 저장했어요.`);
     },
   });
 
-  // 비활성·재활성은 수정 창과 따로 둔다 — 실패는 그 자리에서 토스트로 알린다.
+  // 비활성·재활성은 수정 창과 따로 둔다. 결과는 줄의 '비활성' 칩으로 보이고,
+  // 실패만 토스트로 알린다(⋯ 메뉴에서 눌러 그 자리에 오류를 둘 칸이 없다).
   const statusMutation = useMutation({
     mutationFn: (input: { id: string; status: CardSummary["status"] }) =>
       authedFetch((token) =>
         api.cards.update(token, input.id, { status: input.status }),
       ),
-    onSuccess: (updated) => {
-      invalidateCards();
-      toast.success(
-        updated.status === "inactive"
-          ? `'${updated.alias}' 카드를 비활성화했어요.`
-          : `'${updated.alias}' 카드를 다시 활성화했어요.`,
-      );
-    },
+    onSuccess: () => invalidateCards(),
     onError: (error) =>
       toast.error(errorMessage(error, "카드 상태를 바꾸지 못했어요.")),
   });
 
   function onRegister(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setFormError(null);
     if (!householdId) return;
-    if (issuer === "") {
-      setFormError("카드사를 선택해 주세요.");
-      return;
-    }
-    if (alias.trim() === "") {
-      setFormError("카드 별칭을 입력해 주세요.");
-      return;
-    }
+    // 비어 있는 칸을 한 번에 다 알린다 — 하나 고치면 다음 오류가 또 나오지 않게.
+    const nextIssuerError = issuer === "" ? "카드사를 골라 주세요." : null;
+    const nextAliasError =
+      alias.trim() === "" ? "카드 별칭을 입력해 주세요." : null;
+    setIssuerError(nextIssuerError);
+    setAliasError(nextAliasError);
+    if (nextIssuerError || nextAliasError) return;
     createMutation.mutate({
       householdId,
       issuer,
@@ -402,6 +293,13 @@ export default function CardsPage() {
     });
   }
 
+  /** 등록 창 열기 — 지난번에 닫으며 남긴 칸 오류를 들고 오지 않는다. */
+  function openRegister() {
+    setIssuerError(null);
+    setAliasError(null);
+    setRegisterOpen(true);
+  }
+
   function openEdit(card: CardSummary) {
     updateMutation.reset();
     setEditing(card);
@@ -410,23 +308,24 @@ export default function CardsPage() {
     setEditOwnerMemberId(card.ownerMemberId);
     setEditIsShared(card.isShared);
     setEditBillingDay(card.billingDay != null ? String(card.billingDay) : "");
-    setEditError(null);
+    setEditAliasError(null);
+    setEditSharedError(null);
   }
 
   function onEditSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setEditError(null);
     if (!editing) return;
-    if (editAlias.trim() === "") {
-      setEditError("카드 별칭을 입력해 주세요.");
-      return;
-    }
+    const nextAliasError =
+      editAlias.trim() === "" ? "카드 별칭을 입력해 주세요." : null;
     // '나만 보기 + 공용'은 서버가 400으로 거절한다. 왕복 전에 여기서 먼저 막아 준다 —
     // "같이 쓰는데 나만 본다"는 모순이고, 그 조합에서는 집계가 사람마다 달라진다.
-    if (editIsShared && editVisibility === "private") {
-      setEditError("나만 보기 카드는 공용으로 표시할 수 없어요.");
-      return;
-    }
+    const nextSharedError =
+      editIsShared && editVisibility === "private"
+        ? "나만 보기 카드는 공용 카드로 둘 수 없어요. 이 설정을 꺼 주세요."
+        : null;
+    setEditAliasError(nextAliasError);
+    setEditSharedError(nextSharedError);
+    if (nextAliasError || nextSharedError) return;
     updateMutation.mutate({
       id: editing.id,
       // 소유자는 바뀐 경우에만 보낸다 — 나간 구성원이 소유한 카드도 고칠 수 있게(card-rows.ts).
@@ -485,9 +384,6 @@ export default function CardsPage() {
 
   const isEmpty =
     !cardsQuery.isLoading && !cardsQuery.isError && cards.length === 0;
-  const selectedVisibility = VISIBILITY_OPTIONS.find(
-    (o) => o.value === visibility,
-  );
   // 메뉴가 있는 행과 없는 행의 금액 칼럼이 세로로 맞도록, 하나라도 있으면 빈 자리를 둔다.
   const hasCardMenu = cards.some(canManage);
   const editTail = editingCard ? lastFour(editingCard.maskedNumber) : "";
@@ -505,11 +401,12 @@ export default function CardsPage() {
           title="등록된 카드"
           trailing={
             cards.length > 0 ? (
-              // 금액 칼럼 위에 맞춘다(⋯ 메뉴 44 + 간격 4 + 행 안쪽 여백).
+              // 금액 칼럼 위에 맞춘다: 행 안쪽 여백(4·sm 8) + › 자리(간격 10·sm 12 + 아이콘 20 − 4)
+              // + ⋯ 메뉴가 있으면 간격 4 + 44.
               <span
                 className={cn(
                   "text-caption text-muted-foreground",
-                  hasCardMenu ? "mr-13 sm:mr-14" : "mr-1 sm:mr-2",
+                  hasCardMenu ? "mr-19.5 sm:mr-21" : "mr-7.5 sm:mr-9",
                 )}
               >
                 이번 달 사용
@@ -520,9 +417,11 @@ export default function CardsPage() {
         {cardsQuery.isLoading ? (
           <ListLoading rows={2} label="카드를 불러오는 중이에요." />
         ) : cardsQuery.isError ? (
-          <p className="text-destructive text-caption py-2" role="alert">
-            {errorMessage(cardsQuery.error, "카드를 불러오지 못했어요.")}
-          </p>
+          <ErrorState
+            message={errorMessage(cardsQuery.error, "카드를 불러오지 못했어요.")}
+            onRetry={() => void cardsQuery.refetch()}
+            retrying={cardsQuery.isFetching}
+          />
         ) : cards.length === 0 ? (
           <EmptyState
             icon={<CreditCard />}
@@ -532,7 +431,7 @@ export default function CardsPage() {
               <Button
                 type="button"
                 className="w-full"
-                onClick={() => setRegisterOpen(true)}
+                onClick={openRegister}
               >
                 <Plus /> 카드 등록하기
               </Button>
@@ -585,6 +484,7 @@ export default function CardsPage() {
                       ) : undefined
                     }
                     valueSub={billing ?? undefined}
+                    chevron
                   />
                   {canManage(c) ? (
                     <OverflowMenu
@@ -606,14 +506,14 @@ export default function CardsPage() {
             type="button"
             size="lg"
             className="mt-3 w-full"
-            onClick={() => setRegisterOpen(true)}
+            onClick={openRegister}
           >
-            <Plus /> 카드 등록
+            <Plus /> 카드 등록하기
           </Button>
         ) : null}
       </section>
 
-      {/* 뒤 4자리 정정 — 행 메뉴 또는 수정 창의 '정정'에서 연다(수정 창 위에 겹쳐 열린다). */}
+      {/* 뒤 4자리 정정 — 행 ⋯ 메뉴에서만 연다(다른 창 위에 겹쳐 열지 않는다). */}
       {correcting && correcting.householdId === householdId && canCorrectCardLast4(correcting, myMemberId, activeMembership?.role) ? (
         <CardLast4CorrectionDialog
           key={`${householdId}:${correcting.id}`}
@@ -633,27 +533,12 @@ export default function CardsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>카드 등록</DialogTitle>
+            {/* 등록하면 서버가 이미 받은 문자 중 이 카드(카드사·뒤 4자리) 것을 찾아 지난 거래까지 연결한다. */}
             <DialogDescription>
-              등록 후 도착하는 카드 문자부터 이 카드에 자동으로 연결돼요.
+              이 카드로 오는 문자를 자동으로 연결해요. 이미 받은 문자도 함께 연결해요.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onRegister} className="flex flex-col gap-4" noValidate>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="card-issuer">카드사</Label>
-              <Select value={issuer} onValueChange={setIssuer}>
-                <SelectTrigger id="card-issuer" className="min-h-12 w-full">
-                  <SelectValue placeholder="카드사를 선택하세요" />
-                </SelectTrigger>
-                <SelectContent>
-                  {ISSUER_OPTIONS.map((o) => (
-                    <SelectItem key={o} value={o}>
-                      {o}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
             <div className="flex flex-col gap-2">
               <Label htmlFor="card-alias">별칭</Label>
               <Input
@@ -663,22 +548,22 @@ export default function CardsPage() {
                 maxLength={100}
                 required
                 value={alias}
-                onChange={(e) => setAlias(e.target.value)}
+                aria-invalid={aliasError ? true : undefined}
+                aria-describedby={aliasError ? "card-alias-error" : undefined}
+                onChange={(e) => {
+                  setAlias(e.target.value);
+                  if (aliasError) setAliasError(null);
+                }}
               />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="card-owner">소유자</Label>
-              <OwnerSelect
-                id="card-owner"
-                members={ownerOptions}
-                value={createOwnerId}
-                onChange={setOwnerMemberId}
-                colorClassOf={ownerColorClass}
-              />
-              <p className="text-muted-foreground text-caption">
-                같은 카드 상품을 각자 쓰면 소유자와 뒤 4자리를 각각 등록해 주세요.
-              </p>
+              {aliasError ? (
+                <p
+                  id="card-alias-error"
+                  className="text-destructive text-caption"
+                  role="alert"
+                >
+                  {aliasError}
+                </p>
+              ) : null}
             </div>
 
             <div className="flex flex-col gap-2">
@@ -710,44 +595,31 @@ export default function CardsPage() {
               ) : null}
             </div>
 
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="card-visibility">공개 범위</Label>
-              <Select
-                value={visibility}
-                onValueChange={(v) => setVisibility(v as CardVisibility)}
-              >
-                <SelectTrigger id="card-visibility" className="min-h-12 w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {VISIBILITY_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {selectedVisibility ? (
-                <p className="text-muted-foreground text-caption">
-                  {selectedVisibility.description}
-                </p>
-              ) : null}
-            </div>
+            <CardRegisterFields
+              issuer={issuer}
+              onIssuerChange={(next) => {
+                setIssuer(next);
+                setIssuerError(null);
+              }}
+              issuerError={issuerError}
+              owners={ownerOptions}
+              ownerId={createOwnerId}
+              onOwnerChange={setOwnerMemberId}
+              colorClassOf={ownerColorClass}
+              visibility={visibility}
+              onVisibilityChange={setVisibility}
+              disabled={createMutation.isPending}
+            />
 
-            {formError ? (
-              <p className="text-destructive text-caption" role="alert">
-                {formError}
-              </p>
-            ) : null}
             {createMutation.isError ? (
-              <p className="text-destructive text-caption" role="alert">
+              <InlineNotice tone="error">
                 {errorMessage(createMutation.error, "카드를 등록하지 못했어요.")}
-              </p>
+              </InlineNotice>
             ) : null}
             <DialogFooter className="flex-col sm:flex-col">
               <Button
                 type="submit"
-                className="h-11 w-full"
+                className="w-full"
                 disabled={createMutation.isPending}
               >
                 {createMutation.isPending ? "등록 중…" : "등록하기"}
@@ -755,7 +627,7 @@ export default function CardsPage() {
               <Button
                 type="button"
                 variant="ghost"
-                className="h-11 w-full"
+                className="w-full"
                 onClick={() => setRegisterOpen(false)}
               >
                 닫기
@@ -770,27 +642,11 @@ export default function CardsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>카드 수정</DialogTitle>
-            {/* 뒤 4자리는 일반 수정이 아니라 전용 정정 흐름으로만 바꾼다(낙관적 확인 필요). */}
+            {/* 뒤 4자리는 일반 수정이 아니라 전용 정정 흐름(행 ⋯ 메뉴)으로만 바꾼다(낙관적 확인 필요). */}
             <DialogDescription>
-              {editingCard ? (
-                <>
-                  {editingCard.issuer}{" "}
-                  {editTail ? `•••• ${editTail}` : "뒤 4자리 미등록"}
-                  {canCorrect(editingCard) ? (
-                    <>
-                      {" · "}
-                      <button
-                        type="button"
-                        className="text-primary -my-2 inline-block py-2 font-semibold disabled:opacity-40"
-                        disabled={correctionBusy(editingCard)}
-                        onClick={() => setCorrecting(editingCard)}
-                      >
-                        정정
-                      </button>
-                    </>
-                  ) : null}
-                </>
-              ) : null}
+              {editingCard
+                ? `${editingCard.issuer} ${editTail ? `•••• ${editTail}` : "· 뒤 4자리 미등록"}`
+                : null}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onEditSubmit} className="flex flex-col gap-4" noValidate>
@@ -802,100 +658,55 @@ export default function CardsPage() {
                 maxLength={100}
                 required
                 value={editAlias}
-                onChange={(e) => setEditAlias(e.target.value)}
+                aria-invalid={editAliasError ? true : undefined}
+                aria-describedby={editAliasError ? "edit-alias-error" : undefined}
+                onChange={(e) => {
+                  setEditAlias(e.target.value);
+                  if (editAliasError) setEditAliasError(null);
+                }}
               />
+              {editAliasError ? (
+                <p
+                  id="edit-alias-error"
+                  className="text-destructive text-caption"
+                  role="alert"
+                >
+                  {editAliasError}
+                </p>
+              ) : null}
             </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="edit-owner">소유자</Label>
-              <OwnerSelect
-                id="edit-owner"
-                members={editOwnerOptions}
-                value={editOwnerMemberId}
-                onChange={setEditOwnerMemberId}
+            {editing ? (
+              <CardEditFields
+                original={editing}
+                owners={editOwnerOptions}
+                ownerId={editOwnerMemberId}
+                onOwnerChange={setEditOwnerMemberId}
                 colorClassOf={ownerColorClass}
+                visibility={editVisibility}
+                onVisibilityChange={(next) => {
+                  setEditVisibility(next);
+                  setEditSharedError(null);
+                }}
+                billingDay={editBillingDay}
+                onBillingDayChange={setEditBillingDay}
+                isShared={editIsShared}
+                onSharedChange={(next) => {
+                  setEditIsShared(next);
+                  setEditSharedError(null);
+                }}
+                sharedError={editSharedError}
+                disabled={updateMutation.isPending}
               />
-              <p className="text-muted-foreground text-caption">
-                소유자를 바꿔도 거래에 기록된 구성원은 그대로예요.
-              </p>
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="edit-visibility">공개 범위</Label>
-              <Select
-                value={editVisibility}
-                onValueChange={(v) => setEditVisibility(v as CardVisibility)}
-              >
-                <SelectTrigger id="edit-visibility" className="min-h-12 w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {VISIBILITY_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-muted-foreground text-caption">
-                공개 범위 변경은 앞으로 들어올 거래에만 적용돼요.
-              </p>
-            </div>
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between gap-3">
-                <Label htmlFor="edit-is-shared">함께 쓰는 카드</Label>
-                <Switch
-                  id="edit-is-shared"
-                  checked={editIsShared}
-                  onCheckedChange={setEditIsShared}
-                  disabled={editVisibility === "private"}
-                />
-              </div>
-              {/*
-                공개 범위와 달리 이 설정은 **과거까지 함께** 바뀐다. 거래를 고치지 않고
-                집계가 카드 플래그를 읽기 때문이다 — 그래서 켜고 끄는 것으로 되돌린다.
-                사용자가 "앞으로만 적용되겠지"라고 오해하지 않게 그 차이를 적는다.
-              */}
-              <p className="text-muted-foreground text-caption">
-                {editVisibility === "private"
-                  ? "나만 보기 카드는 함께 쓰는 카드로 표시할 수 없어요."
-                  : "구성원별 지출에서 이 카드 결제를 지난 기록까지 '공용'으로 묶어요."}
-              </p>
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="edit-billing-day">결제일</Label>
-              <Select
-                value={editBillingDay === "" ? "none" : editBillingDay}
-                onValueChange={(v) => setEditBillingDay(v === "none" ? "" : v)}
-              >
-                <SelectTrigger id="edit-billing-day" className="min-h-12 w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">선택 안 함</SelectItem>
-                  {BILLING_DAYS.map((day) => (
-                    <SelectItem key={day} value={String(day)}>
-                      매월 {day}일
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-muted-foreground text-caption">
-                홈 &lsquo;다가오는 지출&rsquo;에 결제일과 지난달 사용액(실제 청구액과 다를 수 있음)을 보여줘요.
-              </p>
-            </div>
-            {editError ? (
-              <p className="text-destructive text-caption" role="alert">
-                {editError}
-              </p>
             ) : null}
             {updateMutation.isError ? (
-              <p className="text-destructive text-caption" role="alert">
+              <InlineNotice tone="error">
                 {errorMessage(updateMutation.error, "카드를 수정하지 못했어요.")}
-              </p>
+              </InlineNotice>
             ) : null}
             <DialogFooter className="flex-col sm:flex-col">
               <Button
                 type="submit"
-                className="h-11 w-full"
+                className="w-full"
                 disabled={updateMutation.isPending}
               >
                 {updateMutation.isPending ? "저장 중…" : "저장하기"}
@@ -903,7 +714,7 @@ export default function CardsPage() {
               <Button
                 type="button"
                 variant="ghost"
-                className="h-11 w-full"
+                className="w-full"
                 onClick={() => setEditing(null)}
               >
                 닫기
@@ -939,7 +750,7 @@ export default function CardsPage() {
               }}
               variant="destructive"
             >
-              비활성화
+              비활성화하기
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

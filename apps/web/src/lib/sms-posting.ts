@@ -38,7 +38,7 @@ export function postingMessage(detail: PostingStatus | null): string {
       return "거래로 만들었지만 확인이 필요해요. 가계부에서 확인해 주세요.";
     }
     if (posting.transactionStatus === "duplicate_suspected") {
-      return "중복이 의심되는 거래예요. 가계부에서 확인해 주세요.";
+      return "중복 의심 거래예요. 가계부에서 확인해 주세요.";
     }
     return "거래에 반영됐어요.";
   }
@@ -53,7 +53,7 @@ export function postingMessage(detail: PostingStatus | null): string {
     return "자동으로 읽지 못했어요. 할 일에서 확인해 주세요.";
   }
   if (posting?.reason === "declined" || detail?.transactionType === "declined") {
-    return "승인 거절 문자로 정리했어요. 지출에는 포함하지 않아요.";
+    return "결제 실패 문자로 정리했어요. 지출에는 포함하지 않아요.";
   }
   if (posting?.reason === "ignored" || detail?.parseStatus === "ignored") {
     return "결제가 아닌 안내 문자라 반영하지 않았어요.";
@@ -65,6 +65,20 @@ export function postingMessage(detail: PostingStatus | null): string {
     return "거래에 반영하는 중이에요. 다시 등록하지 않아도 돼요.";
   }
   return "문자는 받았지만 거래 반영은 아직 확인되지 않았어요. 다시 등록하지 않아도 돼요.";
+}
+
+/**
+ * 할 일 화면의 '확인할 문자' 줄 부제 — 그 화면에서 할 동작을 말한다.
+ *
+ * `postingMessage`는 문자를 붙여넣은 뒤처럼 할 일 화면 **밖**에서 쓰여 '할 일에서 확인해 주세요'로
+ * 길을 알려 준다. 할 일 화면에서 같은 말을 하면 이미 와 있는 곳을 가리키게 된다(2026-11-05 HIG 검수).
+ * 자동으로 읽지 못한 문자는 값이 비어 있어 직접 넣어야 하고, 읽어 둔 문자는 맞는지만 보면 된다.
+ */
+export function todoSmsTaskText(detail: PostingStatus): string {
+  if (smsPostingDisposition(detail) !== "needs_review") return postingMessage(detail);
+  return detail.parseStatus === "parse_failed" || detail.posting?.reason === "parse_failed"
+    ? "받은 문자를 보고 금액·가맹점을 입력해 주세요"
+    : "금액·가맹점이 맞는지 확인해 주세요";
 }
 
 export function postingConfirmed(detail: PostingStatus | null): boolean {

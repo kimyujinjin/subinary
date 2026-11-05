@@ -36,4 +36,10 @@ describe("AI 도우미 화면", () => {
     expect(html).not.toContain("Slack");
     expect(html).not.toContain('role="tablist"');
   });
+
+  it("대화가 없으면 머리에 '새 대화'를 두지 않는다(지울 것이 없다)", () => {
+    const html = render();
+    expect(html).not.toContain("새 대화");
+    expect(html).toContain("이번 달 총 지출 얼마야?");
+  });
 });

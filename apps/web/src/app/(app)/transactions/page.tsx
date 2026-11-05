@@ -2,14 +2,17 @@
 /* ---------------------------------------------------------------------------
  * Family Memory AI — web · 거래 내역 페이지
  *
- * 기간·검색 + 접는 상세 필터 + 무한 스크롤(useInfiniteQuery).
- * 목록은 날짜별 그룹("7월 17일" 헤더) + ListRow(카테고리 아이콘 · 가맹점 ·
- * 카드/구성원/카테고리 · 금액 · 상태 배지). 행 클릭 → 상세 Dialog에서
+ * 기간(달 이동)·검색 + 조건 칩 한 줄(transaction-filters.tsx) + 무한 스크롤(useInfiniteQuery).
+ * '확인할 거래' 칩은 켜면 전체 기간으로 바꾸고 끄면 켜기 전 달로 돌아간다(review-period.ts).
+ * 목록은 날짜별 그룹("7월 17일" 헤더 + 원화 승인 소계) + ListRow(카테고리 아이콘 · 가맹점 ·
+ * 카드/구성원/카테고리 · 금액 · 상태 칩). 행 클릭 → 상세 바텀 시트에서
  * 카테고리 변경(applyRule)/공개 범위/메모/정상·중복 표시/취소연결을 처리한다.
+ * 상세 줄에서 고른 값은 그 자리에서 저장되고, 진행 표시·오류도 그 줄에만 보인다(detail-save.ts).
+ * 상태 이름은 목록과 상세가 같다 — 취소됨·부분 취소·환불·합계 제외·확인 필요·중복 의심(list-status.ts).
  *
  * - 모든 계산/집계는 서버(SQL)에서 끝났다고 가정 — 여기선 표시/편집만 담당한다.
  * - 타인 summary_only(masked) 항목은 가맹점을 '(비공개)'로 표기하고 편집을 막는다.
- * - 권한은 서버(서비스 계층)가 강제하며, 실패 시 배너로 메시지를 노출한다.
+ * - 권한은 서버(서비스 계층)가 강제하며, 실패하면 상세에서는 그 줄·동작 아래에, 상세를 닫은 뒤면 목록 위에 알린다.
  * ------------------------------------------------------------------------- */
 import {
   Suspense,
@@ -22,7 +25,12 @@ import {
 } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  notifyManager,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import type {
   CardSummary,
   CardVisibility,
@@ -32,7 +40,10 @@ import type {
 } from "@family/contracts";
 import { DEFAULT_TIMEZONE } from "@family/shared";
 import {
+  Check,
+  ChevronLeft,
   ChevronRight,
+  Loader2,
   Plus,
   Receipt,
   Search,
@@ -41,8 +52,10 @@ import {
 } from "lucide-react";
 
 import { ReviewRequestAction } from "@/components/review-request-action";
+import { AmountInput } from "@/components/ui/amount-input";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -64,23 +77,16 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { PickerMenu } from "@/components/ui/picker-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   EmptyState,
   ErrorState,
   Fab,
+  InlineNotice,
+  ListLoading,
   ListRow,
   Money,
-  StatusBadge,
   StatusChip,
-  type ChipTone,
 } from "@/components/widgets";
 import {
   OverflowMenu,
@@ -101,9 +107,10 @@ import { useAuth } from "@/lib/auth-context";
 import { categoryIcon } from "@/lib/category-icon";
 import { cardIdentityLabel } from "@/lib/card-identity-label";
 import {
-  formatDate,
   formatMoney,
   formatMonth,
+  formatMonthDay,
+  formatMonthDayTime,
   currentMonth,
 } from "@/lib/format";
 import { monthRange, recentMonths } from "@/lib/month";
@@ -147,7 +154,10 @@ import {
   type TransactionDetailBackSource,
 } from "@/lib/transaction-detail-back";
 import { AddTransactionDialog } from "./add-transaction-dialog";
-import { TransactionFxDetails } from "@/components/transaction-fx-details";
+import {
+  TransactionFxDetails,
+  foreignAmountLabel,
+} from "@/components/transaction-fx-details";
 import { TransactionFilters } from "./transaction-filters";
 import {
   hasTransactionConditions,
@@ -162,14 +172,38 @@ import { matchesCandidateSearch, retainSelection } from "./candidate-search";
 import {
   decisionOffersExclude,
   reviewDecision,
-  rowActionToast,
   type ReviewDecisionAction,
-  type RowActionKind,
 } from "./decision-copy";
+import {
+  amountInputToMinor,
+  clearDetailErrors,
+  detailSavesFor,
+  minorToAmountInput,
+  savedToast,
+  settleDetailSave,
+  startDetailSave,
+  type DetailField,
+  type DetailSaves,
+  type DetailSaveView,
+} from "./detail-save";
+import {
+  countsInDayTotal,
+  dayTotalNote,
+  transactionChips,
+  type TransactionChip,
+} from "./list-status";
+import {
+  initialRestoreMonth,
+  leaveReviewPeriod,
+  pickReviewMonth,
+  toggleReviewPeriod,
+  type ReviewPeriodState,
+} from "./review-period";
 import {
   transactionsEmptyCopy,
   type TransactionsEmptyAction,
 } from "./empty-state-copy";
+import { DEVICE_TIME_ZONE_NOTE, deviceMatchesSeoulTime } from "./device-time";
 
 /* -------------------------------------------------------------------------- */
 /* Local types                                                                */
@@ -178,11 +212,13 @@ import {
 /** select 옵션(값/라벨). */
 type Option = { value: string; label: string };
 
-/** 날짜별 그룹(헤더 라벨 + 해당 날짜 거래 + 승인 순지출 합계). */
+/** 날짜별 그룹(헤더 라벨 + 해당 날짜 거래 + 원화 승인 소계). */
 type DayGroup = {
   key: string;
   label: string;
   total: number;
+  /** 소계에 더한 줄 수. 0이면 소계를 그리지 않는다 — 환불·외화만 있는 날에 '0원'이 뜨지 않게. */
+  counted: number;
   items: TransactionSummary[];
 };
 
@@ -198,33 +234,30 @@ const SEARCH_DEBOUNCE_MS = 300;
 /** 검색어 최대 길이(서버 절삭 기준과 동일). */
 const SEARCH_MAX_LENGTH = 100;
 
-/** 상세에서 카드 연결을 해제('카드 미연결')하기 위한 Select sentinel(빈 값 금지). */
+/** 상세에서 카드 연결을 해제('카드 미연결')하기 위한 메뉴 값(빈 값 금지). */
 const CARD_NONE = "__none__";
 
-/** 거래 유형 라벨(승인/취소). */
-const TYPE_LABELS: Readonly<Record<string, string>> = {
-  approval: "승인",
-  cancellation: "취소",
-};
-
-/** 공개범위 라벨. */
+/** 공개범위 라벨 — 카드 화면(cards/card-fields.tsx)과 같은 이름이다(같은 개념은 같은 말). */
 const VISIBILITY_LABELS: Readonly<Record<CardVisibility, string>> = {
-  private: "비공개",
+  private: "나만 보기",
   household: "가족 공개",
-  summary_only: "요약만",
+  summary_only: "금액만 공개",
 };
 
-/** 유형 필터 옵션. */
+/**
+ * 유형 필터 옵션. 칩은 '취소·환불' 하나로 고르고(filter-summary.ts), 이 이름은 URL로 들어온 값을
+ * 칩에 보일 때 쓴다 — 취소로 생긴 기록은 '환불 기록'(앱 전체 이름 규칙).
+ */
 const TYPE_OPTIONS: ReadonlyArray<Option> = [
-  { value: "approval", label: "승인" },
-  { value: "cancellation", label: "취소" },
+  { value: "approval", label: "결제" },
+  { value: "cancellation", label: "환불 기록" },
 ];
 
-/** 상태 필터 옵션(DB txnStatus 5종). */
+/** 상태 필터 옵션(DB txnStatus 5종). 원래 결제는 '취소된 결제'·'부분 취소된 결제'. */
 const STATUS_OPTIONS: ReadonlyArray<Option> = [
   { value: "approved", label: "승인" },
-  { value: "partially_cancelled", label: "부분 취소" },
-  { value: "cancelled", label: "취소" },
+  { value: "partially_cancelled", label: "부분 취소된 결제" },
+  { value: "cancelled", label: "취소된 결제" },
   { value: "pending_review", label: "확인 필요" },
   { value: "duplicate_suspected", label: "중복 의심" },
 ];
@@ -262,17 +295,35 @@ function errorMessage(error: unknown): string {
   return "작업에 실패했어요. 잠시 후 다시 시도해 주세요.";
 }
 
-/** 거래 발생 시각(승인 → 취소 → 수신 순 fallback). */
-const TXN_STATUS_CHIP: Record<string, [ChipTone, string]> = {
-  partially_cancelled: ["attention", "부분 취소"],
-  cancelled: ["neutral", "취소"],
-  pending_review: ["attention", "확인 필요"],
-  duplicate_suspected: ["error", "중복 의심"],
-};
+/** 상태 칩 줄 — 이름·색은 list-status.ts가 정한다(목록과 상세가 같은 말). */
+function TxnChips({ chips }: { chips: readonly TransactionChip[] }) {
+  return (
+    <>
+      {chips.map((chip) => (
+        <StatusChip key={chip.label} tone={chip.tone}>
+          {chip.label}
+        </StatusChip>
+      ))}
+    </>
+  );
+}
 
-function TxnStatusChip({ status }: { status: string }) {
-  const [tone, label] = TXN_STATUS_CHIP[status] ?? ["neutral", status];
-  return <StatusChip tone={tone}>{label}</StatusChip>;
+/** 상세 줄의 값 자리 — 저장하는 동안 값 앞에 작은 진행 표시만 둔다(다른 줄은 그대로). */
+function SavingValue({
+  saving,
+  children,
+}: {
+  saving: boolean;
+  children: ReactNode;
+}) {
+  if (!saving) return <>{children}</>;
+  return (
+    <span className="inline-flex max-w-full items-center justify-end gap-1.5">
+      <Loader2 aria-hidden="true" className="size-4 shrink-0 animate-spin" />
+      <span className="sr-only">저장 중</span>
+      <span className="min-w-0">{children}</span>
+    </span>
+  );
 }
 
 /** ISO 인스턴트 → `<input type="datetime-local">` 로컬 값(`YYYY-MM-DDTHH:mm`). */
@@ -291,21 +342,6 @@ const dayKeyFormatter = new Intl.DateTimeFormat("en-CA", {
   year: "numeric",
   month: "2-digit",
   day: "2-digit",
-});
-
-/** "7월 17일" 형태의 그룹 헤더 포맷터. */
-const dayLabelFormatter = new Intl.DateTimeFormat("ko-KR", {
-  timeZone: DEFAULT_TIMEZONE,
-  month: "long",
-  day: "numeric",
-});
-
-/** 올해가 아닌 날짜용 "2025년 12월 3일" 포맷터. */
-const dayLabelWithYearFormatter = new Intl.DateTimeFormat("ko-KR", {
-  timeZone: DEFAULT_TIMEZONE,
-  year: "numeric",
-  month: "long",
-  day: "numeric",
 });
 
 /* -------------------------------------------------------------------------- */
@@ -350,12 +386,16 @@ function TransactionsView() {
   const [type, setType] = useState<string>(() => initial("type"));
   const [status, setStatus] = useState<string>(() => initial("status"));
   const [reviewOnly, setReviewOnly] = useState(() => initial("review") === "1");
+  // '확인할 거래'를 끌 때 돌아갈 달(review-period.ts). 켜면 전체 기간으로 바뀌므로 켜기 전 달을 기억한다.
+  const [restoreMonth, setRestoreMonth] = useState<string | null>(() =>
+    initialRestoreMonth(searchParams, currentMonth())
+  );
   /** 검색 입력값(즉시 반영) — 실제 쿼리는 아래 디바운스된 `q`를 쓴다. */
   const [qInput, setQInput] = useState<string>(() => initial("q"));
   const [q, setQ] = useState<string>(qInput);
   /**
-   * 합계에서 빼놓은 거래만 보기. 대시보드 공시 문구의 '빼놓은 거래 보기'가
-   * `?excluded=only`로 여기로 들어온다.
+   * 합계에서 뺀 거래만 보기. 분석 화면의 '합계 제외 거래 보기' 링크가 `?excluded=only`로
+   * 여기로 들어오고, 해제 칩 이름은 '합계 제외 거래'다(transaction-filters.tsx).
    *
    * 필터 Select에 넣지 않고 URL 전용 + 해제 칩으로 둔 이유: 평소 목록은 제외분을
    * **함께** 보여주고 배지로 구분하는 것이 기본 동작이다(그게 옳다). 여기에 상시
@@ -387,17 +427,34 @@ function TransactionsView() {
   };
   const changeFilter = (key: TransactionFilterKey, value: string) =>
     filterSetters[key](value);
+  // 기간과 '확인할 거래' 칩은 함께 움직인다 — 칩을 끄는 길(칩·초기화·조건 지우기)은 모두 켜기 전 달로 돌아간다.
+  const reviewPeriod: ReviewPeriodState = { reviewOnly, month, restoreMonth };
+  const applyReviewPeriod = (next: ReviewPeriodState) => {
+    setReviewOnly(next.reviewOnly);
+    setMonth(next.month);
+    setRestoreMonth(next.restoreMonth);
+  };
+  const changeMonth = (next: string) =>
+    applyReviewPeriod(pickReviewMonth(reviewPeriod, next));
   const clearFilter = (key: ActiveTransactionFilter["key"]) => {
-    if (key === "reviewOnly") setReviewOnly(false);
+    if (key === "reviewOnly") applyReviewPeriod(leaveReviewPeriod(reviewPeriod));
     else if (key === "excludedOnly") setExcludedOnly(false);
     else if (key === "sharedOnly") setSharedOnly(false);
     else changeFilter(key, "");
   };
   const clearConditions = () => {
     for (const setter of Object.values(filterSetters)) setter("");
-    setReviewOnly(false);
+    applyReviewPeriod(leaveReviewPeriod(reviewPeriod));
     setExcludedOnly(false);
     setSharedOnly(false);
+  };
+  const toggleReview = () => {
+    if (!reviewOnly) {
+      // 확인할 거래는 상태로 고르는 조건이라 '취소·환불'·'합계 제외' 조건과 함께 두지 않는다.
+      setStatus("");
+      setExcludedOnly(false);
+    }
+    applyReviewPeriod(toggleReviewPeriod(reviewPeriod));
   };
 
   /** 칩 줄과 빈 상태가 함께 보는 조건 값(기간·검색어는 뺀다). */
@@ -585,7 +642,6 @@ function TransactionsView() {
 
   // --- 날짜별 그룹(발생일 기준, 서버 정렬 순서 유지) ---
   const groups = useMemo<DayGroup[]>(() => {
-    const currentYear = currentMonth().slice(0, 4);
     const map = new Map<string, DayGroup>();
     for (const txn of items) {
       const date = new Date(occurredAt(txn));
@@ -593,25 +649,20 @@ function TransactionsView() {
       const key = valid ? dayKeyFormatter.format(date) : "unknown";
       let group = map.get(key);
       if (!group) {
-        const label = !valid
-          ? "날짜 미확인"
-          : key.startsWith(currentYear)
-          ? dayLabelFormatter.format(date)
-          : dayLabelWithYearFormatter.format(date);
-        group = { key, label, total: 0, items: [] };
+        // '11월 5일', 올해가 아니면 '2025년 11월 5일'(lib/format — 서울 기준).
+        const label = valid ? formatMonthDay(date) : "날짜 미확인";
+        group = { key, label, total: 0, counted: 0, items: [] };
         map.set(key, group);
       }
       group.items.push(txn);
       // 합계 제외(excludedAt) 거래는 서버 집계(summary/budget/analytics)와 동일하게
-      // 날짜 소계에서도 뺀다 — 같은 행을 '제외됨'으로 표시하면서 소계엔 더하면 모순.
+      // 날짜 소계에서도 뺀다 — 같은 행을 '합계 제외'로 표시하면서 소계엔 더하면 모순.
       // amount는 minor units라 통화가 섞이면 소계가 무의미하므로 KRW만 합산한다
       // (외화 건은 개별 행에 자기 통화로 표시됨; 서버 KRW 집계 원칙과 동일).
-      if (
-        txn.transactionType === "approval" &&
-        txn.excludedAt == null &&
-        (txn.currency ?? "KRW") === "KRW"
-      ) {
+      // 빠지는 줄에는 이유('소계 제외'·'원래 결제에 반영')를 글자로 붙인다(list-status.ts).
+      if (countsInDayTotal(txn)) {
         group.total += txn.netAmount;
+        group.counted += 1;
       }
     }
     // 서버 정렬 키와 화면의 날짜(approvedAt ?? cancelledAt ?? createdAt)가 다를 수 있어
@@ -635,6 +686,8 @@ function TransactionsView() {
   // --- 뮤테이션(행 작업) ---
   const [actionError, setActionError] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
+  // 상세에서 다른 거래(이 가맹점 최근 결제·겹친 결제)로 넘어갔을 때 돌아갈 거래 — 한 단계만 기억한다.
+  const [detailBackId, setDetailBackId] = useState<string | null>(null);
   const [memoTarget, setMemoTarget] = useState<TransactionSummary | null>(null);
   const [linkTarget, setLinkTarget] = useState<TransactionSummary | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -648,6 +701,7 @@ function TransactionsView() {
     const txnParam = searchParams.get("txn");
     if (!txnParam) return;
     setDetailId(txnParam);
+    setDetailBackId(null);
     if (typeof window !== "undefined") {
       // `txn`만 지운다. 예전엔 pathname으로 통째로 replace해서, 같은 링크에 실려 온
       // 다른 필터(`?status=`)까지 함께 날아갔다.
@@ -681,9 +735,18 @@ function TransactionsView() {
       ? detailFallbackCopy(detailFallbackReason(detailFallbackQuery.error))
       : null;
 
+  // 상세에서 진행 중이거나 실패한 저장 — 거래·자리(줄 또는 동작)마다 따로 둔다(detail-save.ts).
+  // useMutation 상태는 마지막 호출만 기억해서, 한 줄을 저장하는 동안 다른 줄을 고르면 앞 줄의 고른 값·실패가 사라졌다.
+  const [detailSaves, setDetailSaves] = useState<DetailSaves>({});
+  const saveSeq = useRef(0);
+
   const mutation = useMutation({
-    onMutate: (action: RowAction) =>
-      cancelTransactionReads(queryClient, householdId, action.id),
+    onMutate: async (action: RowAction) => {
+      const seq = ++saveSeq.current;
+      setDetailSaves((saves) => startDetailSave(saves, action, seq));
+      await cancelTransactionReads(queryClient, householdId, action.id);
+      return { seq };
+    },
     mutationFn: (action: RowAction): Promise<TransactionSummary> =>
       authedFetch((token) => {
         switch (action.kind) {
@@ -712,16 +775,32 @@ function TransactionsView() {
           }
         }
       }),
-    onSuccess: (updated) => {
+    // 아래 콜백은 호출마다 돈다(mutate의 두 번째 인자와 달리 마지막 호출에만 묶이지 않는다).
+    onSuccess: (updated, action, started) => {
       setActionError(null);
       // PATCH's response is authoritative immediately, including off-list deep links.
       writeTransactionResult(queryClient, updated);
+      // 진행 표시(고른 값)는 위 캐시 갱신이 화면에 닿은 뒤에 지운다 — 먼저 지우면 그 줄에 옛 값이 잠깐 비친다.
+      // 캐시 알림은 notifyManager가 다음 틱에 보내므로 같은 줄 뒤에 세운다.
+      notifyManager.schedule(() =>
+        setDetailSaves((saves) =>
+          settleDetailSave(saves, action, started.seq, null)
+        )
+      );
       // 거래·집계·예산·인사이트·가맹점후보를 단일 헬퍼로 일괄 무효화(실시간 힌트
       // 경로와 동일 범위 — 조합 불일치/누락 방지).
       invalidateTransactionScope(queryClient);
+      // 결과가 화면에 바로 보이지 않는 동작(확인·빼기·다시 넣기·연결)만 토스트로 한 일을 말한다.
+      // 줄에서 고친 값은 그 자리에서 바뀌는 것이 확인이라 띄우지 않는다(detail-save.ts).
+      const message = savedToast(action.kind, updated.transactionType);
+      if (message) toast.success(message);
     },
-    onError: (error, action) => {
-      setActionError(errorMessage(error));
+    onError: (error, action, started) => {
+      const message = errorMessage(error);
+      setActionError(message);
+      setDetailSaves((saves) =>
+        settleDetailSave(saves, action, started?.seq, message)
+      );
       // 카드 연결은 됐는데 확인이 실패했을 수 있다 — 화면이 바뀐 카드를 놓치지 않게 다시 읽는다.
       if (action.kind === "resolveCard") invalidateTransactionScope(queryClient);
     },
@@ -769,6 +848,7 @@ function TransactionsView() {
         queryKey: transactionDetailKey(context?.householdId ?? householdId, id),
       });
       setDetailId((current) => (current === id ? null : current));
+      setDetailBackId((back) => (back === id ? null : back));
       invalidateTransactionScope(queryClient);
     },
     onError: (error) => setActionError(errorMessage(error)),
@@ -899,8 +979,37 @@ function TransactionsView() {
     else if (action.kind === "clearSearch") {
       setQInput("");
       setQ("");
-    } else if (action.kind === "showMonth") setMonth(action.month);
+    } else if (action.kind === "showMonth") changeMonth(action.month);
   };
+
+  /**
+   * 상세를 떠날 때(닫기·다른 거래로 넘어가기) 그 거래에 남은 실패 문구를 지운다 — 같은 거래를 다시 열었을 때
+   * 아무것도 하지 않았는데 이미 본 실패가 되살아나지 않게. 진행 중인 저장은 그대로 둔다(끝나면 결과가 그 줄에 남는다).
+   */
+  const forgetDetailErrors = (id: string | null) => {
+    if (id != null) setDetailSaves((saves) => clearDetailErrors(saves, id));
+    if (!deleteMutation.isPending) deleteMutation.reset();
+  };
+  /** 목록에서 연 상세는 돌아갈 거래가 없다. 닫힌 뒤에 끝난 저장의 실패는 목록 위 배너가 이미 말했다. */
+  const openDetail = (id: string) => {
+    forgetDetailErrors(id);
+    setDetailBackId(null);
+    setDetailId(id);
+  };
+  /** 닫으면 상세에 보이던 오류도 함께 지운다(목록 위에 남지 않게). */
+  const closeDetail = () => {
+    forgetDetailErrors(detailId);
+    setDetailId(null);
+    setDetailBackId(null);
+    setActionError(null);
+  };
+  // 메모·원래 결제 고르기 창은 그 거래의 저장 상태만 본다(다른 줄 저장 중에도 막히지 않게).
+  const memoSave = memoTarget
+    ? detailSavesFor(detailSaves, memoTarget.id).memo
+    : undefined;
+  const linkSave = linkTarget
+    ? detailSavesFor(detailSaves, linkTarget.id).action
+    : undefined;
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
@@ -920,18 +1029,11 @@ function TransactionsView() {
           type: TYPE_OPTIONS,
           status: STATUS_OPTIONS,
         }}
-        onMonthChange={setMonth}
+        onMonthChange={changeMonth}
         onChange={changeFilter}
         onClear={clearFilter}
         onClearAll={clearConditions}
-        onToggleReview={() => {
-          setReviewOnly(!reviewOnly);
-          if (!reviewOnly) {
-            setMonth("");
-            setStatus("");
-            setExcludedOnly(false);
-          }
-        }}
+        onToggleReview={toggleReview}
       >
         {/* 검색은 기존 가맹점·메모 조건을 그대로 사용한다. */}
         <div className="relative">
@@ -947,14 +1049,15 @@ function TransactionsView() {
             maxLength={SEARCH_MAX_LENGTH}
             placeholder="가맹점이나 메모로 찾기"
             aria-label="거래 검색"
-            className="min-h-12 rounded-control border-transparent bg-card pl-11 pr-12 shadow-none"
+            // 기본 Input(회색 채움)을 그대로 쓴다. 예전 bg-card 덮어쓰기는 폰에서 본문 바탕과 같은 색이라 칸 경계가 사라졌다.
+            className="pl-11 pr-12"
           />
           {qInput ? (
             <button
               type="button"
               onClick={() => setQInput("")}
               aria-label="검색어 지우기"
-              className="text-muted-foreground hover:text-foreground focus-visible:outline-ring absolute top-1/2 right-1 flex size-11 -translate-y-1/2 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 active:text-foreground"
+              className="text-muted-foreground hover:text-foreground focus-visible:outline-ring absolute top-1/2 right-1 flex size-11 -translate-y-1/2 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 active:text-foreground"
             >
               <X className="size-4" aria-hidden="true" />
             </button>
@@ -962,13 +1065,9 @@ function TransactionsView() {
         </div>
       </TransactionFilters>
 
-      {actionError ? (
-        <div
-          role="alert"
-          className="bg-destructive/10 text-destructive rounded-lg px-4 py-3 text-sm"
-        >
-          {actionError}
-        </div>
+      {/* 상세가 열려 있으면 오류는 상세의 그 줄 아래에 보인다. 여기는 상세를 닫은 뒤 끝난 저장의 실패만 말한다. */}
+      {actionError && detailTxn == null ? (
+        <InlineNotice tone="error">{actionError}</InlineNotice>
       ) : null}
 
       {/* 목록 — 날짜별 그룹 + ListRow */}
@@ -1037,13 +1136,13 @@ function TransactionsView() {
                       <h2 className="text-caption text-muted-foreground font-semibold">
                         {group.label}
                       </h2>
-                      <p
-                        className="text-caption text-muted-foreground min-w-0 text-right"
-                        title="원화 승인 소계(외화·제외 거래 빼고)"
-                      >
-                        <span className="sr-only">원화 승인 소계 </span>
-                        <Money amount={group.total} />
-                      </p>
+                      {/* 원화 승인만 더한다. 빠진 줄(환불·외화)에는 그 줄에 이유가 글자로 보인다(list-status.ts). */}
+                      {group.counted > 0 ? (
+                        <p className="text-caption text-muted-foreground min-w-0 text-right">
+                          <span className="sr-only">소계 </span>
+                          <Money amount={group.total} />
+                        </p>
+                      ) : null}
                     </div>
                     <div className="flex flex-col">
                       {group.items.map((txn) => {
@@ -1051,12 +1150,14 @@ function TransactionsView() {
                         const isCancellation =
                           txn.transactionType === "cancellation";
                         const excluded = txn.excludedAt != null;
+                        const chips = transactionChips(txn);
+                        const totalNote = dayTotalNote(txn);
                         return (
                           <ListRow
                             key={txn.id}
                             icon={<Icon aria-hidden="true" />}
                             iconClassName={cn(
-                              "rounded-xl",
+                              "rounded-control",
                               txn.masked || excluded
                                 ? "bg-muted text-muted-foreground"
                                 : sharedIconClass(txn)
@@ -1092,8 +1193,8 @@ function TransactionsView() {
                                 )}
                                 {txn.originalCurrency &&
                                 txn.originalAmount != null ? (
-                                  <span className="text-muted-foreground max-w-full text-[11px]">
-                                    {formatMoney(
+                                  <span className="text-muted-foreground text-micro max-w-full font-normal">
+                                    {foreignAmountLabel(
                                       txn.originalAmount,
                                       txn.originalCurrency
                                     )}
@@ -1102,22 +1203,16 @@ function TransactionsView() {
                               </span>
                             }
                             valueSub={
-                              <span className="flex max-w-full flex-wrap items-center justify-end gap-1.5">
-                                {isCancellation ? (
-                                  <span className="text-xs">
-                                    {TYPE_LABELS[txn.transactionType]}
-                                  </span>
-                                ) : null}
-                                {excluded ? (
-                                  <StatusChip>제외됨</StatusChip>
-                                ) : txn.status !== "approved" ? (
-                                  // 승인은 기본 상태라 표시하지 않는다(§5 가계부) — 취소·확인 필요만 칩으로.
-                                  <TxnStatusChip status={txn.status} />
-                                ) : null}
-                              </span>
+                              // 승인은 기본 상태라 표시하지 않는다(§5 가계부). 소계에서 빠지는 줄은 이유를 글자로 붙인다.
+                              chips.length > 0 || totalNote ? (
+                                <span className="flex max-w-full flex-wrap items-center justify-end gap-1.5">
+                                  <TxnChips chips={chips} />
+                                  {totalNote ? <span>{totalNote}</span> : null}
+                                </span>
+                              ) : undefined
                             }
                             onClick={
-                              txn.masked ? undefined : () => setDetailId(txn.id)
+                              txn.masked ? undefined : () => openDetail(txn.id)
                             }
                             className={cn(
                               "rounded-control py-3 hover:bg-muted/60 active:bg-muted",
@@ -1139,19 +1234,19 @@ function TransactionsView() {
                 className="flex flex-col items-center gap-2 py-2"
               >
                 {isFetchingNextPage ? (
-                  <span className="text-muted-foreground text-[13px]">
+                  <span className="text-muted-foreground text-caption">
                     불러오는 중…
                   </span>
                 ) : hasNextPage ? (
                   <button
                     type="button"
                     onClick={() => void fetchNextPage()}
-                    className="text-accent-foreground hover:bg-muted focus-visible:outline-ring min-h-11 rounded-xl px-5 text-[13px] font-medium focus-visible:outline-2 focus-visible:outline-offset-2 active:bg-muted"
+                    className="text-accent-foreground hover:bg-muted focus-visible:outline-ring text-caption min-h-11 rounded-control px-5 font-medium focus-visible:outline-2 focus-visible:outline-offset-2 active:bg-muted"
                   >
                     더 보기
                   </button>
                 ) : (
-                  <span className="text-muted-foreground text-[13px]">
+                  <span className="text-muted-foreground text-caption">
                     {items.length}건 · 마지막이에요
                   </span>
                 )}
@@ -1165,18 +1260,11 @@ function TransactionsView() {
         <TransactionDetailDialog
           key={`${householdId}:${detailTxn.id}`}
           txn={detailTxn}
-          busy={mutation.isPending || deleteMutation.isPending}
-          actionStatus={
-            mutation.variables?.id === detailTxn.id ? mutation.status : "idle"
-          }
-          actionError={
-            mutation.variables?.id === detailTxn.id && mutation.isError
-              ? errorMessage(mutation.error)
-              : null
-          }
-          actionKind={
-            mutation.variables && mutation.variables.id === detailTxn.id
-              ? mutation.variables.kind
+          saves={detailSavesFor(detailSaves, detailTxn.id)}
+          deleting={deleteMutation.isPending}
+          deleteError={
+            deleteMutation.isError && deleteMutation.variables === detailTxn.id
+              ? errorMessage(deleteMutation.error)
               : null
           }
           cardLabel={
@@ -1197,7 +1285,20 @@ function TransactionsView() {
           onApplyCategoryRule={(categoryId) =>
             applyCategoryRule(detailTxn, categoryId)
           }
-          onOpenTransaction={(id) => setDetailId(id)}
+          onOpenTransaction={(id) => {
+            forgetDetailErrors(detailTxn.id);
+            setDetailBackId(detailTxn.id);
+            setDetailId(id);
+          }}
+          onBack={
+            detailBackId != null && detailBackId !== detailTxn.id
+              ? () => {
+                  forgetDetailErrors(detailTxn.id);
+                  setDetailId(detailBackId);
+                  setDetailBackId(null);
+                }
+              : undefined
+          }
           onChangeCard={(v) => changeCard(detailTxn, v)}
           onResolveCard={(cardId) =>
             mutation.mutate({ kind: "resolveCard", id: detailTxn.id, cardId })
@@ -1206,8 +1307,18 @@ function TransactionsView() {
           onCreateCategory={(name) => handleCreateCategory(detailTxn, name)}
           onChangeVisibility={(v) => changeVisibility(detailTxn, v)}
           onEditFields={(body) => editFields(detailTxn, body)}
-          onOpenMemo={() => setMemoTarget(detailTxn)}
-          onOpenLink={() => setLinkTarget(detailTxn)}
+          onOpenMemo={() => {
+            setDetailSaves((saves) =>
+              clearDetailErrors(saves, detailTxn.id, "memo")
+            );
+            setMemoTarget(detailTxn);
+          }}
+          onOpenLink={() => {
+            setDetailSaves((saves) =>
+              clearDetailErrors(saves, detailTxn.id, "action")
+            );
+            setLinkTarget(detailTxn);
+          }}
           onMarkValid={() =>
             mutation.mutate({ kind: "markValid", id: detailTxn.id })
           }
@@ -1218,7 +1329,7 @@ function TransactionsView() {
             mutation.mutate({ kind: "include", id: detailTxn.id })
           }
           onDelete={() => deleteMutation.mutate(detailTxn.id)}
-          onClose={() => setDetailId(null)}
+          onClose={closeDetail}
         />
       ) : null}
 
@@ -1258,10 +1369,12 @@ function TransactionsView() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* 메모·원래 결제 고르기는 입력 폼이다. 오류는 창 안에서 말한다(뒤의 상세에 가려지지 않게). */}
       {memoTarget ? (
         <MemoModal
           txn={memoTarget}
-          busy={mutation.isPending}
+          busy={memoSave?.status === "pending"}
+          error={memoSave?.status === "error" ? memoSave.message : null}
           onClose={() => setMemoTarget(null)}
           onSave={(memo) => saveMemo(memoTarget, memo)}
         />
@@ -1270,7 +1383,13 @@ function TransactionsView() {
       {linkTarget ? (
         <LinkCancellationModal
           cancellation={linkTarget}
-          busy={mutation.isPending}
+          busy={linkSave?.status === "pending"}
+          error={
+            linkSave?.status === "error" &&
+            linkSave.kind === "linkCancellation"
+              ? linkSave.message
+              : null
+          }
           onClose={() => setLinkTarget(null)}
           onConfirm={(approvalId) => confirmLink(linkTarget, approvalId)}
         />
@@ -1286,15 +1405,15 @@ function TransactionsView() {
 /* -------------------------------------------------------------------------- */
 
 /**
- * 거래 상세 Dialog — 행 클릭 시 열리며 편집 액션(카테고리/공개 범위/메모/
+ * 거래 상세 바텀 시트 — 행 클릭 시 열리며 편집 액션(카테고리/공개 범위/메모/
  * 정상·중복 표시/취소연결)을 점진 공개로 모아 보여준다. masked 행은 열리지 않는다.
+ * 닫는 길은 손잡이(끌어내리기)와 오른쪽 위 X 둘이다 — 맨 아래 '닫기' 버튼은 세 번째 닫기라 뺐다(HIG 검수 3·4단계).
  */
 function TransactionDetailDialog({
   txn,
-  busy: actionBusy,
-  actionStatus,
-  actionError,
-  actionKind,
+  saves,
+  deleting,
+  deleteError,
   cardLabel,
   memberName,
   ownershipMismatch,
@@ -1314,14 +1433,18 @@ function TransactionDetailDialog({
   onExclude,
   onInclude,
   onDelete,
+  onBack,
   onClose,
 }: Readonly<{
   txn: TransactionSummary;
-  busy: boolean;
-  actionStatus: "idle" | "pending" | "success" | "error";
-  actionError: string | null;
-  /** 지금(또는 방금) 처리한 동작 — 성공 토스트를 동작에 맞게 고른다. */
-  actionKind: RowActionKind | null;
+  /**
+   * 이 거래의 자리별 저장 상태 — 진행 표시·고른 값·오류를 그 줄(또는 금액 아래 동작 자리)에만 띄운다.
+   * 줄마다 따로라 한 줄을 저장하는 동안 다른 줄을 골라도 앞 줄의 표시와 실패가 남는다(detail-save.ts).
+   */
+  saves: DetailSaveView;
+  /** 삭제가 진행 중. */
+  deleting: boolean;
+  deleteError: string | null;
   cardLabel: string;
   memberName: string;
   ownershipMismatch: boolean;
@@ -1341,10 +1464,44 @@ function TransactionDetailDialog({
   onExclude: () => void;
   onInclude: () => void;
   onDelete: () => void;
+  /** 다른 거래에서 넘어왔으면 그 거래로 돌아간다('‹ 이전 거래'). */
+  onBack?: () => void;
   onClose: () => void;
 }>) {
   const [editSaving, setEditSaving] = useState(false);
-  const busy = actionBusy || editSaving;
+  // 줄에서 고른 값이 저장되는 동안은 다른 줄·동작을 잠그거나 흐리게 하지 않는다 — 그 줄의 값 자리에만 진행 표시.
+  // 저장 중인 그 줄만은 다시 고를 수 없게 잠근다: 저장 중에 원래 값으로 되돌리면 먼저 보낸 저장이 남아
+  // 마지막에 고른 값과 다른 값이 저장됐다.
+  // 확인·빼기·연결·삭제·금액 수정처럼 거래 전체에 걸린 동작이 진행 중일 때만 버튼을 잠근다.
+  const actionSave = saves.action;
+  const busy = actionSave?.status === "pending" || deleting || editSaving;
+  const isSaving = (field: DetailField) => saves[field]?.status === "pending";
+  /** 저장 중인 값 — 고른 값을 저장이 끝나기 전에 그 줄에 먼저 보인다. 끝나면 같은 값이 그대로 남는다. */
+  const pendingBody = (field: DetailField) =>
+    isSaving(field) ? saves[field]?.body ?? null : null;
+  const rowError = (field: DetailField) => {
+    const save = saves[field];
+    return save?.status === "error" && save.message ? (
+      <InlineNotice tone="error">{save.message}</InlineNotice>
+    ) : null;
+  };
+  // 카드를 고르며 확인하는 동안은 카드 줄을, 카드 줄을 저장하는 동안은 결정 블록의 카드 고르기를 잠근다 — 둘 다 카드를 바꾼다.
+  const resolvingCard =
+    actionSave?.status === "pending" && actionSave.kind === "resolveCard";
+  // 잠긴(흐린) 줄도 폰(Android WebView)에서는 메뉴가 열린다 — Radix 트리거는 자식 버튼의 disabled를 보지 않고
+  // pointerdown으로 연다. 그래서 잠긴 동안 고른 값은 onSelect에서 버린다(먼저 보낸 저장과 겹치지 않게).
+  // 트리거 자체를 끄려면 공용 PickerMenu·FieldRow를 바꿔야 해서 사용자 확인을 기다린다.
+  const categoryLocked = deleting || isSaving("category");
+  const cardLocked = deleting || isSaving("card") || resolvingCard;
+  const visibilityLocked = deleting || isSaving("visibility");
+  const pickCardLocked = busy || isSaving("card");
+  // 줄이 아닌 동작(확인·빼기·다시 넣기·연결·카드 고르기·삭제)의 오류는 금액 아래 동작 자리에 보인다.
+  // 금액·날짜 수정의 오류는 수정 칸이 말한다.
+  const generalError =
+    deleteError ??
+    (actionSave?.status === "error" && actionSave.kind !== "update"
+      ? actionSave.message
+      : null);
   const isCancellation = txn.transactionType === "cancellation";
   const excluded = txn.excludedAt != null;
   const canLink = isCancellation && txn.parentTransactionId == null;
@@ -1355,7 +1512,11 @@ function TransactionDetailDialog({
   // 금액·날짜 인라인 편집 상태(평소엔 읽기, '수정' 탭 시 편집 모드).
   const [editing, setEditing] = useState(false);
   const initialDate = toDateTimeLocal(occurredAt(txn));
-  const [editAmount, setEditAmount] = useState(String(txn.amount));
+  // 날짜·시간 칸은 기기 시간대로 채워지고 상세 머리는 한국 시간이다 — 둘이 다를 때(해외)만 칸 아래에 기준을 알린다.
+  const deviceZoneDiffers = !deviceMatchesSeoulTime(new Date(occurredAt(txn)));
+  // 금액 칸은 통화의 주 단위로 주고받는다(USD '12.34'). 서버에는 minor units 정수로 보낸다(detail-save.ts).
+  const initialAmount = minorToAmountInput(txn.amount, txn.currency);
+  const [editAmount, setEditAmount] = useState(initialAmount);
   const [editDate, setEditDate] = useState(initialDate);
   const [editErrors, setEditErrors] = useState<TransactionEditErrors>({});
   const [editError, setEditError] = useState<string | null>(null);
@@ -1379,12 +1540,13 @@ function TransactionDetailDialog({
     };
   }, []);
   const editDirty =
-    (canEditAmount && editAmount.trim() !== String(txn.amount)) ||
+    (canEditAmount &&
+      amountInputToMinor(editAmount, txn.currency) !== String(txn.amount)) ||
     editDate !== initialDate;
   const cancelEdit = () => {
     if (editSession.current.pending || busy) return;
     editSession.current.invalidate();
-    setEditAmount(String(txn.amount));
+    setEditAmount(initialAmount);
     setEditDate(initialDate);
     setEditErrors({});
     setEditError(null);
@@ -1392,7 +1554,7 @@ function TransactionDetailDialog({
     setEditing(false);
   };
   const startEdit = () => {
-    setEditAmount(String(txn.amount));
+    setEditAmount(initialAmount);
     setEditDate(initialDate);
     setEditErrors({});
     setEditError(null);
@@ -1426,12 +1588,17 @@ function TransactionDetailDialog({
       onClose();
       return;
     }
+    // 폰의 뒤로 버튼은 머리의 '‹ 이전 거래'와 같다 — 다른 거래에서 넘어왔으면 그 거래로 돌아간다.
+    if (onBack && !editing && !discardOpen && !deleteConfirmOpen && !busy) {
+      onBack();
+      return;
+    }
     requestClose();
   };
   const saveEdits = async () => {
     if (editSession.current.pending || busy) return;
     const validation = validateTransactionEdit({
-      amount: editAmount,
+      amount: amountInputToMinor(editAmount, txn.currency),
       date: editDate,
       initialAmount: txn.amount,
       initialDate,
@@ -1482,25 +1649,19 @@ function TransactionDetailDialog({
       await onApplyCategoryRule(ruleFor.id);
       setRuleState("applied");
     } catch {
-      // 오류 문구는 위쪽 인라인(actionError)이 말한다.
+      // 오류 문구는 카테고리 줄 아래(rowError)가 말한다.
       setRuleState("offered");
     }
   };
-  // 저장 성공은 시트 어디에서 바꿨든 보이게 토스트로 알린다(오류는 위쪽 인라인).
-  // 문구는 한 일에 맞춘다 — 빼기·확인까지 '저장했어요'라 무엇이 됐는지 알 수 없었다.
-  const lastStatus = useRef(actionStatus);
-  useEffect(() => {
-    if (lastStatus.current !== "success" && actionStatus === "success")
-      toast.success(
-        actionKind
-          ? rowActionToast(actionKind, txn.transactionType)
-          : "저장했어요"
-      );
-    lastStatus.current = actionStatus;
-  }, [actionStatus, actionKind, txn.transactionType]);
+  // 저장 성공 토스트는 화면(page) 쪽 뮤테이션이 호출마다 띄운다 — 상세가 닫혔거나 다른 줄을 저장 중이어도 놓치지 않게.
 
   // 인라인 '새 카테고리 만들기' 상태.
   const [creatingCategory, setCreatingCategory] = useState(false);
+  // 방금 만든 카테고리 — 카테고리 목록을 다시 읽기 전이라 고르기 목록에 아직 없어서, 그동안 이 이름으로 보인다.
+  const [createdCategory, setCreatedCategory] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   /** 카테고리를 바꾸면 바로 저장하고, 가맹점 검색어가 있으면 '앞으로도 이렇게 분류'를 묻는다. */
   const selectCategory = (value: string) => {
     onChangeCategory(value);
@@ -1514,12 +1675,33 @@ function TransactionDetailDialog({
       setRuleState("offered");
     }
   };
-  const categoryLabel = categoryOptions.find(
-    (o) => o.value === txn.categoryId
-  )?.label;
+  // 저장 중인 줄은 고른 값을 먼저 보여 준다 — 끝나면 같은 값이 그대로 남고, 실패하면 원래 값과 오류가 보인다.
+  const pendingCategoryId = pendingBody("category")?.categoryId;
+  const shownCategoryId =
+    pendingCategoryId !== undefined ? pendingCategoryId : txn.categoryId;
+  // 고른 값이 목록에 없으면(방금 만든 카테고리) 만든 이름으로, 그것도 모르면 저장하는 동안은 원래 값으로 둔다.
+  // 예전에는 그 사이 '미분류'로 보였다(카드 줄은 이미 이렇게 원래 이름으로 돌아간다).
+  const categoryLabel =
+    categoryOptions.find((o) => o.value === shownCategoryId)?.label ??
+    (createdCategory != null && createdCategory.id === shownCategoryId
+      ? createdCategory.name
+      : pendingCategoryId !== undefined
+      ? categoryOptions.find((o) => o.value === txn.categoryId)?.label
+      : undefined);
+  const pendingCardId = pendingBody("card")?.cardId;
+  const shownCardId =
+    pendingCardId !== undefined ? pendingCardId : txn.cardId;
+  const shownCardLabel =
+    shownCardId === txn.cardId
+      ? cardLabel
+      : shownCardId == null
+      ? "카드 미연결"
+      : cardOptions.find((o) => o.value === shownCardId)?.label ?? cardLabel;
+  const pendingVisibility = pendingBody("visibility")?.visibility;
+  const shownVisibility = pendingVisibility ?? txn.visibility;
   const visibilityLabel =
-    VISIBILITY_OPTIONS.find((o) => o.value === txn.visibility)?.label ??
-    txn.visibility;
+    VISIBILITY_OPTIONS.find((o) => o.value === shownVisibility)?.label ??
+    shownVisibility;
   const [newCategoryName, setNewCategoryName] = useState("");
   const [categorySaving, setCategorySaving] = useState(false);
   const [categoryError, setCategoryError] = useState<string | null>(null);
@@ -1531,6 +1713,7 @@ function TransactionDetailDialog({
     setCategoryError(null);
     try {
       const createdId = await onCreateCategory(name);
+      setCreatedCategory({ id: createdId, name });
       setCreatingCategory(false);
       setNewCategoryName("");
       if (merchantSearchTerm(txn)) {
@@ -1560,7 +1743,7 @@ function TransactionDetailDialog({
     linked: txn.parentTransactionId != null,
     canPickCard: cardOptions.length > 0,
     duplicatePairAt: duplicatePair
-      ? formatDate(occurredAt(duplicatePair))
+      ? formatMonthDayTime(occurredAt(duplicatePair))
       : null,
   });
   const decisionHandlers: Record<
@@ -1574,9 +1757,10 @@ function TransactionDetailDialog({
   // 결정 블록이 이미 빼기를 물으면 메뉴에 같은 동작을 두지 않는다.
   const menuOffersExclude =
     !isCancellation && !excluded && !decisionOffersExclude(decision);
-  const decisionExcludeLabel = decision?.actions.find(
-    (item) => item.action === "exclude"
-  )?.label;
+  // 이 거래에서 '합계에서 빼기'를 실제로 할 수 있을 때만 삭제 확인이 그 대안을 말한다.
+  // 예전 안내는 '⋯ 메뉴의 합계에서 빼기'를 가리켰는데, 취소 기록·이미 뺀 거래에는 그 항목이 없었다.
+  const canExclude = menuOffersExclude || decisionOffersExclude(decision);
+  const chips = transactionChips(txn);
   const installment =
     txn.installmentMonths && txn.installmentMonths > 1
       ? txn.installmentMonths
@@ -1604,6 +1788,108 @@ function TransactionDetailDialog({
     },
   ];
 
+  // 카테고리 줄 아래 — 새 카테고리 입력과 '앞으로도 이렇게 분류'는 그 줄의 일이라 바로 밑에서 펼친다
+  // (예전에는 목록 아래에 생겨 고른 줄과 떨어져 있었다). 분류 저장이 실패하면 묻지 않고 오류만 보인다.
+  const showRulePrompt =
+    ruleFor != null && (ruleReady || isSaving("category"));
+  const categoryRowError = rowError("category");
+  const categoryNotes =
+    creatingCategory || showRulePrompt || categoryRowError ? (
+      <div className="flex min-w-0 flex-col gap-2">
+        {creatingCategory ? (
+          <div className="flex min-w-0 flex-col gap-2">
+            <div className="flex min-w-0 gap-2">
+              <Input
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void submitNewCategory();
+                  }
+                }}
+                placeholder="새 카테고리 이름"
+                aria-label="새 카테고리 이름"
+                maxLength={20}
+                autoFocus
+                disabled={categorySaving}
+                className="min-w-0 flex-1"
+              />
+              <Button
+                type="button"
+                variant="weak"
+                className="h-12 shrink-0"
+                onClick={() => void submitNewCategory()}
+                disabled={
+                  categorySaving ||
+                  newCategoryName.trim() === "" ||
+                  isSaving("category")
+                }
+              >
+                {categorySaving ? "추가하는 중…" : "추가하기"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-12 shrink-0 px-3"
+                onClick={() => {
+                  setCreatingCategory(false);
+                  setNewCategoryName("");
+                  setCategoryError(null);
+                }}
+                disabled={categorySaving}
+              >
+                닫기
+              </Button>
+            </div>
+            {categoryError ? (
+              <InlineNotice tone="error">{categoryError}</InlineNotice>
+            ) : null}
+          </div>
+        ) : null}
+        {showRulePrompt && ruleFor ? (
+          <div
+            className="bg-muted text-foreground flex flex-col gap-2 rounded-control p-3"
+            role="status"
+          >
+            {ruleState === "applied" ? (
+              <p className="text-caption">
+                앞으로 들어오는 {merchant} 결제는 &lsquo;{ruleFor.name}
+                &rsquo;(으)로 분류해요.
+              </p>
+            ) : (
+              <>
+                <p className="text-caption">
+                  앞으로 들어오는 {merchant} 결제도 &lsquo;{ruleFor.name}
+                  &rsquo;(으)로 분류할까요? 지난 거래는 그대로예요.
+                </p>
+                <Button
+                  type="button"
+                  variant="weak"
+                  size="sm"
+                  className="self-start"
+                  disabled={!ruleReady || busy || ruleState === "saving"}
+                  onClick={() => void applyRuleForMerchant()}
+                >
+                  {ruleState === "saving"
+                    ? "저장하는 중…"
+                    : "앞으로도 이렇게 분류하기"}
+                </Button>
+              </>
+            )}
+          </div>
+        ) : null}
+        {categoryRowError}
+      </div>
+    ) : undefined;
+  const cardHint = ownershipMismatch ? (
+    <span role="status" className="text-warning-strong">
+      거래 구성원과 카드 소유자가 달라요. 올바른 카드인지 확인해 주세요.
+    </span>
+  ) : shownCardId == null || txn.status === "pending_review" ? (
+    <span>카드에 연결하면 공개 범위가 카드 설정을 따라가요.</span>
+  ) : null;
+
   return (
     <Dialog open onOpenChange={(v) => !v && requestClose()}>
       {/* 상세 보기라 바텀 시트다(사용자 결정 2026-11-05). 다른 창은 기본 모양 — sheet-layout.ts 표. */}
@@ -1612,7 +1898,20 @@ function TransactionDetailDialog({
         className="grid-cols-[minmax(0,1fr)] gap-5 [&>*]:min-w-0"
       >
         <DialogHeader className="gap-1 text-left">
-          <div className="flex min-w-0 items-start gap-1 pr-8">
+          {/* 최근 결제·겹친 결제에서 넘어왔으면 한 단계 돌아가는 길을 왼쪽 위에 둔다(오른쪽 위 X와 같은 높이). */}
+          {onBack ? (
+            <button
+              type="button"
+              onClick={onBack}
+              disabled={busy}
+              className="text-primary text-body focus-visible:outline-ring -mt-3 -ml-2 inline-flex min-h-11 items-center gap-0.5 self-start rounded-control pr-2 font-medium focus-visible:outline-2 active:opacity-60 disabled:opacity-50"
+            >
+              <ChevronLeft aria-hidden="true" className="size-5" />
+              이전 거래
+            </button>
+          ) : null}
+          {/* ⋯와 오른쪽 위 X 사이를 띄운다(pr-12) — 붙어 있으면 메뉴를 누르려다 시트가 닫혔다. */}
+          <div className="flex min-w-0 items-start gap-1 pr-12">
             <DialogTitle className="text-heading min-w-0 flex-1 break-words">
               {merchant}
             </DialogTitle>
@@ -1625,7 +1924,7 @@ function TransactionDetailDialog({
             ) : null}
           </div>
           <DialogDescription className="text-caption break-words">
-            {formatDate(occurredAt(txn))}
+            {formatMonthDayTime(occurredAt(txn))}
           </DialogDescription>
         </DialogHeader>
 
@@ -1639,22 +1938,22 @@ function TransactionDetailDialog({
               className="text-caption text-muted-foreground"
               id={`${inputId}-heading`}
             >
-              금액·날짜 수정 · 저장을 눌러야 반영돼요
+              금액·날짜 수정
             </h3>
             <Label htmlFor={`${inputId}-amount`}>금액</Label>
-            <Input
+            <AmountInput
               id={`${inputId}-amount`}
               ref={amountInput}
-              inputMode="numeric"
+              currency={txn.currency}
               aria-invalid={Boolean(editErrors.amount)}
               aria-describedby={
                 editErrors.amount ? `${inputId}-amount-error` : undefined
               }
               value={editAmount}
               disabled={busy || !canEditAmount}
-              className="min-h-11 bg-background"
-              onChange={(e) => {
-                setEditAmount(e.target.value);
+              className="bg-background"
+              onValueChange={(raw) => {
+                setEditAmount(raw);
                 setEditErrors((errors) => ({ ...errors, amount: undefined }));
                 setEditError(null);
               }}
@@ -1668,20 +1967,23 @@ function TransactionDetailDialog({
                 {editErrors.amount}
               </p>
             ) : null}
-            <Label htmlFor={`${inputId}-date`}>
-              날짜/시각 (이 기기의 시간)
-            </Label>
+            <Label htmlFor={`${inputId}-date`}>날짜·시간</Label>
             <Input
               id={`${inputId}-date`}
               ref={dateInput}
               type="datetime-local"
               aria-invalid={Boolean(editErrors.occurredAt)}
               aria-describedby={
-                editErrors.occurredAt ? `${inputId}-date-error` : undefined
+                [
+                  editErrors.occurredAt ? `${inputId}-date-error` : null,
+                  deviceZoneDiffers ? `${inputId}-date-zone` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" ") || undefined
               }
               value={editDate}
               disabled={busy}
-              className="min-h-11 min-w-0 w-full bg-background"
+              className="min-w-0 w-full bg-background"
               onChange={(e) => {
                 setEditDate(e.target.value);
                 setEditErrors((errors) => ({
@@ -1700,14 +2002,22 @@ function TransactionDetailDialog({
                 {editErrors.occurredAt}
               </p>
             ) : null}
-            {editError ? (
-              <p role="alert" className="text-destructive text-caption">
-                {editError}
+            {deviceZoneDiffers ? (
+              <p
+                id={`${inputId}-date-zone`}
+                className="text-muted-foreground text-caption"
+              >
+                {DEVICE_TIME_ZONE_NOTE}
               </p>
+            ) : null}
+            {editError ? (
+              <InlineNotice tone="error">{editError}</InlineNotice>
             ) : null}
             {!canEditAmount ? (
               <p className="text-muted-foreground text-caption">
-                취소가 연결된 거래는 금액을 바꿀 수 없어요. 날짜만 수정돼요.
+                {isCancellation
+                  ? "원래 결제에 연결된 환불은 금액을 바꿀 수 없어요. 날짜만 수정돼요."
+                  : "환불이 연결된 결제는 금액을 바꿀 수 없어요. 날짜만 수정돼요."}
               </p>
             ) : null}
             <div
@@ -1716,28 +2026,26 @@ function TransactionDetailDialog({
             >
               <Button
                 type="button"
-                size="sm"
                 variant="ghost"
-                className="min-h-11 min-w-20"
+                className="min-w-20"
                 disabled={busy}
                 onClick={cancelEdit}
               >
-                취소
+                닫기
               </Button>
               <Button
                 type="button"
-                size="sm"
-                className="min-h-11 min-w-20"
+                className="min-w-20"
                 disabled={busy || !editDirty}
                 onClick={() => void saveEdits()}
               >
-                {editSaving ? "저장 중…" : "저장"}
+                {editSaving ? "저장하는 중…" : "저장하기"}
               </Button>
             </div>
           </section>
         ) : (
           <section
-            aria-label={isCancellation ? "취소 금액" : "결제 금액"}
+            aria-label={isCancellation ? "환불 금액" : "결제 금액"}
             className="flex min-w-0 flex-col gap-3"
           >
             <p
@@ -1752,27 +2060,20 @@ function TransactionDetailDialog({
                 <Money amount={txn.netAmount} currency={txn.currency} />
               )}
             </p>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {isCancellation ? (
-                <StatusChip tone="neutral">
-                  {TYPE_LABELS[txn.transactionType]} 거래
-                </StatusChip>
-              ) : null}
-              <StatusBadge status={txn.status} />
-              {installment ? (
-                <StatusChip tone="neutral">{installment}개월 할부</StatusChip>
-              ) : null}
-              {foreign ? (
-                <StatusChip tone="neutral">해외 결제</StatusChip>
-              ) : null}
-              {excluded ? (
-                <StatusChip tone="neutral">합계에서 제외됨</StatusChip>
-              ) : null}
-            </div>
+            {/*
+              상태만 칩으로 둔다(목록과 같은 이름 — list-status.ts). 할부·해외 결제는 아래 정보 줄이 금액까지
+              더 자세히 말해서 칩으로 되풀이하지 않는다.
+            */}
+            {chips.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <TxnChips chips={chips} />
+              </div>
+            ) : null}
             {decision ? (
               <div
                 role="group"
                 aria-labelledby={`${inputId}-decision`}
+                aria-busy={busy || undefined}
                 className="bg-muted flex min-w-0 flex-col gap-3 rounded-card p-4"
               >
                 <div className="flex min-w-0 flex-col gap-1">
@@ -1822,8 +2123,14 @@ function TransactionDetailDialog({
                         label="카드"
                         options={cardOptions}
                         value={txn.cardId ?? null}
-                        onSelect={onResolveCard}
-                        trigger={<Button {...answer}>{label}</Button>}
+                        onSelect={(cardId) => {
+                          if (!pickCardLocked) onResolveCard(cardId);
+                        }}
+                        trigger={
+                          <Button {...answer} disabled={pickCardLocked}>
+                            {label}
+                          </Button>
+                        }
                       />
                     ) : (
                       <Button
@@ -1841,8 +2148,8 @@ function TransactionDetailDialog({
             {/* 확인이 필요한 취소는 위 결정 블록이 '원래 결제 고르기'를 묻는다. */}
             {canLink && decision == null ? (
               <Button
-                variant="tint"
-                className="h-11 w-full"
+                variant="weak"
+                className="w-full"
                 disabled={busy}
                 onClick={onOpenLink}
               >
@@ -1851,13 +2158,17 @@ function TransactionDetailDialog({
             ) : null}
             {!isCancellation && excluded ? (
               <Button
-                variant="tint"
-                className="h-11 w-full"
+                variant="weak"
+                className="w-full"
                 disabled={busy}
                 onClick={onInclude}
               >
-                다시 합계에 포함하기
+                합계에 다시 넣기
               </Button>
+            ) : null}
+            {/* 확인·빼기·다시 넣기·연결·삭제가 실패하면 그 버튼 바로 아래에 말한다. */}
+            {generalError ? (
+              <InlineNotice tone="error">{generalError}</InlineNotice>
             ) : null}
           </section>
         )}
@@ -1871,83 +2182,100 @@ function TransactionDetailDialog({
             {editNotice}
           </p>
         ) : null}
-        {actionBusy ? (
-          <p role="status" className="text-muted-foreground text-caption">
-            변경 내용을 처리하고 있어요.
-          </p>
-        ) : actionError && !editing ? (
-          <p role="alert" className="text-destructive text-caption">
-            {actionError}
-          </p>
-        ) : null}
 
         {/* 결제 정보 — 문장 대신 훑어보는 키-값 */}
         {/*
           정보·설정 한 목록(2026-11-05 사용자 지적으로 '분류' 칸 묶음을 합쳤다). 바꾸는 줄은 눌러서
           드롭다운을 열고, 고르면 바로 저장된다. 가장 자주 바꾸는 카테고리를 결제자 바로 아래에 둔다.
+          저장하는 동안은 그 줄의 값 자리에만 진행 표시가 돌고, 실패하면 그 줄 아래에 오류가 붙는다.
         */}
         <FieldList>
           <FieldRow label="결제자" value={memberName} />
           <FieldRow
             label="카테고리"
-            value={categoryLabel ?? "미분류"}
+            value={
+              <SavingValue saving={isSaving("category")}>
+                {categoryLabel ?? "미분류"}
+              </SavingValue>
+            }
             muted={categoryLabel == null}
-            disabled={busy}
+            disabled={categoryLocked}
             menu={{
               label: "카테고리",
               options: categoryOptions,
-              value: txn.categoryId,
-              onSelect: selectCategory,
+              value: shownCategoryId,
+              onSelect: (value) => {
+                if (!categoryLocked) selectCategory(value);
+              },
               footer: {
                 label: "+ 새 카테고리 만들기",
                 onSelect: () => setCreatingCategory(true),
               },
             }}
-          />
+          >
+            {categoryNotes}
+          </FieldRow>
           <FieldRow
             label="카드"
-            value={cardLabel}
-            muted={txn.cardId == null}
-            disabled={busy}
+            value={
+              <SavingValue saving={isSaving("card")}>
+                {shownCardLabel}
+              </SavingValue>
+            }
+            muted={shownCardId == null}
+            disabled={cardLocked}
             menu={{
               label: "카드",
               options: [{ value: CARD_NONE, label: "카드 미연결" }, ...cardOptions],
-              value: txn.cardId ?? CARD_NONE,
-              onSelect: onChangeCard,
+              value: shownCardId ?? CARD_NONE,
+              onSelect: (value) => {
+                if (!cardLocked) onChangeCard(value);
+              },
             }}
           >
-            {ownershipMismatch ? (
-              <span role="status" className="text-warning-strong">
-                거래 구성원과 카드 소유자가 달라요. 올바른 카드인지 확인해 주세요.
-              </span>
-            ) : txn.cardId == null || txn.status === "pending_review" ? (
-              "카드에 연결하면 공개 범위가 카드 설정을 따라가요."
-            ) : null}
+            {cardHint || rowError("card") ? (
+              <div className="flex min-w-0 flex-col gap-2">
+                {cardHint}
+                {rowError("card")}
+              </div>
+            ) : undefined}
           </FieldRow>
           <FieldRow
             label="공개 범위"
-            value={visibilityLabel}
-            disabled={busy}
+            value={
+              <SavingValue saving={isSaving("visibility")}>
+                {visibilityLabel}
+              </SavingValue>
+            }
+            disabled={visibilityLocked}
             menu={{
               label: "공개 범위",
               options: VISIBILITY_OPTIONS,
-              value: txn.visibility,
-              onSelect: onChangeVisibility,
+              value: shownVisibility,
+              onSelect: (value) => {
+                if (!visibilityLocked) onChangeVisibility(value);
+              },
             }}
-          />
+          >
+            {rowError("visibility") ?? undefined}
+          </FieldRow>
           <FieldRow
             label="메모"
             value={
-              txn.memo ? (
-                <span className="line-clamp-2">{txn.memo}</span>
-              ) : (
-                "남기기"
-              )
+              <SavingValue saving={isSaving("memo")}>
+                {txn.memo ? (
+                  <span className="line-clamp-2">{txn.memo}</span>
+                ) : (
+                  "남기기"
+                )}
+              </SavingValue>
             }
             muted={!txn.memo}
-            disabled={busy}
+            disabled={deleting || isSaving("memo")}
             onClick={onOpenMemo}
-          />
+          >
+            {rowError("memo") ?? undefined}
+          </FieldRow>
           {installment ? (
             <FieldRow label="할부" value={`${installment}개월`}>
               {/*
@@ -1972,7 +2300,7 @@ function TransactionDetailDialog({
           {foreign ? (
             <FieldRow
               label="해외 결제"
-              value={formatMoney(
+              value={foreignAmountLabel(
                 txn.originalAmount as number,
                 txn.originalCurrency as string
               )}
@@ -1986,102 +2314,16 @@ function TransactionDetailDialog({
           ) : null}
           {partiallyCancelled ? (
             <FieldRow
-              label="취소"
-              value={
-                <>
-                  원래 {formatMoney(txn.amount, txn.currency)} 중{" "}
-                  {formatMoney(txn.cancelledAmount, txn.currency)} 취소
-                </>
-              }
+              label="취소된 금액"
+              value={`${formatMoney(
+                txn.cancelledAmount,
+                txn.currency
+              )} (원래 ${formatMoney(txn.amount, txn.currency)})`}
             />
           ) : null}
+          {/* 가족에게 물어보기(확인 요청) — 자기 훅을 쓰는 독립 컴포넌트가 이 목록의 한 줄을 그린다 */}
+          <ReviewRequestAction txn={txn} disabled={deleting} />
         </FieldList>
-
-        {/* 분류 변경이 저장 중이거나 저장됐을 때만 — 실패하면 묻지 않는다(오류는 위에서 말한다). */}
-        {ruleFor && (ruleReady || busy) ? (
-          <div
-            className="bg-muted flex flex-col gap-2 rounded-control p-3"
-            role="status"
-          >
-            {ruleState === "applied" ? (
-              <p className="text-caption">
-                앞으로 들어오는 {merchant} 결제는 &lsquo;{ruleFor.name}
-                &rsquo;(으)로 분류해요.
-              </p>
-            ) : (
-              <>
-                <p className="text-caption">
-                  앞으로 들어오는 {merchant} 결제도 &lsquo;{ruleFor.name}
-                  &rsquo;(으)로 분류할까요? 지난 거래는 그대로예요.
-                </p>
-                <Button
-                  type="button"
-                  variant="tint"
-                  size="sm"
-                  className="min-h-10 self-start"
-                  disabled={!ruleReady || busy || ruleState === "saving"}
-                  onClick={() => void applyRuleForMerchant()}
-                >
-                  {ruleState === "saving"
-                    ? "저장 중…"
-                    : "앞으로도 이렇게 분류"}
-                </Button>
-              </>
-            )}
-          </div>
-        ) : null}
-
-        {/* 알맞은 카테고리가 없으면 카테고리 목록의 '새 카테고리 만들기'로 여기서 바로 만들어 지정한다. */}
-        {creatingCategory ? (
-          <div className="flex flex-col gap-1.5">
-            <div className="flex gap-2">
-              <Input
-                value={newCategoryName}
-                onChange={(e) => setNewCategoryName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void submitNewCategory();
-                  }
-                }}
-                placeholder="새 카테고리 이름"
-                maxLength={20}
-                autoFocus
-                disabled={categorySaving}
-              />
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => void submitNewCategory()}
-                disabled={categorySaving || newCategoryName.trim() === ""}
-              >
-                저장
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setCreatingCategory(false);
-                  setNewCategoryName("");
-                  setCategoryError(null);
-                }}
-                disabled={categorySaving}
-              >
-                취소
-              </Button>
-            </div>
-            {categoryError ? (
-              <p className="text-destructive text-caption">
-                {categoryError}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-
-
-        {/* 가족에게 물어보기(확인 요청) — 자기 훅을 쓰는 독립 컴포넌트 */}
-        <ReviewRequestAction txn={txn} disabled={busy} />
 
         {searchTerm ? (
           <MerchantHistory
@@ -2092,7 +2334,7 @@ function TransactionDetailDialog({
           />
         ) : null}
 
-        {/* 하드 삭제(되돌리기 불가) — ⋯ 메뉴에서 열고 확인을 한 번 더 받는다 */}
+        {/* 하드 삭제(되돌리기 불가) — ⋯ 메뉴에서 열고 액션 시트로 한 번 더 확인한다 */}
         <AlertDialog
           open={deleteConfirmOpen}
           onOpenChange={setDeleteConfirmOpen}
@@ -2101,17 +2343,26 @@ function TransactionDetailDialog({
             <AlertDialogHeader>
               <AlertDialogTitle>거래를 삭제할까요?</AlertDialogTitle>
               <AlertDialogDescription>
-                {merchant} · {formatMoney(txn.amount, txn.currency)} 거래를
+                {merchant} {formatMoney(txn.amount, txn.currency)} 거래를
                 삭제하면 되돌릴 수 없어요.
-                {menuOffersExclude
-                  ? " 합계에서만 빼려면 ⋯ 메뉴의 ‘합계에서 빼기’를 눌러 주세요."
-                  : decisionExcludeLabel
-                  ? ` 합계에서만 빼려면 ‘${decisionExcludeLabel}’를 눌러 주세요.`
-                  : null}
+                {/* 빼기를 실제로 할 수 있는 거래에서만 대안을 말하고, 그 버튼을 이 자리에 둔다. */}
+                {canExclude ? " 기록은 남기고 합계에서만 뺄 수도 있어요." : null}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>취소</AlertDialogCancel>
+              <AlertDialogCancel>닫기</AlertDialogCancel>
+              {canExclude ? (
+                <Button
+                  type="button"
+                  variant="weak"
+                  onClick={() => {
+                    setDeleteConfirmOpen(false);
+                    onExclude();
+                  }}
+                >
+                  합계에서 빼기
+                </Button>
+              ) : null}
               <AlertDialogAction
                 variant="destructive"
                 onClick={onDelete}
@@ -2122,16 +2373,6 @@ function TransactionDetailDialog({
           </AlertDialogContent>
         </AlertDialog>
 
-        <DialogFooter className="flex-col gap-2 sm:flex-col">
-          <Button
-            variant="ghost"
-            className="h-11 w-full"
-            disabled={busy}
-            onClick={requestClose}
-          >
-            닫기
-          </Button>
-        </DialogFooter>
         <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
           <AlertDialogContent
             onCloseAutoFocus={(event) => {
@@ -2146,6 +2387,7 @@ function TransactionDetailDialog({
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
+              {/* 닫을지 묻는 확인에서 남는 쪽을 '닫기'라고 하면 뜻이 거꾸로 읽힌다 — '계속 수정하기'. */}
               <AlertDialogCancel>계속 수정하기</AlertDialogCancel>
               <AlertDialogAction
                 variant="destructive"
@@ -2155,7 +2397,7 @@ function TransactionDetailDialog({
                   onClose();
                 }}
               >
-                버리고 닫기
+                버리기
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -2189,19 +2431,31 @@ function useTransactionModalBack(onClose: () => void, busy: boolean) {
 function MemoModal({
   txn,
   busy,
+  error,
   onClose,
   onSave,
 }: Readonly<{
   txn: TransactionSummary;
   busy: boolean;
+  error: string | null;
   onClose: () => void;
   onSave: (memo: string) => void;
 }>) {
   useTransactionModalBack(onClose, busy);
   const [memo, setMemo] = useState(txn.memo ?? "");
+  const memoInput = useRef<HTMLTextAreaElement>(null);
   return (
     <Dialog open onOpenChange={(v) => !v && !busy && onClose()}>
-      <DialogContent>
+      <DialogContent
+        // 칸이 하나뿐인 창이라 열리면 바로 그 칸에 커서를 둔다 — 창에 포커스가 가면 한 번 더 눌러야 키보드가 떴다.
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          const input = memoInput.current;
+          if (!input) return;
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }}
+      >
         <DialogHeader>
           <DialogTitle>메모 남기기</DialogTitle>
           <DialogDescription>
@@ -2212,33 +2466,31 @@ function MemoModal({
           <Label htmlFor="memo-input" className="sr-only">
             메모
           </Label>
-          <textarea
+          <Textarea
             id="memo-input"
+            ref={memoInput}
             rows={4}
             maxLength={1000}
             value={memo}
             placeholder="예: 아이 생일 케이크, 부모님 선물이었어요"
+            aria-invalid={error ? true : undefined}
             onChange={(e) => setMemo(e.target.value)}
-            className="border-input placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 aria-invalid:border-destructive flex min-h-20 w-full rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
           />
+          {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
         </div>
         <DialogFooter className="flex-col gap-2 sm:flex-col">
-          {busy ? (
-            <p role="status" className="text-muted-foreground text-sm">
-              저장 중이에요. 완료될 때까지 잠시 기다려 주세요.
-            </p>
-          ) : null}
           <Button
             variant="default"
-            className="h-11 w-full"
+            className="w-full"
             onClick={() => onSave(memo)}
             disabled={busy}
+            aria-busy={busy || undefined}
           >
-            저장하기
+            {busy ? "저장하는 중…" : "저장하기"}
           </Button>
           <Button
             variant="ghost"
-            className="h-11 w-full"
+            className="w-full"
             onClick={onClose}
             disabled={busy}
           >
@@ -2257,11 +2509,13 @@ function MemoModal({
 function LinkCancellationModal({
   cancellation,
   busy,
+  error,
   onClose,
   onConfirm,
 }: Readonly<{
   cancellation: TransactionSummary;
   busy: boolean;
+  error: string | null;
   onClose: () => void;
   onConfirm: (approvalTransactionId: string) => void;
 }>) {
@@ -2291,27 +2545,18 @@ function LinkCancellationModal({
 
   // 표시용 좁히기(자격 판정이 아니다). 후보가 많아도 사용자가 금액·가맹점·날짜로 찾을
   // 수 있어야 한다 — 목록만 길게 뿌리면 100건 상한과 실질적으로 같아진다.
+  // 날짜는 화면에 보이는 글자('8월 3일')로 찾는다.
   const visible = candidates.filter((a) =>
     matchesCandidateSearch(
       {
         merchant: merchantLabel(a),
         amount: a.amount,
         remaining: a.amount - a.cancelledAmount,
-        dateLabel: formatDate(a.approvedAt ?? a.createdAt, { dateOnly: true }),
+        dateLabel: formatMonthDay(a.approvedAt ?? a.createdAt),
       },
       search
     )
   );
-
-  const options: Option[] = visible.map((a) => ({
-    value: a.id,
-    label: `${merchantLabel(a)} · 남은 금액 ${formatMoney(
-      a.amount - a.cancelledAmount,
-      a.currency
-    )} · ${formatDate(a.approvedAt ?? a.createdAt, { dateOnly: true })}${
-      a.excludedAt ? " · 합계 제외됨" : ""
-    }`,
-  }));
 
   // 고른 뒤 검색어를 바꿔 그 후보가 사라지면 선택을 버린다 — 안 그러면 화면에 보이지
   // 않는 승인에 연결 버튼이 살아 있어 엉뚱한 결제에 취소가 붙는다.
@@ -2319,6 +2564,7 @@ function LinkCancellationModal({
     selected,
     visible.map((a) => a.id)
   );
+  const refund = formatMoney(cancellation.amount, cancellation.currency);
 
   return (
     <Dialog open onOpenChange={(v) => !v && !busy && onClose()}>
@@ -2326,114 +2572,155 @@ function LinkCancellationModal({
         <DialogHeader>
           <DialogTitle>어떤 결제를 취소한 건가요?</DialogTitle>
           <DialogDescription>
-            이 취소 금액{" "}
-            {formatMoney(cancellation.amount, cancellation.currency)}을 원래
-            결제와 연결해 주세요. 연결하면 순지출이 자동으로 다시 계산돼요.
+            환불 {refund}이 나온 결제를 골라 주세요. 연결하면 그 결제 금액에서
+            환불만큼 빠져요.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-3">
+        <div className="flex min-w-0 flex-col gap-3">
           {candidatesQuery.isLoading ? (
-            <p className="text-muted-foreground py-6 text-center text-sm">
-              결제 내역을 불러오고 있어요…
-            </p>
+            <ListLoading rows={3} label="결제를 불러오는 중이에요." />
           ) : candidatesQuery.isError ? (
             /* "불러오지 못했어요"와 "연결할 결제가 없어요"는 다른 사실이다 —
                실패를 빈 목록으로 보여 주면 사용자가 없는 것으로 오해한다. */
-            <p className="text-destructive text-sm" role="alert">
-              결제 내역을 불러오지 못했어요:{" "}
-              {errorMessage(candidatesQuery.error)}
-            </p>
+            <ErrorState
+              message={`결제를 불러오지 못했어요: ${errorMessage(
+                candidatesQuery.error
+              )}`}
+              onRetry={() => void candidatesQuery.refetch()}
+              retrying={candidatesQuery.isFetching}
+              className="py-6"
+            />
           ) : candidates.length === 0 ? (
-            <div className="py-6 text-center">
-              <p className="text-muted-foreground text-sm">
+            <div className="flex flex-col gap-1 py-6 text-center">
+              <p className="text-body text-muted-foreground">
                 연결할 수 있는 결제가 없어요
               </p>
               {/* 왜 없는지까지 알려 준다 — 조건을 모르면 사용자가 할 수 있는 일이 없다. */}
-              <p className="text-muted-foreground mt-1 text-xs">
-                이 취소 금액{" "}
-                {formatMoney(cancellation.amount, cancellation.currency)} 이상이
-                남은 같은 통화 결제가 아직 없어요. 원래 결제 문자가 아직
-                수집되지 않았을 수도 있어요.
+              <p className="text-caption text-muted-foreground">
+                환불 {refund} 이상 남은 결제가 아직 없어요. 원래 결제 문자가
+                아직 들어오지 않았을 수도 있어요.
               </p>
             </div>
           ) : (
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="link-approval-search">결제 찾기</Label>
+            <>
               {/* 후보가 많을 때 훑지 않고 찾을 수 있어야 한다. 서버가 상한 없이 전량을
                   주므로 이 입력은 왕복 없이 즉시 좁힌다(자격 판정이 아니다). */}
               <div className="relative">
                 <Search
-                  className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+                  className="text-muted-foreground pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2"
                   aria-hidden
                 />
                 <Input
-                  id="link-approval-search"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="가맹점 · 금액 · 날짜로 좁히기"
-                  className="h-11 pr-9 pl-9"
+                  placeholder="가맹점 · 금액 · 날짜로 찾기"
+                  aria-label="결제 찾기"
+                  className="pl-11 pr-12"
                 />
                 {search !== "" ? (
                   <button
                     type="button"
                     onClick={() => setSearch("")}
                     aria-label="검색어 지우기"
-                    className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 flex size-7 -translate-y-1/2 items-center justify-center rounded-full active:text-foreground"
+                    className="text-muted-foreground hover:text-foreground focus-visible:outline-ring absolute top-1/2 right-1 flex size-11 -translate-y-1/2 items-center justify-center rounded-full focus-visible:outline-2 active:text-foreground"
                   >
                     <X className="size-4" aria-hidden />
                   </button>
                 ) : null}
               </div>
 
-              {options.length === 0 ? (
+              {visible.length === 0 ? (
                 /* 후보는 있는데 검색어가 걸러 낸 상태. 위의 "후보 0건"과 다른 사실이다. */
-                <p className="text-muted-foreground py-4 text-center text-sm">
-                  검색어와 맞는 결제가 없어요. 검색어를 지우면 후보{" "}
+                <p className="text-body text-muted-foreground py-4 text-center">
+                  검색어와 맞는 결제가 없어요. 검색어를 지우면 결제{" "}
                   {candidates.length}건을 모두 볼 수 있어요.
                 </p>
               ) : (
                 <>
-                  <Label htmlFor="link-approval">원래 결제</Label>
-                  <Select value={effectiveSelected} onValueChange={setSelected}>
-                    <SelectTrigger id="link-approval" className="w-full">
-                      <SelectValue placeholder="결제를 골라 주세요" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {options.map((o) => (
-                        <SelectItem key={o.value} value={o.value}>
-                          {o.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-muted-foreground text-xs">
-                    후보 {options.length}건
-                    {options.length !== candidates.length
-                      ? ` (전체 ${candidates.length}건 중)`
-                      : ""}
+                  {/*
+                    검색칸 → 고르기 창(Select) 두 단계였고, 옵션 한 줄에 '가맹점 · 남은 금액 · 날짜 · 합계 제외됨'을
+                    몰아넣어 입력 폼처럼 보였다(HIG 검수 3·4단계). 이제 검색칸 바로 아래 목록에서 한 줄을 누르면
+                    고른 줄에 체크가 붙는다 — 가맹점·날짜 / 남은 금액.
+                  */}
+                  <div
+                    role="radiogroup"
+                    aria-label="원래 결제"
+                    className="divide-border/60 -mx-1 flex max-h-80 min-w-0 flex-col divide-y overflow-y-auto overscroll-contain"
+                  >
+                    {visible.map((a) => {
+                      const checked = a.id === effectiveSelected;
+                      const remaining = a.amount - a.cancelledAmount;
+                      return (
+                        <button
+                          key={a.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={checked}
+                          disabled={busy}
+                          onClick={() => setSelected(a.id)}
+                          className={cn(
+                            "focus-visible:outline-ring flex min-h-14 w-full min-w-0 items-center gap-3 rounded-control px-1 py-2 text-left focus-visible:outline-2 active:bg-muted disabled:opacity-50",
+                            checked && "bg-primary/10"
+                          )}
+                        >
+                          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                            <span className="text-body truncate font-semibold">
+                              {merchantLabel(a)}
+                            </span>
+                            <span className="text-caption text-muted-foreground flex min-w-0 flex-wrap items-center gap-1.5">
+                              {formatMonthDay(a.approvedAt ?? a.createdAt)}
+                              {a.excludedAt ? (
+                                <StatusChip>합계 제외</StatusChip>
+                              ) : null}
+                            </span>
+                          </span>
+                          <span className="flex shrink-0 flex-col items-end gap-0.5 text-right">
+                            <Money
+                              amount={remaining}
+                              currency={a.currency}
+                              className="text-body font-semibold"
+                            />
+                            {remaining !== a.amount ? (
+                              <span className="text-caption text-muted-foreground">
+                                남은 금액
+                              </span>
+                            ) : null}
+                          </span>
+                          <Check
+                            aria-hidden="true"
+                            className={cn(
+                              "text-primary size-5 shrink-0",
+                              !checked && "invisible"
+                            )}
+                          />
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-caption text-muted-foreground">
+                    {visible.length !== candidates.length
+                      ? `결제 ${candidates.length}건 중 ${visible.length}건`
+                      : `결제 ${visible.length}건`}
                   </p>
                 </>
               )}
-            </div>
+            </>
           )}
+          {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
         </div>
         <DialogFooter className="flex-col gap-2 sm:flex-col">
-          {busy ? (
-            <p role="status" className="text-muted-foreground text-sm">
-              연결 중이에요. 완료될 때까지 잠시 기다려 주세요.
-            </p>
-          ) : null}
           <Button
             variant="default"
-            className="h-11 w-full"
+            className="w-full"
             onClick={() => onConfirm(effectiveSelected)}
             disabled={busy || effectiveSelected === ""}
+            aria-busy={busy || undefined}
           >
-            연결하기
+            {busy ? "연결하는 중…" : "연결하기"}
           </Button>
           <Button
             variant="ghost"
-            className="h-11 w-full"
+            className="w-full"
             onClick={onClose}
             disabled={busy}
           >

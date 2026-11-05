@@ -39,7 +39,7 @@ function BrandMark() {
     <Link
       href="/dashboard"
       aria-label="모아 홈"
-      className="text-primary flex min-h-11 min-w-11 shrink-0 items-center rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      className="text-primary flex min-h-11 min-w-11 shrink-0 items-center rounded-control focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
     >
       <span className="text-title font-extrabold tracking-[-0.07em]">
         모아
@@ -84,10 +84,11 @@ function NavigationItem({
       href={item.href}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "text-micro flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-control px-1 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:min-h-12 lg:flex-row lg:justify-start lg:gap-3 lg:px-4 lg:py-3 lg:text-sm",
+        "text-micro flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-control px-1 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:min-h-12 lg:flex-row lg:justify-start lg:gap-3 lg:px-4 lg:py-3 lg:text-body",
+        // 비활성 라벨은 11px라 투명도를 얹으면 대비가 3.7:1로 떨어진다 — muted-foreground 그대로(5.7:1).
         active
           ? "text-foreground font-semibold lg:bg-muted"
-          : "text-muted-foreground/80 hover:text-foreground lg:hover:bg-muted active:text-foreground"
+          : "text-muted-foreground hover:text-foreground lg:hover:bg-muted active:text-foreground"
       )}
     >
       <span className="relative flex h-8 w-11 shrink-0 items-center justify-center lg:h-auto lg:w-auto">
@@ -98,12 +99,14 @@ function NavigationItem({
         />
         {dot ? (
           <span
-            aria-label="새 거래가 있어요"
+            aria-hidden="true"
             className="bg-accent-foreground ring-background absolute top-0 right-2 size-2 rounded-full ring-2 lg:-top-0.5 lg:-right-1"
           />
         ) : null}
       </span>
       <span>{item.label}</span>
+      {/* 빈 span의 aria-label은 화면 읽기가 건너뛴다 — 점의 뜻은 숨은 글자로 탭 이름 뒤에 붙인다. */}
+      {dot ? <span className="sr-only">, 새 거래가 있어요</span> : null}
     </Link>
   );
 }
@@ -138,7 +141,7 @@ function AppShell({ children }: Readonly<{ children: ReactNode }>) {
     <div className="flex min-h-dvh flex-col">
       <a
         href="#app-main"
-        className="sr-only z-50 focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:rounded-lg focus:bg-background focus:p-3 focus:shadow-lg"
+        className="sr-only z-50 focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:rounded-control focus:bg-background focus:p-3 focus:shadow-lg"
       >
         본문으로 건너뛰기
       </a>

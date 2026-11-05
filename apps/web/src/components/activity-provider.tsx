@@ -18,8 +18,10 @@
  * 새 거래 판정: 거래 목록(createdAt desc)을 커서와 비교. 커서가 없으면(첫 방문)
  * 조용히 커서만 심는다(토스트 폭주 방지). 거래 탭을 보고 있으면 화면이 직접
  * 갱신되므로 토스트/배지를 생략하고 커서만 전진시킨다. summary_only(masked)
- * 거래는 가맹점을 노출하지 않고, 취소 거래는 '취소' 문구로 표기한다.
+ * 거래는 가맹점을 노출하지 않고, 취소로 생긴 기록은 목록·필터와 같은 이름 '환불'로
+ * 표기한다(transactions/list-status.ts).
  * ------------------------------------------------------------------------- */
+import type { TransactionSummary } from "@family/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
@@ -30,7 +32,7 @@ import { API_BASE_URL, ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { formatMoney } from "@/lib/format";
 import { useHousehold } from "@/lib/household-context";
-import { initPushNotifications } from "@/lib/native";
+import { initPushNotifications, retryPushRegistrationIfGranted } from "@/lib/native";
 import { invalidateTransactionScope } from "@/lib/queries";
 import { nextBackoff, readSseStream } from "@/lib/realtime";
 import { isManualFinanceHint, refreshManualFinanceQueries, resetSharedManualFinanceQueries, revalidateSharedManualFinanceQueries } from "@/lib/manual-finance-realtime";
@@ -102,6 +104,39 @@ function isTransactionsPath(pathname: string): boolean {
   return pathname === "/transactions" || pathname === "/transactions/";
 }
 
+type ActivityToastItem = Pick<
+  TransactionSummary,
+  | "transactionType"
+  | "masked"
+  | "merchantNormalized"
+  | "merchantRaw"
+  | "amount"
+  | "currency"
+>;
+
+/**
+ * 새 거래 토스트 문구. `fresh`는 비어 있지 않다(호출부가 0건이면 부르지 않는다).
+ * 조사는 명사와 함께 고른다('환불이'/'거래가'). 여러 건은 본 것이 모두 환불이고 상한에 닿지
+ * 않았을 때만 '환불'이라 한다 — 상한 너머의 거래는 무엇인지 모른다.
+ */
+export function newActivityToastMessage(
+  fresh: readonly ActivityToastItem[],
+  many: boolean
+): string {
+  const first = fresh[0];
+  const merchant = first.masked
+    ? null
+    : (first.merchantNormalized ?? first.merchantRaw);
+  if (fresh.length === 1 && merchant) {
+    const subject =
+      first.transactionType === "cancellation" ? "환불이" : "거래가";
+    return `${merchant} ${formatMoney(first.amount, first.currency)} ${subject} 기록됐어요`;
+  }
+  const allRefunds =
+    !many && fresh.every((t) => t.transactionType === "cancellation");
+  return `새 ${allRefunds ? "환불" : "거래"} ${fresh.length}${many ? "+" : ""}건이 기록됐어요`;
+}
+
 /** 앱 셸((app)/layout)에 1회 마운트되는 무렌더 컴포넌트. */
 export function ActivityProvider() {
   const { status, authedFetch } = useAuth();
@@ -158,17 +193,7 @@ export function ActivityProvider() {
       bump(fresh.length);
       // 스냅샷이 상한(ACTIVITY_SCAN_LIMIT)에 가득 찼으면 더 있을 수 있어 '+' 표기.
       const many = fresh.length >= ACTIVITY_SCAN_LIMIT;
-      const first = fresh[0];
-      const isCancel = first.transactionType === "cancellation";
-      const merchant = first.masked
-        ? null
-        : (first.merchantNormalized ?? first.merchantRaw);
-      const noun = isCancel ? "결제 취소" : "거래";
-      const message =
-        fresh.length === 1 && merchant
-          ? `${merchant} ${formatMoney(first.amount, first.currency)} ${noun}가 기록됐어요`
-          : `새 ${noun} ${fresh.length}${many ? "+" : ""}건이 기록됐어요`;
-      toast.info(message, {
+      toast.info(newActivityToastMessage(fresh, many), {
         action: { label: "보기", onClick: () => router.push("/transactions") },
       });
     } finally {
@@ -333,6 +358,9 @@ export function ActivityProvider() {
       void revalidateSharedManualFinanceQueries(queryClient, householdId).catch(() => undefined);
       void checkActivityRef.current();
       void connect();
+      // 휴대폰 설정에서 알림을 켜고 돌아온 경우: 이번 실행에서 못 한 푸시 등록을 다시 건다
+      // (Android는 권한을 바꿔도 앱을 다시 띄우지 않는다). 등록이 이미 됐거나 권한이 없으면 아무것도 안 한다.
+      void retryPushRegistrationIfGranted();
     };
     document.addEventListener("visibilitychange", onVisibility);
     void connect();

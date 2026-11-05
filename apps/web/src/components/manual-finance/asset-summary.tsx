@@ -1,31 +1,79 @@
 import * as React from "react";
 import type { ManualAssetSummary, ManualFinanceScope } from "@family/contracts";
 
-import { computeNetWorth, type AssetBreakdown, type BreakdownPart, type ConnectedHolding } from "@/lib/net-worth";
+import { CONNECTABLE_PROVIDERS } from "@/components/finance-connections/providers";
+import { formatMonthDay, formatRelativeTime } from "@/lib/format";
+import { computeNetWorth, type ConnectedHolding } from "@/lib/net-worth";
 import { displayManualKrw } from "./model";
 
 /**
- * 자산 요약(§8): 순자산 숫자 하나 + 자산·대출 두 줄.
+ * 순자산 합계에 들어간 값의 출처. 출처마다 자기 시각을 붙인다 — 직접 입력은 기준일, 연결 계좌는 조회 시각,
+ * 가져온 대출은 은행 잔액 기준일을 모른다는 사실(기준일은 계약 문구라 지우지 않는다, §3.5-5).
+ * 예전에는 출처가 늘 '직접 입력'이어서 연결 계좌·가져온 대출이 합계에 들어가도 근거 문구가 틀렸다(2026-11-05 HIG 검수).
+ */
+export function netWorthSources({
+  summary,
+  holdings = [],
+  hasImportedBalance = false,
+  now = new Date(),
+}: {
+  summary: ManualAssetSummary;
+  holdings?: readonly ConnectedHolding[];
+  hasImportedBalance?: boolean;
+  now?: Date;
+}): string[] {
+  const sources: string[] = [];
+  // 금액이 있는 직접 입력 항목만 기준일을 가진다 — 기준일이 있으면 직접 입력 금액이 합계에 들어갔다는 뜻이다.
+  const oldest = summary.oldestAsOfDate;
+  const newest = summary.newestAsOfDate ?? oldest;
+  if (oldest) {
+    sources.push(
+      summary.mixedAsOfDates && newest !== oldest
+        ? `직접 입력 항목별 기준일 ${formatMonthDay(oldest, now)} ~ ${formatMonthDay(newest, now)}`
+        : `직접 입력 기준일 ${formatMonthDay(oldest, now)}`
+    );
+  }
+  for (const provider of CONNECTABLE_PROVIDERS) {
+    // 금액이 있어 합계에 들어간 연결 계좌만 센다. 시각은 가장 오래된 조회 — 합계는 그보다 새롭지 않다.
+    const observed = holdings
+      .filter((holding) => holding.provider === provider.id && holding.totalKrw !== null)
+      .map((holding) => holding.observedAt)
+      .sort();
+    if (!observed.length) continue;
+    const when = formatRelativeTime(observed[0]);
+    sources.push(when ? `${provider.label} ${when}` : provider.label);
+  }
+  if (hasImportedBalance) sources.push("가져온 신한 대출(은행 잔액 기준일 미확인)");
+  return sources;
+}
+
+/**
+ * 자산 요약(§8): 순자산 숫자 하나 + 자산·남은 대출 두 줄 + 출처 한 줄.
+ * 종류별 구성은 바로 아래 목록의 묶음 머리 소계가 맡는다 — 요약에도 막대·비율·대출 목록을 그리면
+ * 같은 숫자가 한 화면에 두 번 나오고 폰에서 목록이 첫 화면 밖으로 밀렸다(2026-11-05 HIG 검수).
  * 순자산은 입력된 값만으로 계산하고, 비어 있는 칸은 `미입력`으로 남긴다(0으로 보여주지 않는다).
  */
 export function ManualAssetsSummary({
   summary,
   scope = "household",
   holdings = [],
-  sourceLabel = "직접 입력",
   hasImportedBalance = false,
-  breakdown,
+  hasUncountedRecords = false,
+  unresolvedLoans = 0,
 }: {
   summary: ManualAssetSummary;
   scope?: ManualFinanceScope;
   /** 자산 목록에 합친 연결 계좌(원화 환산 포함). */
   holdings?: readonly ConnectedHolding[];
-  /** 기준일 옆에 붙는 출처(예: 직접 입력). */
-  sourceLabel?: string;
-  /** 가져온 대출이 합계에 들어가면 은행 잔액 기준일을 알 수 없다고 표시한다. */
+  /** 가져온 대출이 합계에 들어갔는지. 들어갔으면 출처에 은행 잔액 기준일을 모른다고 적는다. */
   hasImportedBalance?: boolean;
-  /** 항목별 구성. 합이 요약 합계와 다르면 그리지 않는다(맞지 않는 표를 보여주지 않는다). */
-  breakdown?: AssetBreakdown;
+  /**
+   * 합계에 들어가지 않은 기록(예: '기록만 보관' 대출)이 목록에 있는지. 서버는 이런 기록만 있으면
+   * completeness를 'empty'로 두는데, 그때 '등록된 자산이 없어요'라고 하면 바로 아래 목록과 어긋난다.
+   */
+  hasUncountedRecords?: boolean;
+  /** 확인이 필요해 합계에서 뺀 가져온 대출 수. 서버는 이것만으로도 대출을 'partial'로 둔다. */
+  unresolvedLoans?: number;
 }) {
   const worth = computeNetWorth(summary, holdings);
   if (worth.net === null) {
@@ -37,33 +85,32 @@ export function ManualAssetsSummary({
         <h2 className="text-caption text-muted-foreground">
           {scope === "household" ? "순자산" : "나만 보는 자산"}
         </h2>
-        <p className="text-heading mt-1">등록된 자산이 없어요</p>
+        <p className="text-heading mt-1">
+          {/* 금액 없이 등록한 자산·합계 밖 기록만 있을 때 '없어요'라고 하면 아래 목록과 어긋난다. */}
+          {summary.completeness === "empty" && !holdings.length && !hasUncountedRecords
+            ? "등록된 자산이 없어요"
+            : "합계에 넣을 금액이 아직 없어요"}
+        </p>
       </section>
     );
   }
-  // 기준일은 계약 문구라 지우지 않고 가장 작은 글씨로 남긴다(§3.5-5).
-  const range = hasImportedBalance
-    ? "은행 잔액 기준일 미확인"
-    : summary.mixedAsOfDates
-    ? `항목별 기준일 ${summary.oldestAsOfDate ?? "미입력"} ~ ${summary.newestAsOfDate ?? "미입력"}`
-    : summary.asOfDate
-    ? `기준일 ${summary.asOfDate}`
-    : null;
   const rows: Array<[string, bigint | null]> = [
     [
       summary.assetsCompleteness === "partial" ? "자산 (일부 입력)" : "자산",
       worth.assets,
     ],
     [
-      summary.debtCompleteness === "partial" ? "대출 (일부 입력)" : "남은 대출",
+      // 이름은 늘 '남은 대출'. 부분 표시는 원인대로 — 확인 필요 대출을 뺐으면 빈칸이 없어도 'partial'이라
+      // '일부 입력'이라고 하면 원인을 잘못 말한다.
+      summary.debtCompleteness !== "partial"
+        ? "남은 대출"
+        : unresolvedLoans > 0
+          ? "남은 대출 (일부만 합산)"
+          : "남은 대출 (일부 입력)",
       worth.debt,
     ],
   ];
-  const consistent =
-    breakdown !== undefined &&
-    breakdown.assetsTotal === worth.assets &&
-    breakdown.debtsTotal === worth.debt;
-  const max = [worth.assets, worth.debt].reduce<bigint>((m, v) => (v !== null && v > m ? v : m), 0n);
+  const sources = netWorthSources({ summary, holdings, hasImportedBalance });
   return (
     <section
       className="finance-panel min-w-0 px-5 py-5"
@@ -75,12 +122,6 @@ export function ManualAssetsSummary({
       <p className="text-display mt-1 min-w-0 break-all tracking-tight tabular-nums">
         {displayManualKrw(worth.net.toString())}
       </p>
-      {consistent ? (
-        <div className="mt-5 space-y-5">
-          <BreakdownGroup title={rows[0][0]} total={worth.assets} max={max} parts={breakdown.assets} palette={ASSET_COLORS} />
-          <BreakdownGroup title={rows[1][0]} total={worth.debt} max={max} parts={breakdown.debts} palette={DEBT_COLORS} />
-        </div>
-      ) : (
       <dl className="mt-3 min-w-0 space-y-1.5">
         {rows.map(([label, value]) => (
           <div
@@ -100,90 +141,11 @@ export function ManualAssetsSummary({
           </div>
         ))}
       </dl>
-      )}
-      {range ? (
+      {sources.length ? (
         <p className="text-micro text-muted-foreground mt-3 break-words">
-          {range} · {sourceLabel}
+          {sources.join(" · ")}
         </p>
       ) : null}
     </section>
-  );
-}
-
-const ASSET_COLORS = ["bg-chart-1", "bg-chart-2", "bg-chart-5"];
-const DEBT_COLORS = ["bg-chart-4", "bg-chart-3", "bg-chart-4/60", "bg-chart-3/60"];
-
-function percentOf(part: bigint, total: bigint): string {
-  if (total <= 0n) return "";
-  const tenths = (part * 1000n + total / 2n) / total;
-  return `${tenths / 10n}.${tenths % 10n}%`;
-}
-
-/**
- * 자산·대출 한 묶음: 합계 + 막대(길이는 자산·대출 중 큰 쪽 기준, 안은 항목별 색) + 항목별 금액·비율.
- * 금액이 비어 있는 항목은 막대에 넣지 않고 `미입력 N건`으로 적는다.
- */
-function BreakdownGroup({
-  title,
-  total,
-  max,
-  parts,
-  palette,
-}: {
-  title: string;
-  total: bigint | null;
-  max: bigint;
-  parts: BreakdownPart[];
-  palette: string[];
-}) {
-  const known = parts.filter((part) => part.amount !== null && part.amount > 0n);
-  // 막대는 이 묶음만의 구성이다 — 폭 전체를 100%로 쓰고 칸 길이 = 옆에 적은 비율.
-  // (예전에는 자산·대출 중 큰 쪽 기준으로 막대를 줄여, 칸 길이와 비율이 어긋나 보였다.)
-  const width = known.length ? 100 : 0;
-  return (
-    <div className="min-w-0">
-      <div className="flex min-w-0 items-baseline justify-between gap-3">
-        <span className="text-body font-semibold">{title}</span>
-        <span className={`text-body min-w-0 break-all text-right tabular-nums ${total === null ? "text-muted-foreground" : "font-semibold"}`}>
-          {total === null ? "미입력" : displayManualKrw(total.toString())}
-        </span>
-      </div>
-      {known.length ? (
-        <div className="bg-muted mt-2 h-2.5 overflow-hidden rounded-full" aria-hidden="true">
-          <div className="flex h-full overflow-hidden rounded-full" style={{ width: `${width}%` }}>
-            {known.map((part, index) => (
-              <span
-                key={part.key}
-                className={`${palette[index % palette.length]} h-full`}
-                style={{ width: `${Number((part.amount! * 1000n) / (total ?? 1n)) / 10}%` }}
-              />
-            ))}
-          </div>
-        </div>
-      ) : null}
-      <ul className="mt-2 space-y-1">
-        {parts.map((part) => {
-          const index = known.indexOf(part);
-          return (
-            <li key={part.key} className="text-caption flex min-w-0 items-center gap-2">
-              <span
-                aria-hidden="true"
-                className={`size-2 shrink-0 rounded-full ${index >= 0 ? palette[index % palette.length] : "bg-muted"}`}
-              />
-              <span className="text-muted-foreground min-w-0 flex-1 truncate">
-                {part.label}
-                {part.missing > 0 ? ` · 미입력 ${part.missing}건` : ""}
-              </span>
-              <span className="tabular-nums">
-                {part.amount === null ? "—" : displayManualKrw(part.amount.toString())}
-              </span>
-              <span className="text-muted-foreground w-12 shrink-0 text-right tabular-nums">
-                {part.amount !== null && total !== null ? percentOf(part.amount, total) : ""}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
   );
 }

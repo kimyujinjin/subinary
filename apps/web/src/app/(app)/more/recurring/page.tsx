@@ -22,6 +22,10 @@
  * 빠진 걸 숨긴 합계는 "이만큼만 나간다"는 거짓말이 된다.
  *
  * 금액은 예측하지 않는다 — 관측된 중앙값을 그대로 말한다.
+ *
+ * 합계는 목록과 따로 불러오므로 늦게 올 수 있다. 그 자리를 스켈레톤으로 잡아 둔다 — 늦게 뜬 합계가
+ * 목록을 밀어내면 누르려던 줄이 손가락 아래에서 움직인다(2026-11-05 HIG 검수). 자리는 확정된 정기 결제가
+ * 있을 때만 잡고(합계는 확정만 센다), 그때는 이번 달 예정이 0건이어도 '더 나갈 것이 없다'로 자리를 지킨다.
  * ------------------------------------------------------------------------- */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Repeat } from "lucide-react";
@@ -38,6 +42,7 @@ import type {
 } from "@family/contracts";
 
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   EmptyState,
   ErrorState,
@@ -54,7 +59,8 @@ import {
 } from "@/components/widgets";
 import { useAuth } from "@/lib/auth-context";
 import { transactionsHref } from "@/lib/deep-link";
-import { formatRelativeTime } from "@/lib/format";
+import { leftOutText } from "@/lib/recurring-left-out";
+import { formatMonthDay, formatRelativeTime } from "@/lib/format";
 import { useHousehold } from "@/lib/household-context";
 import {
   decideRecurringSeries,
@@ -76,18 +82,13 @@ const REDACTED_MERCHANT = "(비공개)";
  */
 const DECISION_MESSAGE: Record<Decision, string> = {
   confirmed: "정기 결제로 표시했어요.",
-  rejected: "정기 결제가 아닌 것으로 표시했어요.",
+  rejected: "정기 결제가 아닌 것으로 표시해 '아님·해지'로 옮겼어요.",
   ended: "해지한 것으로 표시해 이번 달 예상에서 뺐어요.",
   still_active: "계속 쓰는 것으로 표시했어요.",
 };
 
-/** 목록 한 줄에 들어가는 날짜(월·일). 예상일은 길어야 한두 달 뒤라 연도를 생략한다. */
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("ko-KR", {
-    month: "long",
-    day: "numeric",
-  });
-}
+/** 접어 둔 '아님·해지' 묶음 — 답한 뒤 토스트의 '보기'가 이 자리로 데려간다. */
+const CLOSED_SECTION_ID = "recurring-closed";
 
 /** 관측된 사실만 말한다 — "월 1회"가 아니라 "약 30일마다"(우리가 본 것). */
 function cadenceText(item: RecurringSeriesItem): string {
@@ -96,22 +97,23 @@ function cadenceText(item: RecurringSeriesItem): string {
 
 /**
  * 다음 결제 예상을 짧게. **금액은 넣지 않는다** — 날짜만 확정적으로 말할 수 있다.
- * 창(±N일)을 함께 말해 하루 밀린 결제가 틀린 예고가 되지 않게 한다.
+ * 창(N일 앞뒤)을 함께 말해 하루 밀린 결제가 틀린 예고가 되지 않게 한다. '±3일' 같은 기호 대신 말로 쓴다.
+ * 날짜는 서울 기준 '11월 3일'(해가 바뀌면 연도까지 — 12월에 보는 1월 예정일).
  */
 function forecastText(item: RecurringSeriesItem): string | null {
   if (!item.nextExpectedAt || item.nextExpectedPhase === null) return null;
-  const when = formatDate(item.nextExpectedAt);
-  const pm =
+  const when = formatMonthDay(item.nextExpectedAt);
+  const range =
     item.nextExpectedWindowDays && item.nextExpectedWindowDays > 0
-      ? `(±${item.nextExpectedWindowDays}일)`
+      ? `(${item.nextExpectedWindowDays}일 앞뒤)`
       : "";
   switch (item.nextExpectedPhase) {
     case "due":
-      return `${when}쯤${pm} 결제 예정`;
+      return `${when}쯤${range} 결제 예정`;
     case "overdue":
       return `${when}쯤 예정이었는데 아직 없어요`;
     default:
-      return `다음 ${when}쯤${pm}`;
+      return `다음 결제 ${when}쯤${range}`;
   }
 }
 
@@ -165,16 +167,6 @@ function changeActions(
   }
 }
 
-/** 합계에서 뺀 것을 한 줄로(계약 문구는 줄이되 지우지 않는다 — §3.5). */
-function leftOutText(excluded: number, otherCurrency: number): string | null {
-  if (excluded > 0 && otherCurrency > 0) {
-    return `${excluded}건은 금액 확인 전, ${otherCurrency}건은 외화라 합계에서 뺐어요.`;
-  }
-  if (excluded > 0) return `${excluded}건은 금액을 아직 확인하지 못해 합계에서 뺐어요.`;
-  if (otherCurrency > 0) return `${otherCurrency}건은 외화라 합계에서 뺐어요.`;
-  return null;
-}
-
 /** 상태별 묶음: 답이 필요한 것 → 정기 결제 → 아님·해지. 서버 순서(최근 결제순)는 유지한다. */
 function groupSeries(items: readonly RecurringSeriesItem[]) {
   const review: RecurringSeriesItem[] = [];
@@ -219,6 +211,7 @@ function SeriesRow({
         <ListRow
           className="min-w-0 flex-1"
           href={href}
+          chevron={href != null}
           title={
             <span className="flex min-w-0 items-center gap-1.5">
               <span className="min-w-0 truncate">{item.merchant}</span>
@@ -259,7 +252,7 @@ function SeriesRow({
         // 반복 거절은 기존 사유별 조치 화면으로 연결한다 — 여기서 조치를 새로 만들지 않는다.
         <Link
           href="/declines"
-          className="text-caption text-warning-strong flex min-h-9 items-center gap-1.5 px-1 sm:px-2"
+          className="text-caption text-warning-strong flex min-h-11 items-center gap-1.5 px-1 transition-opacity active:opacity-60 sm:px-2"
         >
           <AlertTriangle className="size-3.5 shrink-0" />
           <span className="truncate">
@@ -330,6 +323,7 @@ function SeriesRow({
 
 /** 상태 묶음 하나 = 섹션 하나(회색 띠로 나뉜다). */
 function SeriesSection({
+  id,
   title,
   description,
   count,
@@ -337,6 +331,7 @@ function SeriesSection({
   onToggle,
   children,
 }: {
+  id?: string;
   title: string;
   description?: string;
   count: number;
@@ -347,7 +342,7 @@ function SeriesSection({
 }) {
   const countText = <span className="text-caption text-muted-foreground tabular-nums">{count}건</span>;
   return (
-    <section className="finance-panel overflow-hidden pt-2">
+    <section id={id} className="finance-panel scroll-mt-[calc(var(--app-header-h)+1rem)] overflow-hidden pt-2">
       <SectionHeader
         className="px-5"
         title={title}
@@ -370,11 +365,26 @@ function SeriesSection({
 /**
  * 이번 달 남은 정기 합계 (금액 레이어 S1). 화면의 대표 금액이다.
  *
- * 예정이 0건이면 아무것도 그리지 않는다 — 빈 합계가 "정기 결제가 없다"로 읽히면
- * 그건 없는 사실이다.
+ * 예정이 0건일 때: 확정된 정기 결제가 있으면 '더 나갈 것이 없다'는 사실만 말하고 자리를 지킨다
+ * — 스켈레톤이 잡아 둔 자리가 사라지면 목록이 위로 당겨진다. 확정된 것이 없으면(예정은 확정만 센다)
+ * 아무것도 그리지 않는다 — 빈 합계가 "정기 결제가 없다"로 읽히면 그건 없는 사실이다.
  */
-function UpcomingSummary({ data }: { data: RecurringUpcomingResponse }) {
-  if (data.items.length === 0) return null;
+function UpcomingSummary({
+  data,
+  hasConfirmed,
+}: {
+  data: RecurringUpcomingResponse;
+  hasConfirmed: boolean;
+}) {
+  if (data.items.length === 0) {
+    if (!hasConfirmed) return null;
+    return (
+      <section className="finance-panel px-5 py-5">
+        <p className="text-caption text-muted-foreground">이번 달 남은 정기 결제</p>
+        <p className="text-body mt-1 font-semibold">이번 달에 더 나갈 정기 결제는 없어요.</p>
+      </section>
+    );
+  }
 
   const overdue = data.items.filter((i) => i.nextExpectedPhase === "overdue").length;
   const meta = [
@@ -393,10 +403,31 @@ function UpcomingSummary({ data }: { data: RecurringUpcomingResponse }) {
           <Money amount={data.totalAmount} currency={data.totalCurrency} />
         </p>
       ) : (
-        <p className="text-body mt-1 font-semibold">예정된 금액을 아직 말할 수 없어요.</p>
+        <p className="text-body mt-1 font-semibold">금액을 아직 확인하지 못했어요.</p>
       )}
       {meta ? <p className="text-caption text-muted-foreground mt-1">{meta}</p> : null}
       {leftOut ? <p className="text-caption text-muted-foreground mt-1">{leftOut}</p> : null}
+    </section>
+  );
+}
+
+/**
+ * 합계가 올 자리. `UpcomingSummary`와 같은 줄 높이(caption · display · caption)라 합계가 뜰 때 목록이 움직이지 않는다.
+ * 글자 '불러오는 중'은 읽기 프로그램에만 준다 — 목록 스켈레톤과 함께 여러 곳에 글자를 띄우지 않는다.
+ */
+function UpcomingSummarySkeleton() {
+  return (
+    <section role="status" aria-busy="true" className="finance-panel px-5 py-5">
+      <span className="sr-only">이번 달 남은 정기 결제를 불러오는 중이에요.</span>
+      <div aria-hidden="true" className="text-caption">
+        <Skeleton className="inline-block h-3 w-28 align-middle" />
+      </div>
+      <div aria-hidden="true" className="text-display mt-1">
+        <Skeleton className="inline-block h-7 w-40 align-middle" />
+      </div>
+      <div aria-hidden="true" className="text-caption mt-1">
+        <Skeleton className="inline-block h-3 w-36 align-middle" />
+      </div>
     </section>
   );
 }
@@ -435,12 +466,31 @@ export default function RecurringPage() {
       queryClient.invalidateQueries({ queryKey: ["recurring-upcoming"] }),
     ]);
 
+  // 답한 줄이 접힌 '아님·해지'로 옮겨 가면 화면에서 사라진 것처럼 보인다. 토스트의 '보기'로 그 묶음을
+  // 펼쳐 어디로 갔는지(그리고 거기 ⋯에서 답을 바꿀 수 있음을) 보여 준다. 후보로 되돌리는 답은 API에 없어
+  // '되돌리기' 대신 이 길을 둔다.
+  const showClosedGroup = () => {
+    setShowClosed(true);
+    requestAnimationFrame(() =>
+      document
+        .getElementById(CLOSED_SECTION_ID)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+  };
+
   const decide = useMutation({
     mutationFn: ({ id, decision }: { id: string; decision: Decision }) =>
       authedFetch((token) => decideRecurringSeries(token, id, decision)),
     onSuccess: async (_, variables) => {
       await invalidate();
-      toast.success(DECISION_MESSAGE[variables.decision]);
+      const movedToClosed =
+        variables.decision === "rejected" || variables.decision === "ended";
+      toast.success(
+        DECISION_MESSAGE[variables.decision],
+        movedToClosed
+          ? { action: { label: "보기", onClick: showClosedGroup } }
+          : undefined,
+      );
     },
     onError: () => toast.error("저장하지 못했어요. 잠시 후 다시 시도해 주세요."),
   });
@@ -493,8 +543,28 @@ export default function RecurringPage() {
           {/*
            * 합계를 목록 **위**에 둔다 — 사용자가 이 화면에 오는 이유는 "얼마 나가지?"이고,
            * 개별 확정은 그 답을 얻은 뒤의 작업이다.
+           *
+           * 예정 합계는 확정된 정기 결제만 센다(API). 그래서 자리를 잡는 조건을 '확정이 하나라도 있다'로
+           * 두고, 그때는 예정이 0건이어도 요약이 자리를 지킨다 — 스켈레톤과 요약의 조건이 같아야 목록이 안 움직인다.
            */}
-          {upcomingQuery.data ? <UpcomingSummary data={upcomingQuery.data} /> : null}
+          {upcomingQuery.data ? (
+            <UpcomingSummary
+              data={upcomingQuery.data}
+              hasConfirmed={groups.active.length > 0}
+            />
+          ) : groups.active.length === 0 ? null : upcomingQuery.isError ? (
+            // 합계가 조용히 빠지면 '이번 달에 나갈 정기 결제가 없다'로 읽힌다.
+            <section className="finance-panel px-5 py-5">
+              <ErrorState
+                align="start"
+                message="이번 달 남은 정기 결제를 불러오지 못했어요"
+                retrying={upcomingQuery.isFetching}
+                onRetry={() => void upcomingQuery.refetch()}
+              />
+            </section>
+          ) : (
+            <UpcomingSummarySkeleton />
+          )}
 
           {data.items.length === 0 ? (
             data.computedAt ? (
@@ -535,6 +605,7 @@ export default function RecurringPage() {
               ) : null}
               {groups.closed.length > 0 ? (
                 <SeriesSection
+                  id={CLOSED_SECTION_ID}
                   title="아님·해지"
                   count={groups.closed.length}
                   collapsed={!showClosed}

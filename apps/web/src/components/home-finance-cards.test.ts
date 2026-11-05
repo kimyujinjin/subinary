@@ -92,6 +92,33 @@ describe("quiet home transaction exceptions", () => {
     expect(consumption({ monthly: { ...monthly, totalNet: 123456 }, loading: true })).not.toContain("123,456원");
   });
 
+  it("names the amount by its heading instead of hiding the number behind an aria-label, on one line", () => {
+    const html = consumption({ monthly: { ...monthly, totalNet: 526339 } });
+    expect(html).toContain('aria-labelledby="home-consumption-heading"');
+    expect(html).toContain('id="home-consumption-heading"');
+    expect(html).not.toContain("기록된 카드 소비");
+    expect(html).not.toContain("break-all");
+    expect(html).toContain("whitespace-nowrap");
+    expect(html).toContain("text-display");
+    // 십억 원대 금액은 줄을 바꾸지 않고 한 단계 작은 글자로 내린다.
+    const huge = consumption({ monthly: { ...monthly, totalNet: 1234567890 } });
+    expect(huge).toContain("1,234,567,890원");
+    expect(huge).toContain("text-title");
+    expect(huge).not.toContain("text-display");
+  });
+
+  it("shows a skeleton while loading and a retry under the failure line", () => {
+    const loading = consumption({ loading: true });
+    expect(loading).toContain('role="status"');
+    expect(loading).toContain("카드 사용액을 불러오고 있어요");
+    expect(loading).not.toContain("불러오지 못했어요");
+    const failed = consumption({ error: true, onRetry: () => {} });
+    expect(failed).toContain("카드 사용액을 불러오지 못했어요");
+    expect(failed).toContain("다시 불러오기");
+    expect(failed).toContain('role="alert"');
+    expect(consumption({ error: true, onRetry: () => {}, retrying: true })).toContain('aria-busy="true"');
+  });
+
   it("does not display another member's private-row existence count on the new home", () => {
     const before = consumption({ monthly });
     const after = consumption({ monthly: { ...monthly, meta: { ...monthly.meta, excludedByPermission: 98765 } } });
@@ -101,9 +128,33 @@ describe("quiet home transaction exceptions", () => {
 
 describe("home one-line summaries", () => {
   it("does not compare an unfinished month against a finished one", () => {
-    expect(monthComparison({ ...monthly, totalNet: 1000, previousNet: 5000, deltaNet: -4000 }, true)).toBe("지난달 전체 5,000원");
-    expect(monthComparison({ ...monthly, totalNet: 1000, previousNet: 5000, deltaNet: -4000 }, false)).toBe("전달보다 4,000원 덜 썼어요");
-    expect(monthComparison({ ...monthly, totalNet: 9000, previousNet: 5000, deltaNet: 4000 }, false)).toBe("전달보다 4,000원 더 썼어요");
-    expect(monthComparison(monthly, false)).toBeNull();
+    expect(monthComparison({ ...monthly, totalNet: 1000, previousNet: 5000, deltaNet: -4000 }, true, "2026-11")).toBe("지난달 5,000원");
+    expect(monthComparison({ ...monthly, totalNet: 1000, previousNet: 5000, deltaNet: -4000 }, false, "2026-09")).toBe("2026년 8월보다 4,000원 덜 썼어요");
+    expect(monthComparison({ ...monthly, totalNet: 9000, previousNet: 5000, deltaNet: 4000 }, false, "2026-09")).toBe("2026년 8월보다 4,000원 더 썼어요");
+    expect(monthComparison({ ...monthly, totalNet: 5000, previousNet: 5000, deltaNet: 0 }, false, "2026-09")).toBe("2026년 8월과 같아요");
+    // 1월의 앞 달은 전년도 12월이다.
+    expect(monthComparison({ ...monthly, totalNet: 1000, previousNet: 5000, deltaNet: -4000 }, false, "2026-01")).toBe("2025년 12월보다 4,000원 덜 썼어요");
+    expect(monthComparison(monthly, false, "2026-09")).toBeNull();
+    // 이번 달의 비교 대상은 '지난달' 한 이름이다.
+    for (const text of ["전달", "지난달 전체"]) {
+      expect(monthComparison({ ...monthly, totalNet: 1000, previousNet: 5000, deltaNet: -4000 }, true, "2026-11")).not.toContain(text);
+      expect(monthComparison({ ...monthly, totalNet: 1000, previousNet: 5000, deltaNet: -4000 }, false, "2026-09")).not.toContain(text);
+    }
+  });
+
+  it("names the actual previous month when viewing a past month", () => {
+    // 지난 달 화면에서 '지난달'은 오늘 기준 지난달로 읽힌다. 막 끝난 10월을 봐도 비교 대상은 9월이다.
+    for (const deltaNet of [-4000, 0, 4000]) {
+      const text = monthComparison({ ...monthly, totalNet: 5000 + deltaNet, previousNet: 5000, deltaNet }, false, "2026-10");
+      expect(text).toContain("2026년 9월");
+      expect(text).not.toContain("지난달");
+    }
+    const html = consumption({
+      month: "2026-09",
+      isCurrentMonth: false,
+      monthly: { ...monthly, totalNet: 1000, previousNet: 5000, deltaNet: -4000 },
+    });
+    expect(html).toContain("2026년 8월보다 4,000원 덜 썼어요");
+    expect(html).not.toContain("지난달");
   });
 });

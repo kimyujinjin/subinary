@@ -23,7 +23,7 @@ describe("reviewDecision", () => {
     expect(decision?.question).toBe("같은 결제가 두 번 들어온 것 같아요");
     expect(decision?.actions).toEqual([
       { action: "markValid", label: "정상 결제예요" },
-      { action: "exclude", label: "중복이라 빼기" },
+      { action: "exclude", label: "합계에서 빼기" },
     ]);
     expect(decision?.hint).toBeNull();
     expect(decision?.pairLabel).toBeNull();
@@ -33,10 +33,10 @@ describe("reviewDecision", () => {
   it("짝 결제를 찾았으면 그 결제의 시각을 가리키고 그 결제로 가는 버튼을 둔다", () => {
     const decision = reviewDecision({
       ...approval,
-      duplicatePairAt: "2026. 11. 05. 14:31",
+      duplicatePairAt: "11월 5일 오후 2:31",
     });
     expect(decision?.hint).toBe(
-      "5분 안에 같은 금액 결제가 한 번 더 있어요 (2026. 11. 05. 14:31)"
+      "5분 안에 같은 금액 결제가 한 번 더 있어요 (11월 5일 오후 2:31)"
     );
     expect(decision?.pairLabel).toBe("그 결제 보기");
     // 이동 버튼은 답이 아니다 — 답은 그대로 두 개다.
@@ -59,7 +59,7 @@ describe("reviewDecision", () => {
     const decision = reviewDecision({
       ...approval,
       status: "pending_review",
-      duplicatePairAt: "2026. 11. 05. 14:31",
+      duplicatePairAt: "11월 5일 오후 2:31",
     });
     expect(decision?.hint).toBeNull();
     expect(decision?.pairLabel).toBeNull();
@@ -87,7 +87,7 @@ describe("reviewDecision", () => {
       canPickCard: false,
     });
     expect(decision?.actions).toEqual([
-      { action: "markValid", label: "이대로 확인" },
+      { action: "markValid", label: "이대로 확인하기" },
     ]);
     expect(decision?.hint).toBeNull();
   });
@@ -119,6 +119,8 @@ describe("reviewDecision", () => {
       transactionType: "cancellation",
       linked: true,
     });
+    // 취소로 생긴 기록은 '환불'이라 부른다(이름 규칙). 원래 결제만 '취소됨'이다.
+    expect(decision?.question).toBe("이 환불이 맞는지 확인해 주세요");
     expect(decision?.actions.map((item) => item.action)).toEqual(["markValid"]);
   });
 
@@ -132,7 +134,7 @@ describe("reviewDecision", () => {
   it("두 답은 늘 짧은 해요체이고 영어·내부 상태명을 쓰지 않는다", () => {
     const inputs: ReviewDecisionInput[] = [
       approval,
-      { ...approval, duplicatePairAt: "2026. 11. 05. 14:31" },
+      { ...approval, duplicatePairAt: "11월 5일 오후 2:31" },
       { ...approval, status: "pending_review", hasCard: false },
       { ...approval, status: "pending_review" },
       {
@@ -150,6 +152,10 @@ describe("reviewDecision", () => {
         ...(decision?.actions.map((item) => item.label) ?? []),
       ].join(" ");
       expect(text).not.toMatch(/[A-Za-z_]/);
+      // 행동 이름은 '합계에서 빼기' 하나 — '중복이라 빼기' 같은 변형을 쓰지 않는다.
+      for (const item of decision?.actions ?? []) {
+        if (item.action === "exclude") expect(item.label).toBe("합계에서 빼기");
+      }
     }
   });
 });

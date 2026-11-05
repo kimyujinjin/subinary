@@ -151,7 +151,7 @@ describe("row text", () => {
         isShared: true,
         visibility: "summary_only",
       }).map((c) => c.label)
-    ).toEqual(["공용", "요약만 공유"]);
+    ).toEqual(["공용", "금액만 공개"]);
   });
 });
 

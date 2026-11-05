@@ -7,7 +7,8 @@
  *   2. 지금 무엇이 얼마나 보관돼 있나 (카드 문자 건수 · 시작한 달, 읽기 전용)
  *
  * 가족 가입 동의 절차는 2026-11-05에 없앴다(소유자 결정 — 두 사람이 쓰는 가족 앱이라 필요 없다).
- * 이미 남은 동의 기록은 DB에 그대로 있고, 문자 수집을 멈추려면 문자 연동에서 기기를 폐기한다.
+ * 이미 남은 동의 기록은 DB에 그대로 있고, 문자 수집을 멈추려면 문자 연동에서 기기의 ⋯ 메뉴 →
+ * '연결 해제'를 누른다('자세히' 시트가 이 경로와 문자 연동 링크를 준다, retention-guide.tsx).
  *
  * ⚠️ 이 화면은 **삭제를 약속하지 않는다.** 문자 purge 잡·보존기간 선택은 **만들지
  * 않기로 했다**(2026-08-18 사용자 결정, 로드맵 5-1). 보존정책은 `none` 동결이다.
@@ -36,6 +37,7 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { useHousehold } from "@/lib/household-context";
 import { fetchPrivacyOverview, privacyQueryKey } from "./privacy-api";
+import { RetentionGuide } from "./retention-guide";
 
 const yearMonthFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: DEFAULT_TIMEZONE,
@@ -75,8 +77,9 @@ function SettingRow({
       />
       <span className="text-body min-w-0 flex-1">{title}</span>
       {href !== undefined ? (
+        // 70% 농도: 흰 바탕에서 아이콘 대비 3:1을 넘긴다(ListRow의 ›와 같은 값).
         <ChevronRight
-          className="text-muted-foreground/40 size-5 shrink-0"
+          className="text-muted-foreground/70 size-5 shrink-0"
           aria-hidden="true"
         />
       ) : null}
@@ -178,21 +181,7 @@ export default function PrivacyPage() {
         onOpenChange={setRetentionOpen}
         title="보관 안내"
       >
-        <div className="text-body text-muted-foreground flex max-h-[60dvh] flex-col gap-3 overflow-y-auto pb-2">
-          <p>새 문자를 그만 받으려면 문자 연동에서 기기를 폐기하면 돼요.</p>
-          <p>
-            다만{" "}
-            <strong className="text-foreground font-medium">
-              이미 보관된 문자는 그대로 남아요.
-            </strong>{" "}
-            자동 삭제와 보관 기간 설정은 만들지 않기로 했어요.
-          </p>
-          <p>
-            받은 문자는 금액이 틀렸을 때 다시 읽어 바로잡는 유일한 근거라서,
-            지우면 과거 지출이 맞는지 확인할 방법이 함께 사라지거든요.
-          </p>
-          <p>지울 필요가 생기면 알려 주세요.</p>
-        </div>
+        <RetentionGuide onNavigate={() => setRetentionOpen(false)} />
       </BottomSheet>
     </div>
   );

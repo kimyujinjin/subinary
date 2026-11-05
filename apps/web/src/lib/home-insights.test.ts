@@ -9,6 +9,7 @@ import {
   previousMonthToDate,
   upcomingUntil,
   weeklyDeltaText,
+  whenText,
   type UpcomingHousingInput,
   type UpcomingRecurringInput,
 } from "./home-insights";
@@ -61,6 +62,12 @@ describe("지난주 창", () => {
       label: "10월 26일 – 11월 1일",
     });
   });
+  it("해가 바뀐 주는 지난해 날짜에 연도를 붙인다", () => {
+    // 2027-01-06은 수요일. 지난주 = 2026-12-28(월) ~ 2027-01-03(일).
+    expect(lastWeekWindow(kst("2027-01-06T10:00:00")).label).toBe(
+      "2026년 12월 28일 – 1월 3일"
+    );
+  });
   it("월요일 0시 직후에도 막 끝난 지난주를 본다", () => {
     expect(lastWeekWindow(kst("2026-11-02T00:10:00")).to).toBe(
       kst("2026-11-02T00:00:00").toISOString()
@@ -78,6 +85,16 @@ describe("정기 결제 예정 창", () => {
   it("오늘부터 7일째 날 마지막 순간(KST)까지 잡고 하루 동안 같은 값을 쓴다", () => {
     expect(upcomingUntil(kst("2026-11-04T09:00:00"))).toBe(new Date(kst("2026-11-12T00:00:00").getTime() - 1).toISOString());
     expect(upcomingUntil(kst("2026-11-04T23:59:00"))).toBe(upcomingUntil(kst("2026-11-04T00:00:00")));
+  });
+});
+
+describe("다가오는 날짜 표기", () => {
+  it("오늘·내일·예정일 지남 외에는 'M월 D일', 해가 바뀌면 연도를 붙인다", () => {
+    expect(whenText("2026-11-05", "2026-11-05")).toBe("오늘");
+    expect(whenText("2026-11-06", "2026-11-05")).toBe("내일");
+    expect(whenText("2026-11-04", "2026-11-05")).toBe("예정일 지남");
+    expect(whenText("2026-11-20", "2026-11-05")).toBe("11월 20일");
+    expect(whenText("2027-01-02", "2026-12-30")).toBe("2027년 1월 2일");
   });
 });
 
@@ -195,9 +212,24 @@ describe("다가오는 지출", () => {
       title: "주택 중도금 2회차",
       amountText: "90,071,992,547,409,931,234원",
       href: "/plan?scope=household",
+      // 저장된 날짜를 시간대 때문에 하루 옮기지 않는다.
+      date: "2026-11-20",
+      when: "11월 20일",
     });
-    expect(row.subtitle).toContain("2026-11-20");
+    // 날짜는 왼쪽 칸에만 — 부제에 같은 날짜를 다시 쓰지 않는다.
+    expect(row.subtitle).toBe("합성 테스트 주택");
     expect(build({ housing: housing({ dueDate: "2026-12-20" }) })).toEqual([]);
+  });
+
+  it("납부일이 지난 주택 일정은 정기 결제처럼 며칠 지났는지 말한다", () => {
+    const [row] = build({ housing: housing({ dueDate: "2026-11-01" }) });
+    expect(row).toMatchObject({
+      when: "예정일 지남",
+      subtitle: "합성 테스트 주택 · 3일 지났어요",
+      overdue: true,
+    });
+    const [today] = build({ housing: housing({ dueDate: "2026-11-04" }) });
+    expect(today).toMatchObject({ when: "오늘", subtitle: "합성 테스트 주택", overdue: false });
   });
 
   it("일정이 없고 비어 있는 항목만 있으면 0원 대신 확인 안내 한 줄을 둔다", () => {

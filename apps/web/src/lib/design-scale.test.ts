@@ -28,11 +28,13 @@ function count(pattern: RegExp): number {
 }
 
 // 상한은 내리기만 한다. 화면 개편 PR에서 실제 개수에 맞춰 갱신한다.
-const MAX_ARBITRARY_TEXT_SIZE = 45; // 2026-11-05 공용 부품 정리 뒤 48 → 45
+// 2026-11-06 HIG 3·4단계로 모든 화면을 토큰으로 옮겨 0이 됐다(48 → 45 → 0). 이제 새로 쓰면 바로 실패한다.
+const MAX_ARBITRARY_TEXT_SIZE = 0;
+// 체크박스 rounded-[4px] 하나(components/ui/checkbox.tsx)만 남았다 — 예외로 둘지는 사용자 결정 대기.
 const MAX_ARBITRARY_RADIUS = 1;
-// 이름 붙은 옛 크기(text-sm·rounded-xl 등)도 토큰 밖 값이다. 2026-11-05 처음 잴 때의 개수 — 하위 화면을 고칠 때마다 내린다.
-const MAX_NAMED_TEXT_SIZE = 239;
-const MAX_NAMED_RADIUS = 54;
+// 이름 붙은 옛 크기(text-sm·rounded-xl 등)도 토큰 밖 값이다. 2026-11-05 처음 잴 때 239·54 → 2026-11-06 0.
+const MAX_NAMED_TEXT_SIZE = 0;
+const MAX_NAMED_RADIUS = 0;
 
 describe("디자인 스케일 래칫", () => {
   it("임의 글자 크기(text-[Npx])가 늘지 않는다 — text-display/title/heading/body/caption/micro를 쓴다", () => {

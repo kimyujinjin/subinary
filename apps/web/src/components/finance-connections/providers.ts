@@ -13,13 +13,16 @@
  *
  * 금융사가 늘거나 지원 상태가 바뀌면 **이 파일만 고친다**. 분류를 빠뜨리면
  * `providers.test.ts`가 계약 enum과 대조해 실패한다.
+ *
+ * 부제는 사용자가 하는 일로 쓴다 — 서버의 분류 이름('공식 API'·'웹 로그인')은 화면에 쓰지 않는다
+ * (2026-11-05 HIG 검수).
  */
 import type { AssetConnectionProvider } from "@family/contracts";
 
 export interface ConnectableProvider {
   id: Extract<AssetConnectionProvider, "shinhan_bank" | "toss_securities">;
   label: string;
-  /** 선택 카드의 부제. 조회 수단과 가져오는 항목을 한 줄로. */
+  /** 선택 카드의 부제. 어떻게 조회하는지와 가져오는 항목을 사용자 말로 한 줄에. */
   method: string;
 }
 
@@ -28,19 +31,19 @@ export const CONNECTABLE_PROVIDERS: ReadonlyArray<ConnectableProvider> = [
   {
     id: "shinhan_bank",
     label: "신한은행",
-    method: "웹 로그인 · 통장 잔액·대출",
+    method: "은행 홈페이지로 조회 · 통장 잔액·대출",
   },
   {
     id: "toss_securities",
     label: "토스증권",
-    method: "공식 API · 국내·미국 주식",
+    method: "발급받은 키로 조회 · 국내·미국 주식",
   },
 ];
 
 interface UpcomingProvider {
   id: Exclude<AssetConnectionProvider, ConnectableProvider["id"]>;
   label: string;
-  /** 왜 아직 연결할 수 없는지. 추측이 아니라 확인한 사실만 쓴다. */
+  /** 왜 아직 연결할 수 없는지. 추측이 아니라 확인한 사실만 쓴다. 폰에서 목록 줄 아래 caption으로 보이니 한두 줄로. */
   reason: string;
 }
 
@@ -50,13 +53,13 @@ export const UPCOMING_PROVIDERS: ReadonlyArray<UpcomingProvider> = [
     id: "kb_bank",
     label: "국민은행",
     reason:
-      "공식 웹의 아이디 로그인과 보안 입력 방식까지 확인했어요. 실제 계좌 조회와 읽어올 항목을 검증한 뒤 열 수 있어요.",
+      "로그인 방식까지 확인했어요. 계좌 조회를 확인한 뒤 열어요.",
   },
   {
     id: "toss_bank",
     label: "토스뱅크",
     reason:
-      "개인계좌는 토스 앱 중심으로 제공돼요. 무료로 쓸 수 있는 외부 조회 방식이 아직 확인되지 않았어요.",
+      "토스 앱 밖에서 무료로 조회할 방법을 아직 찾지 못했어요.",
   },
 ];
 

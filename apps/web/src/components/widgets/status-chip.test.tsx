@@ -31,8 +31,9 @@ describe("StatusBadge", () => {
     ).toBe(
       renderToStaticMarkup(<StatusChip tone="attention">부분 취소</StatusChip>)
     );
+    // 취소된 원래 결제는 '취소됨' — 취소로 생긴 기록('환불')과 같은 말을 쓰지 않는다.
     expect(renderToStaticMarkup(<StatusBadge status="cancelled" />)).toBe(
-      renderToStaticMarkup(<StatusChip tone="neutral">취소</StatusChip>)
+      renderToStaticMarkup(<StatusChip tone="neutral">취소됨</StatusChip>)
     );
     expect(
       renderToStaticMarkup(<StatusBadge status="cancelled" />)
@@ -53,10 +54,10 @@ describe("StatusBadge", () => {
   it("톤을 바꿔 불러도 칩 색조로 옮겨진다", () => {
     expect(
       renderToStaticMarkup(
-        <StatusBadge status="excluded" label="제외됨" tone="neutral" />
+        <StatusBadge status="excluded" label="합계 제외" tone="neutral" />
       )
     ).toBe(
-      renderToStaticMarkup(<StatusChip tone="neutral">제외됨</StatusChip>)
+      renderToStaticMarkup(<StatusChip tone="neutral">합계 제외</StatusChip>)
     );
     expect(
       renderToStaticMarkup(<StatusBadge status="x" label="새로" tone="info" />)

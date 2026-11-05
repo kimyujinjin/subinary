@@ -112,8 +112,9 @@ export function HomeUpcoming({ rows }: { rows: readonly UpcomingRow[] }) {
         {rows.map((row) => (
           <li key={row.key}>
             <Link href={row.href} className={UPCOMING_ROW}>
+              {/* 날짜 칸은 최소 폭만 잡아 줄을 맞추고, '예정일 지남'처럼 긴 말은 꺾지 않고 늘어나게 한다. */}
               <span
-                className={`text-caption w-16 shrink-0 font-medium ${
+                className={`text-caption min-w-16 shrink-0 font-medium whitespace-nowrap ${
                   row.overdue ? "text-destructive" : "text-muted-foreground"
                 }`}
               >
@@ -135,7 +136,7 @@ export function HomeUpcoming({ rows }: { rows: readonly UpcomingRow[] }) {
                 </span>
               ) : null}
               <ChevronRight
-                className="text-muted-foreground/60 size-5 shrink-0"
+                className="text-muted-foreground/70 size-5 shrink-0"
                 aria-hidden="true"
               />
             </Link>
@@ -195,7 +196,7 @@ export function HomeWeeklyRecap({
       {top ? (
         <p className="text-body mt-3 flex min-w-0 items-baseline gap-2">
           <span className="text-caption text-muted-foreground shrink-0">
-            가장 많이 쓴 곳
+            가장 많이 쓴 카테고리
           </span>
           <span className="min-w-0 flex-1 truncate font-medium">
             {top.categoryName}

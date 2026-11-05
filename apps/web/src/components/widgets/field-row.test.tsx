@@ -202,6 +202,26 @@ describe("FieldRow — 구분", () => {
     expect(html.match(/<svg/g)).toHaveLength(2);
   });
 
+  // 버튼의 disabled만으로는 Radix 메뉴가 막히지 않는다(Android 웹뷰는 disabled 버튼에도 pointerdown을 보낸다).
+  // Radix Trigger 자체가 disabled여야 data-disabled가 붙고 메뉴를 열지 않는다(2026-11-06 최종 검토).
+  it("잠긴 값 고르기 줄은 Radix 메뉴 트리거까지 잠근다", () => {
+    const row = (disabled: boolean) =>
+      renderToStaticMarkup(
+        <FieldRow
+          label="카테고리"
+          value="카페"
+          disabled={disabled}
+          menu={{ label: "카테고리", options, value: "a", onSelect: () => undefined }}
+        />
+      );
+    const locked = row(true).match(/<button[^>]*>/)![0];
+    expect(locked).toMatch(/\sdisabled=""/);
+    expect(locked).toContain('data-disabled=""');
+    const open = row(false).match(/<button[^>]*>/)![0];
+    expect(open).not.toMatch(/\sdisabled=""/);
+    expect(open).not.toContain("data-disabled");
+  });
+
   it("이름 칸은 최소 80px이고, 긴 이름은 값 자리를 다 먹지 않게 줄을 바꾼다", () => {
     const html = renderToStaticMarkup(
       <FieldRow label="카드 번호 끝 네 자리" value="9908" />

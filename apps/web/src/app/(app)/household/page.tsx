@@ -3,29 +3,42 @@
  * Family Memory AI — web · 가족 (오늘의집 톤)
  *
  * - 머리 = 가족 이름 + `이름 바꾸기`(소유자·관리자, PATCH /v1/households/:id).
- * - 구성원 = ListRow(이니셜 원형 아바타 · 이름 · 이메일 subtitle · 역할
- *   Select(소유자만)/역할 라벨). 나간 구성원은 접어 둔다.
- * - 아바타 클릭 = 구성원 색상 선택(본인, 또는 소유자·관리자는 모두). 색은 거래·
- *   카드 아이콘 배경으로 전 화면에서 쓰인다. null = 자동(해시) 색.
+ * - 구성원 = ListRow(이니셜 원형 아바타 · 이름 · 이메일 subtitle · 역할). 역할은 소유자만
+ *   바꾸고, 값 고르기 메뉴(./role-menu.tsx — 항목마다 한 줄 설명)로 고른다. 나간 구성원은 접어 둔다.
+ * - 색상 = '내 색상'·'공용 카드 색상' 줄(이름 · 색 점 · ⌃⌄) → 견본 메뉴(./color-menu.tsx).
+ *   색은 거래·카드 아이콘 배경으로 전 화면에서 쓰인다. null = 자동(해시) 색 / 공용은 회색.
+ *   이니셜 원을 눌러도 같은 메뉴가 열린다(본인, 또는 소유자·관리자는 모두).
  * - 나가기/내보내기/초대 취소는 행 끝 ⋯ 메뉴 안에만 두고 AlertDialog로 확인한다(§3.3).
  *   메뉴가 없는 행에도 같은 폭의 빈 자리를 두어 값 칼럼이 세로로 맞게 한다.
  * - 초대 = 쓸 수 있는 초대만 펼치고 지난 초대(수락·만료·취소)는 접는다. 만료 시각이
  *   지난 초대는 서버가 아직 `pending`으로 줘도 만료로 본다(./invitations.ts).
- * - "초대하기" 주 CTA(소유자) → 초대 Dialog. 토큰/링크 1회 노출 Dialog + 복사 보존.
+ * - "초대하기" 주 CTA(소유자) → 초대 Dialog(역할·링크 유효 기간은 값 고르기 줄). 만든 링크는 한 번만
+ *   보이므로 결과 창은 복사·공유하기 전에는 바깥이나 안드로이드 뒤로를 눌러도 닫히지 않는다.
+ *   주 버튼은 공유 시트가 있으면 '공유하기', 없으면(Android 웹뷰) '링크 복사하기'.
  * - 가족에서 나가면 멤버십을 다시 받아 남은 가족(없으면 온보딩)으로 옮긴다.
  * 권한은 서버에서도 강제(PRD §26). 여기서는 UI 노출/비활성으로 보조.
  * ------------------------------------------------------------------------- */
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Copy, Mail, UserPlus, Users } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ChevronsUpDown,
+  Copy,
+  Mail,
+  Share2,
+  UserPlus,
+  Users,
+} from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 
 import type {
-  HouseholdRole,
   InvitationCreated,
   InvitationCreateRequest,
   InvitationSummary,
@@ -53,12 +66,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Form,
   FormControl,
   FormDescription,
@@ -70,14 +77,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   EmptyState,
+  ErrorState,
+  FieldList,
+  FieldRow,
   ListLoading,
   ListRow,
   OverflowMenu,
@@ -90,50 +93,55 @@ import { ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { useHousehold } from "@/lib/household-context";
 import {
-  MEMBER_COLOR_KEYS,
+  ROLE_DESCRIPTION,
+  ROLE_LABEL,
+  type InvitableRole,
+} from "@/lib/household-roles";
+import {
   MEMBER_COLOR_LABELS,
   MEMBER_COLOR_SWATCH_CLASSES,
   memberColorClass,
-  sharedColorClass,
+  memberSwatchClass,
 } from "@/lib/member-color";
 import {
   queryKeys,
   useHouseholdMembers,
   useHouseholdSummary,
 } from "@/lib/queries";
-import { formatDate } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { formatMonthDay, formatMonthDayTime } from "@/lib/format";
+import { registerTransactionDetailBack } from "@/lib/transaction-detail-back";
 import { publicWebUrl } from "@/lib/web-url";
 
+import { ColorMenu } from "./color-menu";
+import {
+  DEFAULT_INVITE_EXPIRY_HOURS,
+  INVITE_EXPIRY_OPTIONS,
+  canShareLink,
+  inviteExpiryLabel,
+  inviteResultBackAction,
+  shareInviteLink,
+} from "./invite-share";
 import { PAST_INVITATION_CHIP, splitInvitations } from "./invitations";
+import { ColorValue, menuRowTrigger } from "./menu-row";
+import { RoleMenu } from "./role-menu";
 
-const ROLE_LABEL: Record<HouseholdRole, string> = {
-  owner: "소유자",
-  admin: "관리자",
-  member: "구성원",
-  viewer: "뷰어",
-};
-
-type InvitableRole = "admin" | "member" | "viewer";
-const INVITABLE_ROLES: ReadonlyArray<InvitableRole> = [
-  "member",
-  "admin",
-  "viewer",
-];
-
-/** 초대 폼: email은 빈 문자열 허용(→ 미지정), expiresInHours는 1~720 정수. */
+/**
+ * 초대 폼: email은 빈 문자열 허용(→ 미지정). 역할·유효 기간은 메뉴에서만 고르므로 고를 수 있는 값만 들어온다
+ * (유효 기간은 서버 단위인 시간 — 1~720).
+ */
 const inviteFormSchema = z.object({
   email: z
     .union([z.literal(""), z.string().email("올바른 이메일 형식이 아니에요")])
     .optional(),
   role: z.enum(["member", "admin", "viewer"]),
-  expiresInHours: z.coerce
-    .number()
-    .int("정수로 입력해 주세요")
-    .min(1, "1~720 사이로 입력해 주세요")
-    .max(720, "1~720 사이로 입력해 주세요"),
+  expiresInHours: z.number().int().min(1).max(720),
 });
 type InviteFormValues = z.input<typeof inviteFormSchema>;
+const INVITE_FORM_DEFAULTS: InviteFormValues = {
+  email: "",
+  role: "member",
+  expiresInHours: DEFAULT_INVITE_EXPIRY_HOURS,
+};
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback;
@@ -183,6 +191,25 @@ export default function HouseholdPage() {
 
   const [created, setCreated] = useState<InvitationCreated | null>(null);
   const [copied, setCopied] = useState(false);
+  // 링크를 복사했거나 공유 시트로 보냈는가. 그 전에는 결과 창 바깥을 눌러도 닫히지 않는다.
+  const [handedOff, setHandedOff] = useState(false);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
+
+  // 안드로이드 뒤로 버튼 — 결과 창이 열려 있으면 이 창이 먼저 받는다(연결 열쇠 마법사와 같은 방식).
+  // 처리기는 매 렌더의 최신 handedOff를 본다. 브라우저 뒤로(popstate)는 주소가 이미 바뀐 뒤라 막을 수
+  // 없다 — 화면과 함께 창도 사라진다.
+  const onInviteResultBack = useRef<() => void>(() => undefined);
+  onInviteResultBack.current = () => {
+    if (inviteResultBackAction(handedOff) === "close") setCreated(null);
+  };
+  const inviteResultOpen = created !== null;
+  useEffect(() => {
+    if (!inviteResultOpen) return;
+    return registerTransactionDetailBack(window, (source) => {
+      if (source === "native") onInviteResultBack.current();
+    });
+  }, [inviteResultOpen]);
+
   // 확인 창의 내용은 닫히는 동안에도 남겨 둔다 — 열림과 함께 비우면 닫히는 애니메이션
   // 동안 제목과 버튼이 다른 확인 문구로 바뀌어 보인다.
   const [confirm, setConfirm] = useState<ConfirmTarget | null>(null);
@@ -205,10 +232,16 @@ export default function HouseholdPage() {
     queryClient.invalidateQueries({
       queryKey: ["household-invitations", householdId],
     });
+  const replaceMember = (updated: MemberSummary) =>
+    queryClient.setQueryData<MemberSummary[]>(
+      queryKeys.householdMembers(householdId),
+      (prev) =>
+        prev?.map((m) => (m.memberId === updated.memberId ? updated : m)),
+    );
 
   const form = useForm<InviteFormValues>({
     resolver: zodResolver(inviteFormSchema),
-    defaultValues: { email: "", role: "member", expiresInHours: 168 },
+    defaultValues: INVITE_FORM_DEFAULTS,
   });
 
   const inviteMutation = useMutation({
@@ -218,11 +251,13 @@ export default function HouseholdPage() {
       ),
     onSuccess: (result) => {
       void invalidateInvitations();
-      form.reset({ email: "", role: "member", expiresInHours: 168 });
+      form.reset(INVITE_FORM_DEFAULTS);
       setCopied(false);
+      setHandedOff(false);
+      setHandoffError(null);
       setInviteOpen(false);
+      // 결과 창이 곧 확인이다 — 토스트를 따로 띄우지 않는다.
       setCreated(result);
-      toast.success("초대를 만들었어요.");
     },
     onError: (error) =>
       toast.error(errorMessage(error, "초대를 만들지 못했어요.")),
@@ -235,12 +270,13 @@ export default function HouseholdPage() {
           role: input.role,
         }),
       ),
-    onSuccess: () => {
+    // 바뀐 역할이 그 줄에 바로 보이는 것이 확인이다(토스트 없음). 서버가 돌려준 구성원으로 바로 바꿔 둔다.
+    onSuccess: (updated) => {
+      replaceMember(updated);
       void invalidateMembers();
-      toast.success("역할을 변경했어요.");
     },
     onError: (error) =>
-      toast.error(errorMessage(error, "역할을 변경하지 못했어요.")),
+      toast.error(errorMessage(error, "역할을 바꾸지 못했어요.")),
   });
 
   const colorMutation = useMutation({
@@ -253,12 +289,12 @@ export default function HouseholdPage() {
           { color: input.color },
         ),
       ),
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      replaceMember(updated);
       void invalidateMembers();
-      toast.success("색상을 변경했어요.");
     },
     onError: (error) =>
-      toast.error(errorMessage(error, "색상을 변경하지 못했어요.")),
+      toast.error(errorMessage(error, "색상을 바꾸지 못했어요.")),
   });
 
   /**
@@ -275,15 +311,15 @@ export default function HouseholdPage() {
           color,
         }),
       ),
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      queryClient.setQueryData(queryKeys.household(householdId), updated);
       // 홈·거래·카드가 모두 이 값을 읽으므로 가구 요약 캐시를 무효화한다.
       void queryClient.invalidateQueries({
         queryKey: queryKeys.household(householdId),
       });
-      toast.success("공용 색상을 변경했어요.");
     },
     onError: (error) =>
-      toast.error(errorMessage(error, "공용 색상을 변경하지 못했어요.")),
+      toast.error(errorMessage(error, "공용 카드 색상을 바꾸지 못했어요.")),
   });
 
   const renameMutation = useMutation({
@@ -293,8 +329,8 @@ export default function HouseholdPage() {
       ),
     onSuccess: (updated) => {
       queryClient.setQueryData(queryKeys.household(householdId), updated);
+      // 머리의 새 이름이 확인이다(토스트 없음).
       setRenameOpen(false);
-      toast.success("가족 이름을 바꿨어요.");
       // 머리의 가족 전환 메뉴는 멤버십 목록의 이름을 읽는다 — 그쪽도 새로 받는다.
       refreshMemberships().catch(() => undefined);
     },
@@ -381,14 +417,30 @@ export default function HouseholdPage() {
     return publicWebUrl(`/join?token=${encodeURIComponent(c.token)}`);
   }
 
+  // 버튼 글자가 '복사했어요'로 바뀌는 것이 확인이다(토스트 없음).
   async function copyLink() {
     if (!created) return;
     try {
       await navigator.clipboard.writeText(inviteLink(created));
       setCopied(true);
-      toast.success("수락 링크를 복사했어요.");
+      setHandedOff(true);
+      setHandoffError(null);
     } catch {
-      toast.error("복사하지 못했어요. 직접 복사해 주세요.");
+      setHandoffError("복사하지 못했어요. 위 링크를 길게 눌러 직접 복사해 주세요.");
+    }
+  }
+
+  async function shareLink() {
+    if (!created) return;
+    const result = await shareInviteLink(navigator, {
+      url: inviteLink(created),
+      householdName,
+    });
+    if (result === "shared") {
+      setHandedOff(true);
+      setHandoffError(null);
+    } else if (result === "failed") {
+      setHandoffError("공유하지 못했어요. 링크를 복사해서 보내 주세요.");
     }
   }
 
@@ -434,6 +486,12 @@ export default function HouseholdPage() {
   const { pending: pendingInvitations, past: pastInvitations } =
     splitInvitations(invitationsQuery.data ?? [], Date.now());
   const busy = removeMutation.isPending || revokeMutation.isPending;
+  const me = activeMembers.find((m) => m.userId === user?.id);
+  // 공유 시트가 없으면(Android 웹뷰) 복사가 주 버튼이 된다. 결과 창은 브라우저에서만 열리므로
+  // 서버 렌더(navigator 없음)와 값이 달라도 그려지는 화면은 같다.
+  const canShare = canShareLink(
+    typeof navigator === "undefined" ? undefined : navigator,
+  );
 
   /** 행 끝 ⋯ 메뉴. 위험 행동(나가기·내보내기)은 이 메뉴 안에만 둔다(§3.3). */
   function memberActions(m: MemberSummary): OverflowAction[] {
@@ -464,7 +522,9 @@ export default function HouseholdPage() {
   );
 
   function renderMember(m: MemberSummary) {
-    const editable = isOwner && m.status === "active" && m.role !== "owner";
+    // 역할은 소유자만 바꾸고, 소유자 줄은 바꿀 수 없다(서버 updateMemberRole과 같은 기준).
+    const editableRole =
+      isOwner && m.status === "active" && m.role !== "owner" ? m.role : null;
     const isSelf = m.userId === user?.id;
     // 색상은 본인, 또는 소유자·관리자가 아무 구성원이나 변경.
     const canEditColor = m.status === "active" && (isSelf || isManager);
@@ -476,64 +536,28 @@ export default function HouseholdPage() {
           className="min-w-0 flex-1"
           icon={
             canEditColor ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
+              // 이니셜 원은 색 메뉴의 지름길이다(눈에 보이는 길은 아래 '색상' 줄). 보이는 원은 36~40px이고
+              // 누르는 칸만 44px 이상으로 넓힌다.
+              <ColorMenu
+                label={`${m.name} 색상`}
+                value={m.color}
+                noneLabel="자동 색상"
+                align="start"
+                disabled={colorMutation.isPending}
+                onSelect={(color) =>
+                  colorMutation.mutate({ memberId: m.memberId, color })
+                }
+                trigger={
                   <button
                     type="button"
-                    aria-label={`${m.name} 색상 변경`}
-                    className="text-body flex size-full items-center justify-center rounded-full font-semibold transition-transform hover:scale-105 active:scale-95"
+                    aria-label={`${m.name} 색상 바꾸기`}
+                    disabled={colorMutation.isPending}
+                    className="text-body relative flex size-full items-center justify-center rounded-full font-semibold transition-transform before:absolute before:-inset-1 before:content-[''] active:scale-95"
                   >
                     {initial}
                   </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="start"
-                  className="w-auto min-w-0 p-2"
-                >
-                  {/* 견본은 DropdownMenuItem — 화살표 키 순회/자동 닫힘/menuitem
-                      시맨틱을 그대로 얻는다(일반 버튼이면 키보드 접근 불가). */}
-                  <div className="grid grid-cols-4 gap-1">
-                    {MEMBER_COLOR_KEYS.map((key) => (
-                      <DropdownMenuItem
-                        key={key}
-                        aria-label={`${MEMBER_COLOR_LABELS[key]} 색상 선택`}
-                        disabled={colorMutation.isPending}
-                        className="size-11 justify-center rounded-full p-0"
-                        onSelect={() => {
-                          if (m.color !== key) {
-                            colorMutation.mutate({
-                              memberId: m.memberId,
-                              color: key,
-                            });
-                          }
-                        }}
-                      >
-                        <span
-                          aria-hidden="true"
-                          className={cn(
-                            "size-6 rounded-full",
-                            MEMBER_COLOR_SWATCH_CLASSES[key],
-                            m.color === key &&
-                              "ring-ring ring-offset-background ring-2 ring-offset-2",
-                          )}
-                        />
-                      </DropdownMenuItem>
-                    ))}
-                  </div>
-                  <DropdownMenuItem
-                    disabled={colorMutation.isPending || m.color === null}
-                    className="text-muted-foreground text-caption mt-1 justify-center font-medium"
-                    onSelect={() =>
-                      colorMutation.mutate({
-                        memberId: m.memberId,
-                        color: null,
-                      })
-                    }
-                  >
-                    자동 색상으로
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                }
+              />
             ) : (
               <span className="text-body font-semibold">{initial}</span>
             )
@@ -551,35 +575,30 @@ export default function HouseholdPage() {
           }
           subtitle={m.email}
           value={
-            editable ? (
-              <Select
-                value={m.role}
-                onValueChange={(role) =>
-                  role !== m.role &&
-                  roleMutation.mutate({
-                    memberId: m.memberId,
-                    role: role as InvitableRole,
-                  })
-                }
+            editableRole ? (
+              // 값 고르기 줄과 같은 모양(회색 값 · ⌃⌄). 예전 회색 상자 Select(32px)는 입력 양식처럼 보였다.
+              <RoleMenu
+                label={`${m.name} 역할`}
+                value={editableRole}
                 disabled={roleMutation.isPending}
-              >
-                {/* 채움색은 공용 SelectTrigger 그대로 — 테두리·카드색으로 덮으면 흰 패널
-                    위에서 선택칸이 사라진다(2026-11 진단). */}
-                <SelectTrigger
-                  size="sm"
-                  aria-label={`${m.name} 역할 변경`}
-                  className="text-caption font-medium"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {INVITABLE_ROLES.map((r) => (
-                    <SelectItem key={r} value={r}>
-                      {ROLE_LABEL[r]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onSelect={(role) =>
+                  roleMutation.mutate({ memberId: m.memberId, role })
+                }
+                trigger={
+                  <button
+                    type="button"
+                    aria-label={`${m.name} 역할: ${ROLE_LABEL[m.role]}`}
+                    disabled={roleMutation.isPending}
+                    className="text-caption text-muted-foreground active:bg-muted data-[state=open]:bg-muted -mr-1 inline-flex min-h-11 items-center gap-1 rounded-control px-1.5 font-medium transition-colors disabled:opacity-50"
+                  >
+                    {ROLE_LABEL[m.role]}
+                    <ChevronsUpDown
+                      aria-hidden="true"
+                      className="text-muted-foreground/70 size-4 shrink-0"
+                    />
+                  </button>
+                }
+              />
             ) : (
               <span
                 className={
@@ -622,7 +641,7 @@ export default function HouseholdPage() {
           icon={<Mail />}
           iconClassName="bg-muted text-muted-foreground"
           title={invitationTitle(i)}
-          subtitle={`${ROLE_LABEL[i.role]} · ${formatDate(i.expiresAt)}까지`}
+          subtitle={`${ROLE_LABEL[i.role]} · ${formatMonthDay(i.expiresAt)}까지`}
         />
         {isOwner ? (
           <OverflowMenu
@@ -630,7 +649,7 @@ export default function HouseholdPage() {
             className="shrink-0"
             actions={[
               {
-                label: "초대 취소",
+                label: "초대 취소하기",
                 destructive: true,
                 disabled: busy,
                 onSelect: () => askConfirm({ type: "revoke", invitation: i }),
@@ -659,9 +678,15 @@ export default function HouseholdPage() {
         {membersQuery.isLoading ? (
           <ListLoading rows={2} label="구성원을 불러오는 중이에요." />
         ) : membersQuery.isError ? (
-          <p className="text-destructive text-caption py-2" role="alert">
-            {errorMessage(membersQuery.error, "구성원을 불러오지 못했어요.")}
-          </p>
+          <ErrorState
+            className="py-6"
+            message={errorMessage(
+              membersQuery.error,
+              "구성원을 불러오지 못했어요.",
+            )}
+            onRetry={() => void membersQuery.refetch()}
+            retrying={membersQuery.isFetching}
+          />
         ) : activeMembers.length === 0 ? (
           <EmptyState
             icon={<Users />}
@@ -692,12 +717,15 @@ export default function HouseholdPage() {
           {invitationsQuery.isLoading ? (
             <ListLoading rows={1} label="초대를 불러오는 중이에요." />
           ) : invitationsQuery.isError ? (
-            <p className="text-destructive text-caption py-2" role="alert">
-              {errorMessage(
+            <ErrorState
+              className="py-6"
+              message={errorMessage(
                 invitationsQuery.error,
                 "초대를 불러오지 못했어요.",
               )}
-            </p>
+              onRetry={() => void invitationsQuery.refetch()}
+              retrying={invitationsQuery.isFetching}
+            />
           ) : pendingInvitations.length === 0 ? (
             <EmptyState
               className="py-6"
@@ -732,7 +760,7 @@ export default function HouseholdPage() {
                     icon={<Mail />}
                     iconClassName="bg-muted text-muted-foreground"
                     title={invitationTitle(i)}
-                    subtitle={`${ROLE_LABEL[i.role]} · ${formatDate(i.createdAt, { dateOnly: true })} 초대`}
+                    subtitle={`${ROLE_LABEL[i.role]} · ${formatMonthDay(i.createdAt)} 초대`}
                     valueSub={
                       <StatusChip tone={PAST_INVITATION_CHIP[status].tone}>
                         {PAST_INVITATION_CHIP[status].label}
@@ -757,61 +785,79 @@ export default function HouseholdPage() {
         </section>
       ) : null}
 
-      {/* 공용 카드 색상 — 구성원이 아니라 가구 단위 설정이라 따로 둔다.
-          owner/admin만 바꿀 수 있다(자기 것이라 할 사람이 없는 값이다). */}
-      {isManager ? (
+      {/* 색상 — 거래·카드 아이콘에 쓰는 색. 예전에는 이니셜 원을 눌러야 열렸는데 누를 수 있다는 표시가
+          없었다(2026-11 HIG 검수). 설정 줄(이름 · 색 점 · ⌃⌄)로 두고 누른 자리 아래 견본 메뉴에서 고른다.
+          공용 카드 색은 구성원이 아니라 가구 단위 값이라 owner/admin만 바꾼다(자기 것이라 할 사람이 없다). */}
+      {me || isManager ? (
         <section
-          className="finance-panel min-w-0 px-5 pt-2 pb-5"
-          aria-label="공용 카드 색상"
+          className="finance-panel min-w-0 px-5 pt-2 pb-4"
+          aria-label="색상"
         >
-          <SectionHeader title="공용 카드 색상" />
-          <div className="flex items-center gap-3">
-            <span
-              aria-hidden="true"
-              className={cn(
-                "text-caption flex size-10 shrink-0 items-center justify-center rounded-full font-semibold",
-                sharedColorClass(sharedColor),
-              )}
-            >
-              공용
-            </span>
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-              {MEMBER_COLOR_KEYS.map((key) => (
-                <button
-                  key={key}
-                  type="button"
-                  aria-label={`공용 카드 ${MEMBER_COLOR_LABELS[key]} 색상 선택`}
-                  disabled={sharedColorMutation.isPending}
-                  onClick={() => {
-                    if (sharedColor !== key) sharedColorMutation.mutate(key);
-                  }}
-                  className="rounded-full p-0.5 disabled:opacity-50"
-                >
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "block size-6 rounded-full",
-                      MEMBER_COLOR_SWATCH_CLASSES[key],
-                      sharedColor === key &&
-                        "ring-ring ring-offset-background ring-2 ring-offset-2",
-                    )}
-                  />
-                </button>
-              ))}
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground ml-1 h-7 px-2"
-                disabled={
-                  sharedColorMutation.isPending || sharedColor === null
+          <SectionHeader title="색상" />
+          <FieldList>
+            {me ? (
+              <ColorMenu
+                label="내 색상"
+                value={me.color}
+                noneLabel="자동 색상"
+                disabled={colorMutation.isPending}
+                onSelect={(color) =>
+                  colorMutation.mutate({ memberId: me.memberId, color })
                 }
-                onClick={() => sharedColorMutation.mutate(null)}
-              >
-                회색으로
-              </Button>
-            </div>
-          </div>
+                trigger={menuRowTrigger({
+                  label: "내 색상",
+                  value: (
+                    <ColorValue
+                      swatchClassName={memberSwatchClass(me.memberId, me.color)}
+                      name={me.color ? MEMBER_COLOR_LABELS[me.color] : "자동"}
+                    />
+                  ),
+                  disabled: colorMutation.isPending,
+                })}
+              />
+            ) : null}
+            {isManager ? (
+              <ColorMenu
+                label="공용 카드 색상"
+                value={sharedColor}
+                noneLabel="회색"
+                disabled={sharedColorMutation.isPending}
+                onSelect={(color) => sharedColorMutation.mutate(color)}
+                trigger={menuRowTrigger({
+                  label: "공용 카드 색상",
+                  value: (
+                    <ColorValue
+                      swatchClassName={
+                        sharedColor
+                          ? MEMBER_COLOR_SWATCH_CLASSES[sharedColor]
+                          : "bg-muted-foreground/60"
+                      }
+                      name={
+                        sharedColor ? MEMBER_COLOR_LABELS[sharedColor] : "회색"
+                      }
+                    />
+                  ),
+                  disabled: sharedColorMutation.isPending,
+                })}
+              />
+            ) : null}
+          </FieldList>
+          <p className="text-caption text-muted-foreground pt-3">
+            거래와 카드 아이콘이 이 색으로 보여요.
+            {isManager
+              ? " 다른 구성원의 색은 위 목록에서 이름 앞 동그라미를 눌러 바꿔요."
+              : ""}
+          </p>
+          {/* 공용 색이 붙는 카드는 결제 카드 수정 창의 '공용 카드' 스위치에서 정한다 — 두 설정이 나뉘어 있어 잇는다. */}
+          {isManager ? (
+            <Link
+              href="/cards"
+              className="text-caption text-primary -ml-1 inline-flex min-h-11 items-center gap-0.5 px-1 font-medium active:opacity-60"
+            >
+              공용 카드 정하기
+              <ChevronRight aria-hidden="true" className="size-4" />
+            </Link>
+          ) : null}
         </section>
       ) : null}
 
@@ -895,65 +941,58 @@ export default function HouseholdPage() {
                       </FormControl>
                       {/* 메일 발송 기능은 없다 — 서버는 수락할 때 계정 이메일만 대조한다. */}
                       <FormDescription className="text-caption">
-                        메일은 보내지 않으며, 적으면 그 이메일로 로그인한 계정만
-                        수락할 수 있어요.
+                        메일을 보내지는 않아요. 이메일을 적으면 그 계정으로 로그인한
+                        사람만 수락할 수 있어요.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
-                <div className="grid grid-cols-2 gap-3">
+                {/* 역할·유효 기간은 값 고르기 줄. 유효 기간은 날 단위로 고르고 서버에는 시간으로 보낸다
+                    (예전 '만료 (시간)' 숫자 칸은 서버 단위가 그대로 드러난 것이었다). */}
+                <FieldList>
                   <FormField
                     control={form.control}
                     name="role"
                     render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>역할</FormLabel>
-                        <Select
+                      <div className="flex min-w-0 flex-col">
+                        <RoleMenu
+                          label="역할"
                           value={field.value}
-                          onValueChange={field.onChange}
-                        >
-                          <FormControl>
-                            <SelectTrigger className="min-h-12 w-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {INVITABLE_ROLES.map((r) => (
-                              <SelectItem key={r} value={r}>
-                                {ROLE_LABEL[r]}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
+                          onSelect={field.onChange}
+                          trigger={menuRowTrigger({
+                            label: "역할",
+                            value: ROLE_LABEL[field.value],
+                          })}
+                        />
+                        <p className="text-caption text-muted-foreground -mt-1 pb-3">
+                          {ROLE_DESCRIPTION[field.value]}
+                        </p>
+                      </div>
                     )}
                   />
                   <FormField
                     control={form.control}
                     name="expiresInHours"
                     render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>만료 (시간)</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            inputMode="numeric"
-                            min={1}
-                            max={720}
-                            name={field.name}
-                            ref={field.ref}
-                            onBlur={field.onBlur}
-                            value={String(field.value ?? "")}
-                            onChange={(e) => field.onChange(e.target.value)}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
+                      <FieldRow
+                        label="링크 유효 기간"
+                        value={inviteExpiryLabel(field.value)}
+                        menu={{
+                          label: "링크 유효 기간",
+                          options: INVITE_EXPIRY_OPTIONS,
+                          value: String(field.value),
+                          onSelect: (next) => field.onChange(Number(next)),
+                        }}
+                      >
+                        {formatMonthDay(
+                          new Date(Date.now() + field.value * 3_600_000),
+                        )}
+                        까지 쓸 수 있어요
+                      </FieldRow>
                     )}
                   />
-                </div>
+                </FieldList>
                 <DialogFooter className="flex-col sm:flex-col">
                   <Button
                     type="submit"
@@ -979,60 +1018,80 @@ export default function HouseholdPage() {
         </Dialog>
       ) : null}
 
-      {/* 초대 생성 결과 — 토큰/링크 1회 노출 */}
+      {/* 초대 생성 결과 — 토큰/링크 1회 노출. 복사·공유하기 전에는 바깥을 누르거나 안드로이드 뒤로를
+          눌러도 닫히지 않는다(잘못 눌러 닫히면 링크를 다시 볼 수 없다). 닫기 버튼·X는 그대로 닫는다. */}
       <Dialog
         open={created !== null}
         onOpenChange={(o) => !o && setCreated(null)}
       >
-        <DialogContent>
+        <DialogContent
+          onInteractOutside={(event) => {
+            if (!handedOff) event.preventDefault();
+          }}
+        >
           <DialogHeader>
-            <DialogTitle>초대 링크가 만들어졌어요</DialogTitle>
+            <DialogTitle>초대 링크를 만들었어요</DialogTitle>
             <DialogDescription>
-              링크는 지금만 보이니 닫기 전에 가족에게 보내 주세요.
+              링크는 지금만 보여요. 닫기 전에 가족에게 보내 주세요.
             </DialogDescription>
           </DialogHeader>
           {created ? (
             <div className="flex flex-col gap-4">
-              <div className="bg-muted text-body grid grid-cols-2 gap-3 rounded-control p-3">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-muted-foreground text-caption">역할</span>
-                  <span className="font-medium">
-                    {ROLE_LABEL[created.role]}
-                  </span>
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-muted-foreground text-caption">만료</span>
-                  <span className="font-medium">
-                    {formatDate(created.expiresAt)}
-                  </span>
-                </div>
-              </div>
+              <FieldList>
+                <FieldRow label="역할" value={ROLE_LABEL[created.role]} />
+                <FieldRow
+                  label="링크 유효 기간"
+                  value={`${formatMonthDayTime(created.expiresAt)}까지`}
+                />
+              </FieldList>
               <div className="flex flex-col gap-1.5">
-                <span className="text-muted-foreground text-caption">
+                <Label
+                  htmlFor="invite-link"
+                  className="text-muted-foreground text-caption"
+                >
                   수락 링크
-                </span>
-                <div className="flex gap-2">
-                  <Input
-                    readOnly
-                    value={inviteLink(created)}
-                    className="text-caption font-mono"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={copyLink}
-                    aria-label="수락 링크 복사"
-                  >
-                    {copied ? <Check /> : <Copy />}
-                  </Button>
-                </div>
+                </Label>
+                <Input
+                  id="invite-link"
+                  readOnly
+                  value={inviteLink(created)}
+                  onFocus={(event) => event.currentTarget.select()}
+                  className="text-caption font-mono"
+                />
+                {handoffError ? (
+                  <p className="text-destructive text-caption" role="alert">
+                    {handoffError}
+                  </p>
+                ) : null}
               </div>
             </div>
           ) : null}
           <DialogFooter className="flex-col sm:flex-col">
-            <Button className="h-11 w-full" onClick={() => setCreated(null)}>
-              전달했어요
+            {canShare ? (
+              <Button
+                type="button"
+                className="h-11 w-full"
+                onClick={() => void shareLink()}
+              >
+                <Share2 /> 공유하기
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant={canShare ? "weak" : "default"}
+              className="h-11 w-full"
+              onClick={() => void copyLink()}
+            >
+              {copied ? <Check /> : <Copy />}
+              {copied ? "복사했어요" : "링크 복사하기"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-11 w-full"
+              onClick={() => setCreated(null)}
+            >
+              닫기
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1069,7 +1128,7 @@ export default function HouseholdPage() {
                 ? "나가기"
                 : confirm?.type === "remove"
                   ? "내보내기"
-                  : "초대 취소"}
+                  : "초대 취소하기"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

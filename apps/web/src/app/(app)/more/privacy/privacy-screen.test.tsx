@@ -29,6 +29,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
 }));
 
 import PrivacyPage from "./page";
+import { RetentionGuide } from "./retention-guide";
 
 const thisYear = new Date().getFullYear();
 
@@ -89,5 +90,20 @@ describe("개인정보 화면", () => {
     expect(html).toMatch(/<p role="alert"[^>]*>개인정보 설정을 불러오지 못했어요<\/p>/);
     expect(html).toMatch(/<button[^>]*>다시 불러오기<\/button>/);
     expect(html).not.toContain("문자 보내는 기기");
+  });
+});
+
+describe("개인정보 › 보관 안내 시트", () => {
+  it("수집을 멈추는 길을 실제 버튼 이름과 위치로 쓰고, 문자 연동으로 가는 링크를 단다", () => {
+    const html = renderToStaticMarkup(<RetentionGuide />);
+    expect(html).toContain("문자 연동 › 기기 ⋯ › 연결 해제");
+    expect(html).toMatch(/<a[^>]*href="\/devices"[^>]*>문자 연동 열기/);
+    expect(html).toContain("이미 보관된 문자는 그대로 남아요.");
+  });
+
+  it("문자 연동 화면에 없는 말('폐기')과 갈 곳 없는 부탁('알려 주세요')은 쓰지 않는다", () => {
+    const html = renderToStaticMarkup(<RetentionGuide />);
+    expect(html).not.toContain("폐기");
+    expect(html).not.toContain("알려 주세요");
   });
 });

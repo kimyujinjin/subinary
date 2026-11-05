@@ -36,7 +36,7 @@ export function validateTransactionEdit(input: TransactionEditInput):
     const digits = input.amount.replace(/[,\s]/g, "");
     const amount = Number(digits);
     if (!/^\d+$/.test(digits) || !Number.isSafeInteger(amount) || amount <= 0) {
-      errors.amount = "금액은 1 이상의 정수로 입력해 주세요.";
+      errors.amount = "금액을 0보다 크게 입력해 주세요.";
     } else if (amount !== input.initialAmount) {
       patch.amount = amount;
     }

@@ -12,45 +12,46 @@
  * 미리 알린다.
  *
  * 지금 비밀번호가 틀리면 서버가 한국어 400을 돌려주고 세션은 그대로다 — 그 문구를
- * 폼 아래에 그대로 보여 주고 화면에 머문다(로그아웃하지 않는다).
- * 입력칸마다 보기/숨기기 버튼이 있다 — 휴대폰에서 긴 비밀번호를 가린 채 두 번 맞추기 어렵다.
+ * 지금 비밀번호 칸 아래에 보여 주고 화면에 머문다(로그아웃하지 않는다).
+ * 오류는 해당 칸 아래에 둔다(`password-errors.ts`). 칸과 무관한 오류(네트워크·서버)만 버튼 위 한 줄이다.
+ * 입력칸마다 보기/숨기기 버튼이 있다(PasswordInput) — 휴대폰에서 긴 비밀번호를 가린 채 두 번 맞추기 어렵다.
  * ------------------------------------------------------------------------- */
-import { Eye, EyeOff } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, type ComponentProps, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageBackHeader } from "@/components/widgets";
-import { ApiError, api } from "@/lib/api-client";
+import { InlineNotice } from "@/components/widgets/inline-notice";
+import { PasswordInput } from "@/components/widgets/password-input";
+import { api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 
-/** 계약(newPasswordSchema)과 같은 하한. 서버가 최종 판정하지만 미리 막아준다. */
-const MIN_LENGTH = 8;
+import {
+  MIN_LENGTH,
+  serverPasswordError,
+  validatePasswordChange,
+  type PasswordErrors,
+} from "./password-errors";
 
-/** 비밀번호 입력 + 오른쪽 보기/숨기기 아이콘 버튼(배경 없음, 터치 44). */
-function PasswordInput(props: Readonly<Omit<ComponentProps<typeof Input>, "type">>) {
-  const [visible, setVisible] = useState(false);
+/** 칸 아래 오류 한 줄. 입력칸의 aria-describedby가 이 id를 가리킨다. */
+function FieldError({ id, message }: Readonly<{ id: string; message?: string }>) {
+  if (!message) return null;
   return (
-    <div className="relative">
-      <Input {...props} type={visible ? "text" : "password"} className="pr-12" />
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        aria-label={visible ? "비밀번호 숨기기" : "비밀번호 보기"}
-        aria-pressed={visible}
-        aria-controls={props.id}
-        onClick={() => setVisible((v) => !v)}
-        className="text-muted-foreground hover:text-foreground absolute inset-y-0 right-0.5 my-auto hover:bg-transparent [&_svg:not([class*='size-'])]:size-5 active:text-foreground"
-      >
-        {visible ? <EyeOff /> : <Eye />}
-      </Button>
-    </div>
+    <p id={id} role="alert" className="text-destructive text-caption">
+      {message}
+    </p>
   );
+}
+
+/** 칸의 접근성 속성. 오류가 있으면 오류 줄을, 없으면 안내 줄(있을 때)을 가리킨다 — 둘은 같은 자리에 번갈아 뜬다. */
+function invalidProps(errorId: string, message: string | undefined, hintId?: string) {
+  return {
+    "aria-invalid": message ? true : undefined,
+    "aria-describedby": message ? errorId : hintId,
+  };
 }
 
 export default function ChangePasswordPage() {
@@ -60,26 +61,18 @@ export default function ChangePasswordPage() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<PasswordErrors>({});
   const [busy, setBusy] = useState(false);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(null);
-
-    if (newPassword.length < MIN_LENGTH) {
-      setError(`새 비밀번호는 ${MIN_LENGTH}자 이상 입력해 주세요.`);
-      return;
-    }
-    // 확인란은 서버가 모르는 클라이언트 전용 검사다(오타로 잠기는 것을 막는 유일한 방어).
-    if (newPassword !== confirm) {
-      setError("새 비밀번호가 서로 달라요. 다시 확인해 주세요.");
-      return;
-    }
-    if (newPassword === currentPassword) {
-      setError("지금 쓰는 비밀번호와 다른 것으로 바꿔주세요.");
-      return;
-    }
+    const invalid = validatePasswordChange({
+      current: currentPassword,
+      next: newPassword,
+      confirm,
+    });
+    setErrors(invalid);
+    if (Object.keys(invalid).length > 0) return;
 
     setBusy(true);
     try {
@@ -91,11 +84,7 @@ export default function ChangePasswordPage() {
       await logout();
       router.replace("/login");
     } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : "비밀번호를 바꾸지 못했어요. 잠시 후 다시 시도해 주세요.",
-      );
+      setErrors(serverPasswordError(err));
     } finally {
       setBusy(false);
     }
@@ -120,7 +109,9 @@ export default function ChangePasswordPage() {
                 required
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
+                {...invalidProps("current-password-error", errors.current)}
               />
+              <FieldError id="current-password-error" message={errors.current} />
             </div>
 
             <div className="flex flex-col gap-2">
@@ -133,10 +124,15 @@ export default function ChangePasswordPage() {
                 required
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
+                {...invalidProps("new-password-error", errors.next, "new-password-hint")}
               />
-              <p className="text-muted-foreground text-caption">
-                {MIN_LENGTH}자 이상으로 정해주세요
-              </p>
+              {errors.next ? (
+                <FieldError id="new-password-error" message={errors.next} />
+              ) : (
+                <p id="new-password-hint" className="text-muted-foreground text-caption">
+                  {MIN_LENGTH}자 이상으로 정해 주세요
+                </p>
+              )}
             </div>
 
             <div className="flex flex-col gap-2">
@@ -148,13 +144,13 @@ export default function ChangePasswordPage() {
                 required
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
+                {...invalidProps("confirm-password-error", errors.confirm)}
               />
+              <FieldError id="confirm-password-error" message={errors.confirm} />
             </div>
 
-            {error ? (
-              <p className="text-destructive text-body" role="alert">
-                {error}
-              </p>
+            {errors.form ? (
+              <InlineNotice tone="error">{errors.form}</InlineNotice>
             ) : null}
 
             <Button type="submit" size="lg" className="w-full" disabled={busy}>

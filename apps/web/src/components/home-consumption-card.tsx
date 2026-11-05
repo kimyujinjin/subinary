@@ -3,6 +3,8 @@ import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import React from "react";
 
+import { Skeleton } from "@/components/ui/skeleton";
+import { ErrorState } from "@/components/widgets/error-state";
 import { MonthSwitcher } from "@/components/widgets/month-switcher";
 import { formatMonth, formatWon } from "@/lib/format";
 import {
@@ -12,6 +14,7 @@ import {
   type HomeProcessingSource,
   type HomeTodoSources,
 } from "@/lib/home-finance-summary";
+import { addMonths } from "@/lib/month";
 
 export interface HomeConsumptionCardProps {
   month: string;
@@ -26,7 +29,7 @@ export interface HomeConsumptionCardProps {
   todo: HomeTodoSources;
   /**
    * 처리 대기 문자. 할 일이 아니라 합계에 넣지 않는다 — 반영하는 중인 문자는 회색 상태
-   * 문구로, 환율이 없어 멈춘 문자는 할 일 화면 처리 대기 섹션으로 가는 줄로 보인다.
+   * 문구로, 환율이 없어 멈춘 문자는 할 일 화면의 '반영을 기다리는 문자' 섹션으로 가는 줄로 보인다.
    */
   processing?: HomeProcessingSource;
   /**
@@ -40,23 +43,33 @@ export interface HomeConsumptionCardProps {
    * 첫 한 시간·지난달 기록 없음·과거 달) 기존 전월 비교로 돌아간다.
    */
   pace?: string | null;
+  /** 대표 금액을 다시 불러온다. 있으면 실패 문구 아래 '다시 불러오기'를 둔다. */
+  onRetry?: () => void;
+  /** 다시 불러오는 중이면 버튼을 잠근다. */
+  retrying?: boolean;
 }
 
 /**
- * 전월 비교 한 줄(§5 홈 1).
+ * 전월 비교 한 줄(§5 홈 1). 이번 달을 볼 때 비교 대상은 '지난달'이라고 부른다('전달'·'지난달 전체'를 섞지 않는다).
+ * 지난 달을 볼 때 비교 대상은 고른 달의 바로 앞 달이다. '지난달'이라고 쓰면 오늘 기준 지난달로
+ * 읽히므로(11월에 9월을 보면 10월로 읽힘) 분석 탭 prevLabel처럼 '2026년 8월' 같은 실제 달 이름을 쓴다.
  *
  * 이번 달은 아직 끝나지 않아 지난달 전체와 비교하면 매달 초에 "덜 썼어요"가 된다 —
  * 그래서 이번 달은 비교 대신 지난달 합계를 참고로만 보여주고, 끝난 달만 증감을 말한다.
  */
 export function monthComparison(
   monthly: MonthlyAnalytics,
-  isCurrentMonth: boolean
+  isCurrentMonth: boolean,
+  /** 고른 달(`YYYY-MM`). 지난 달을 볼 때 비교 대상 달 이름을 만든다. */
+  month: string
 ): string | null {
   if (!Number.isFinite(monthly.previousNet) || monthly.previousNet === 0)
     return null;
-  if (isCurrentMonth) return `지난달 전체 ${formatWon(monthly.previousNet)}`;
-  if (monthly.deltaNet === 0) return "전달과 같아요";
-  return `전달보다 ${formatWon(Math.abs(monthly.deltaNet))} ${
+  if (isCurrentMonth) return `지난달 ${formatWon(monthly.previousNet)}`;
+  // '2026년 8월'처럼 늘 '월'(받침 ㄹ)로 끝나므로 조사는 '과'다.
+  const previousLabel = formatMonth(addMonths(month, -1));
+  if (monthly.deltaNet === 0) return `${previousLabel}과 같아요`;
+  return `${previousLabel}보다 ${formatWon(Math.abs(monthly.deltaNet))} ${
     monthly.deltaNet > 0 ? "더 썼어요" : "덜 썼어요"
   }`;
 }
@@ -77,6 +90,8 @@ export function HomeConsumptionCard({
   months,
   onMonthChange,
   pace,
+  onRetry,
+  retrying = false,
 }: HomeConsumptionCardProps) {
   const rows = homeTodoRows(todo);
   const processingText = homeProcessingText(processing);
@@ -84,8 +99,9 @@ export function HomeConsumptionCard({
   const amountKnown =
     !loading && !error && monthly != null && Number.isFinite(monthly.totalNet);
   const comparison = amountKnown
-    ? pace ?? monthComparison(monthly, isCurrentMonth)
+    ? pace ?? monthComparison(monthly, isCurrentMonth, month)
     : null;
+  const amountText = amountKnown ? formatWon(monthly.totalNet) : "";
   return (
     <section
       className="finance-panel panel-flush-top flex min-w-0 flex-col px-5 pt-1"
@@ -115,23 +131,36 @@ export function HomeConsumptionCard({
           ? "카드 사용액"
           : `${formatMonth(month)} 카드 사용액`}
       </h2>
+      {/* 금액의 이름은 위 h2다(섹션 aria-labelledby). 금액에 aria-label을 달면 화면 읽기가 숫자 대신
+          라벨만 읽는다. 줄을 바꾸면 숫자가 중간에서 끊겨 다른 금액으로 읽히므로 한 줄로 두고,
+          아주 긴 금액(13자 이상, 십억 원대)만 한 단계 작은 글자로 내린다. */}
       {amountKnown ? (
         <p
-          className="text-display mt-1 min-w-0 break-all tracking-tight tabular-nums"
-          aria-label="기록된 카드 소비"
+          className={`${
+            amountText.length > 12 ? "text-title" : "text-display"
+          } mt-1 min-w-0 whitespace-nowrap tracking-tight tabular-nums`}
         >
-          {formatWon(monthly.totalNet)}
+          {amountText}
         </p>
+      ) : loading ? (
+        <div role="status" aria-busy="true" className="mt-1">
+          <span className="sr-only">카드 사용액을 불러오고 있어요</span>
+          <Skeleton
+            aria-hidden="true"
+            className="rounded-control my-px h-8 w-40"
+          />
+        </div>
+      ) : onRetry ? (
+        <ErrorState
+          align="start"
+          className="mt-1 py-2"
+          message="카드 사용액을 불러오지 못했어요"
+          onRetry={onRetry}
+          retrying={retrying}
+        />
       ) : (
-        <p
-          className={`text-body mt-1 py-2 ${
-            loading ? "text-muted-foreground" : "text-destructive"
-          }`}
-          role={loading ? "status" : "alert"}
-        >
-          {loading
-            ? "카드 사용액을 불러오는 중이에요."
-            : "카드 사용액을 불러오지 못했어요."}
+        <p className="text-body text-destructive mt-1 py-2" role="alert">
+          카드 사용액을 불러오지 못했어요
         </p>
       )}
       {/* 금액을 모를 때 '결제 취소 반영'만 남으면 없는 숫자에 단서를 다는 셈이라 함께 숨긴다. */}
@@ -151,7 +180,7 @@ export function HomeConsumptionCard({
             <Link key={row.key} href={row.href} className={ROW}>
               <span className="min-w-0 flex-1">{row.text}</span>
               <ChevronRight
-                className="text-muted-foreground/60 size-5 shrink-0"
+                className="text-muted-foreground/70 size-5 shrink-0"
                 aria-hidden="true"
               />
             </Link>
@@ -161,7 +190,7 @@ export function HomeConsumptionCard({
             <Link href={fxWait.href} className={ROW}>
               <span className="min-w-0 flex-1">{fxWait.text}</span>
               <ChevronRight
-                className="text-muted-foreground/60 size-5 shrink-0"
+                className="text-muted-foreground/70 size-5 shrink-0"
                 aria-hidden="true"
               />
             </Link>

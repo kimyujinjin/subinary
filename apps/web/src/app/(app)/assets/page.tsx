@@ -3,14 +3,15 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Building2, ChevronRight, CreditCard, HandCoins, House, PiggyBank, Plus, TrendingUp, Wallet } from "lucide-react";
+import { Building2, Check, ChevronRight, CircleAlert, CreditCard, House, Plus } from "lucide-react";
 import type {
   ManualAsset,
   ManualAssetKind,
   ManualFinanceScope,
 } from "@family/contracts";
 import { Button } from "@/components/ui/button";
-import { EmptyState, Fab, StatusChip, type ChipTone } from "@/components/widgets";
+import { EmptyState, ErrorState, Fab, InlineNotice, ListRow, type NoticeTone } from "@/components/widgets";
+import { FilterChip } from "@/components/widgets/filter-chip";
 import { useAuth } from "@/lib/auth-context";
 import { useHousehold } from "@/lib/household-context";
 import { useHouseholdMembers } from "@/lib/queries";
@@ -18,7 +19,7 @@ import { manualFinanceApi, useManualAssets } from "@/lib/manual-finance-client";
 import { useFinancialOverview } from "@/lib/loan-import-client";
 import { ConnectionScreen, type ConnectionSnapshot } from "@/components/finance-connections/connection-screen";
 import { useUsdKrwReference } from "@/lib/fx-client";
-import { assetBreakdown, toHoldings, type ConnectedHolding } from "@/lib/net-worth";
+import { toHoldings, type ConnectedHolding } from "@/lib/net-worth";
 import { connectedAccountsKey, useConnectedAccounts } from "@/lib/connected-accounts-client";
 import { ConnectedSharingPrompt } from "@/components/connected-sharing";
 import { RefreshAllConnections } from "@/components/refresh-all-connections";
@@ -35,12 +36,20 @@ import {
 } from "@/components/manual-finance/model";
 import {
   FinanceLoading,
-  FinanceLoadError,
   LegacyPrivateNotice,
 } from "@/components/manual-finance/shared";
 import { ManualAssetsSummary } from "@/components/manual-finance/asset-summary";
 import { AssetEditor } from "@/components/manual-finance/asset-editor";
 import { AssetAddSheet } from "@/components/manual-finance/asset-add-choices";
+import {
+  holdingChip,
+  importedLoanChip,
+  importedLoanHref,
+  LOAN_RECORDS_HREF,
+  REPLACED_MANUAL_CHIP,
+  unresolvedImportedLoans,
+} from "./asset-rows";
+import { AssetRow, type AssetRowData } from "./asset-row";
 
 /**
  * 연결 계좌 부제의 금액 내역. 달러는 원화로 환산해 보여준다(§8).
@@ -54,51 +63,6 @@ function holdingDetail(holding: ConnectedHolding): string | null {
     return `국내 ${displayManualKrw(holding.krw!)} · 미국 ${displayManualKrw(holding.usdInKrw.toString())}`;
   }
   return domestic ? "국내 주식" : holding.usdInKrw !== null ? "미국 주식" : null;
-}
-
-interface AssetRowData {
-  key: string;
-  title: string;
-  subtitle: string;
-  amount: bigint | null;
-  /** 합계에 들어가는 행인지(소계 계산용). */
-  counted: boolean;
-  chip: [ChipTone, string] | null;
-  onClick?: () => void;
-  href?: string;
-}
-
-const KIND_ICON: Record<ManualAssetKind, { icon: typeof Wallet; tone: string }> = {
-  account: { icon: Wallet, tone: "bg-chart-1/12 text-chart-1" },
-  saving: { icon: PiggyBank, tone: "bg-chart-2/12 text-chart-2" },
-  stock: { icon: TrendingUp, tone: "bg-chart-5/12 text-chart-5" },
-  loan: { icon: HandCoins, tone: "bg-chart-4/12 text-chart-4" },
-};
-
-/** 자산 목록 한 줄(§8): 종류 아이콘 · 이름 · 주인 · 금액. 문제 있을 때만 칩을 붙인다. */
-function AssetRow({ kind, row }: { kind: ManualAssetKind; row: AssetRowData }) {
-  const { icon: Icon, tone } = KIND_ICON[kind];
-  const body = (
-    <>
-      <span className={`flex size-10 shrink-0 items-center justify-center rounded-full ${tone}`} aria-hidden="true">
-        <Icon className="size-5" />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="text-body block truncate font-semibold">{row.title}</span>
-        <span className="text-caption text-muted-foreground block truncate">{row.subtitle}</span>
-      </span>
-      <span className="flex shrink-0 flex-col items-end gap-1">
-        <span className={`text-body tabular-nums ${row.counted ? "font-semibold" : "text-muted-foreground"}`}>
-          {row.amount === null ? "미입력" : displayManualKrw(row.amount.toString())}
-        </span>
-        {row.chip ? <StatusChip tone={row.chip[0]}>{row.chip[1]}</StatusChip> : null}
-      </span>
-    </>
-  );
-  const className = "-mx-2 flex min-h-16 w-[calc(100%+1rem)] min-w-0 items-center gap-3 rounded-control px-2 py-2.5 text-left hover:bg-muted/50 active:bg-muted";
-  if (row.href) return <Link href={row.href} className={className}>{body}</Link>;
-  if (row.onClick) return <button type="button" onClick={row.onClick} className={className}>{body}</button>;
-  return <div className={className}>{body}</div>;
 }
 
 const MANAGE_ROW =
@@ -118,15 +82,23 @@ function ScopedAssets({
   const { authedFetch, user } = useAuth();
   const [kind, setKind] = useState<ManualAssetKind | "all">("all");
   const [editor, setEditor] = useState<ManualAsset | "new" | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<[NoticeTone, string] | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const queryClient = useQueryClient();
   const connected = useConnectedAccounts();
+  // 아직 값이 없는 토스 연결도 '다시 조회'할 내 연결이다(값이 있으면 holdings에도 잡힌다).
+  const [ownToss, setOwnToss] = useState(false);
   // 내 토스 연결은 이 화면을 열 때 새로 조회한다(ConnectionScreen headless). 새 값이 오면 가족 합산을 다시 읽는다.
   const onConnections = useCallback(
     (snapshot: ConnectionSnapshot) => {
-      if (snapshot.data) void queryClient.invalidateQueries({ queryKey: connectedAccountsKey(householdId, user?.id ?? null) });
+      if (!snapshot.data) return;
+      setOwnToss(
+        snapshot.data.items.some(
+          (item) => item.status !== "disconnected" && item.selectedAccountId !== null
+        )
+      );
+      void queryClient.invalidateQueries({ queryKey: connectedAccountsKey(householdId, user?.id ?? null) });
     },
     [queryClient, householdId, user?.id]
   );
@@ -162,7 +134,7 @@ function ScopedAssets({
       (read) => {
         setOpening(null);
         if (read.item.visibility !== scope) {
-          setNotice("공개 범위가 바뀌었어요. 목록을 다시 확인해 주세요.");
+          setNotice(["info", "공개 범위가 바뀌었어요. 목록을 다시 확인해 주세요."]);
           void records.refetch();
           return;
         }
@@ -170,7 +142,7 @@ function ScopedAssets({
       },
       () => {
         setOpening(null);
-        setNotice("자산 정보를 열지 못했어요. 목록에서 다시 선택해 주세요.");
+        setNotice(["error", "자산 정보를 열지 못했어요. 목록에서 다시 선택해 주세요."]);
         void records.refetch();
       }
     );
@@ -213,23 +185,33 @@ function ScopedAssets({
   useEffect(() => {
     if (editorIsUnavailable) {
       setEditor(null);
-      setNotice(
-        "자산의 공개 범위나 상태가 바뀌었어요. 목록을 다시 확인해 주세요."
-      );
+      setNotice([
+        "info",
+        "자산의 공개 범위나 상태가 바뀌었어요. 목록을 다시 확인해 주세요.",
+      ]);
     }
   }, [editorIsUnavailable]);
   const openAdd = () => {
     if (opening !== null) return;
     setAddOpen(true);
   };
+  const unresolvedLoans = unresolvedImportedLoans(overview.data?.loanItems ?? []);
+  // 가져온 대출 기록 화면은 내가 저장한 기록만 보여 주고 고칠 수 있다 — 가족이 가져온 것만 남았으면 보낼 곳이 없다.
+  const unresolvedEditable = unresolvedLoans.some((item) => item.canEdit);
   return (
-    <div className="mx-auto w-full max-w-2xl min-w-0 space-y-6 pb-8">
+    // 섹션 사이 간격은 홈과 같은 16px(gap-4). 모바일에서는 그 아래 10px 회색 띠가 섹션을 나눈다.
+    <div className="mx-auto flex w-full max-w-2xl min-w-0 flex-col gap-4 pb-8">
       <div className="flex min-h-11 items-center justify-between gap-3">
         <h1 className="text-title">
           {scope === "household" ? "자산" : "비공개 자산"}
         </h1>
-        {scope === "household" && user ? <RefreshAllConnections householdId={householdId} userId={user.id} /> : null}
-
+        {scope === "household" && user ? (
+          <RefreshAllConnections
+            householdId={householdId}
+            userId={user.id}
+            hasOwnConnection={ownToss || holdings.some((holding) => holding.own)}
+          />
+        ) : null}
       </div>
       {canCreate ? (
         <Fab label="자산 추가" onClick={openAdd}>
@@ -249,19 +231,19 @@ function ScopedAssets({
           현재 권한으로는 조회만 가능해요.
         </p>
       ) : null}
-      {notice ? (
-        <p role="status" className="text-body text-muted-foreground">
-          {notice}
-        </p>
-      ) : null}
+      {notice ? <InlineNotice tone={notice[0]}>{notice[1]}</InlineNotice> : null}
       {overview.isPending ? (
         <FinanceLoading />
       ) : overview.isError ? (
-        <FinanceLoadError
-          retry={() => {
-            void overview.refetch();
-          }}
-        />
+        <div className="finance-panel px-5">
+          <ErrorState
+            message="자산 목록을 불러오지 못했어요."
+            onRetry={() => {
+              void overview.refetch();
+            }}
+            retrying={overview.isFetching}
+          />
+        </div>
       ) : overview.data ? (
         <>
           {hasRecords ? (
@@ -269,50 +251,60 @@ function ScopedAssets({
               summary={overview.data.summary}
               scope={scope}
               holdings={holdings}
-              breakdown={assetBreakdown(
-                overview.data.manualItems.map((item) => ({ ...item, label: ownerOf(item) ? `${item.label} · ${ownerOf(item)}` : item.label })),
-                overview.data.loanItems.map((item) => ({ ...item, label: ownerOf(item) ? `${item.label} · ${ownerOf(item)}` : item.label })),
-                holdings
-              )}
+              hasImportedBalance={overview.data.loanItems.some((item) => item.includedInTotals)}
+              hasUncountedRecords={overview.data.loanItems.length > 0}
+              unresolvedLoans={overview.data.unresolvedLoans}
             />
           ) : null}
           {scope === "household" ? <ConnectedSharingPrompt /> : null}
           {overview.data.unresolvedLoans > 0 ? (
-            <p role="status" className="text-caption text-warning-strong">
-              확인이 필요한 대출 {overview.data.unresolvedLoans}건은 합계에서
-              뺐어요.
-            </p>
+            // 무엇을 왜 뺐는지·어디서 고치는지 알 수 있게 가져온 대출 기록 화면으로 보낸다(원인 + 할 일).
+            <div className="finance-panel min-w-0 px-5">
+              <ListRow
+                icon={<CircleAlert aria-hidden="true" />}
+                iconClassName="bg-warning/10 text-warning-strong"
+                title={`확인이 필요한 대출 ${overview.data.unresolvedLoans}건`}
+                subtitle={
+                  unresolvedEditable
+                    ? "합계에서 뺐어요 · 가져온 대출 기록에서 고칠 수 있어요"
+                    : "합계에서 뺐어요 · 가져온 가족이 고칠 수 있어요"
+                }
+                href={unresolvedEditable ? LOAN_RECORDS_HREF : undefined}
+                chevron={unresolvedEditable}
+                className="-mx-2 w-[calc(100%+1rem)] px-2"
+              />
+            </div>
           ) : null}
-          <section className="min-w-0 space-y-3" aria-label="자산 목록">
+          {/* 종류 칩은 자기 목록과 같은 섹션 안에 둔다 — 밖에 두면 회색 띠가 칩과 목록을 갈랐다. */}
+          <section className="finance-panel min-w-0 px-5 pb-2" aria-label="자산 목록">
             {hasRecords ? (
               <div
                 role="group"
-                aria-label="자산 종류 필터"
-                className="-mx-4 flex gap-2 overflow-x-auto px-4 [scrollbar-width:none]"
+                aria-label="자산 종류"
+                className="-mx-5 flex gap-2 overflow-x-auto px-5 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
                 {(
                   [["all", "전체"], ...Object.entries(ASSET_LABELS)] as Array<
                     [ManualAssetKind | "all", string]
                   >
                 ).map(([value, label]) => (
-                  <button
-                    type="button"
+                  // 고른 칩은 색과 체크가 함께 말한다 — 색만 바뀌면 색을 구분하기 어려운 사람에게 안 보인다(가계부·가맹점 칩과 같다).
+                  <FilterChip
                     key={value}
-                    className={`text-caption h-9 shrink-0 rounded-full px-4 font-semibold transition-colors ${
-                      kind === value
-                        ? "bg-foreground text-background"
-                        : "bg-card text-muted-foreground hover:text-foreground active:text-foreground"
-                    }`}
+                    active={kind === value}
                     aria-pressed={kind === value}
                     onClick={() => setKind(value)}
                   >
+                    {kind === value ? (
+                      <Check aria-hidden="true" className="-ml-0.5 mr-0.5 inline size-3.5 align-[-2px]" />
+                    ) : null}
                     {label}
-                  </button>
+                  </FilterChip>
                 ))}
               </div>
             ) : null}
             {items.length || importedLoans.length || visibleHoldings.length ? (
-              <div className="finance-panel min-w-0 px-5 pb-2">
+              <>
                 {(
                   Object.entries(ASSET_LABELS) as Array<
                     [ManualAssetKind, string]
@@ -329,8 +321,9 @@ function ScopedAssets({
                           subtitle: [ownerOf(item), savingsPlanLine(item.savingsPlan), opening === item.id ? "여는 중" : null].filter(Boolean).join(" · "),
                           amount: item.amount === null ? null : BigInt(item.amount),
                           counted: !replaced,
-                          chip: replaced ? ["neutral", "합계 제외"] : null,
-                          onClick: opening === null ? () => void open(item.id) : undefined,
+                          chip: replaced ? REPLACED_MANUAL_CHIP : null,
+                          // 여는 중에도 다른 줄의 ›를 지우지 않는다 — 겹친 요청은 open()이 막는다.
+                          onClick: () => void open(item.id),
                         };
                       }),
                     ...(groupKind === "loan" ? importedLoans : []).map((item): AssetRowData => ({
@@ -339,8 +332,8 @@ function ScopedAssets({
                       subtitle: [ownerOf(item), item.loanType === "jeonse" ? "전세 대출" : "중도금 대출"].filter(Boolean).join(" · "),
                       amount: BigInt(item.outstandingPrincipalKrw),
                       counted: item.includedInTotals,
-                      chip: item.includedInTotals ? null : ["attention", "합계 제외"],
-                      href: item.canEdit ? "/assets/loan-import" : undefined,
+                      chip: importedLoanChip(item),
+                      href: importedLoanHref(item),
                     })),
                     ...visibleHoldings
                       .filter((holding) => holding.kind === groupKind)
@@ -351,7 +344,8 @@ function ScopedAssets({
                         subtitle: [holding.ownerName, holdingDetail(holding)].filter(Boolean).join(" · "),
                         amount: holding.totalKrw,
                         counted: true,
-                        chip: holding.stale ? ["neutral", "이전 조회"] : null,
+                        emptyText: "확인 중",
+                        chip: holdingChip(holding),
                         href: holding.own ? `/more/connections?provider=${holding.provider}` : undefined,
                       })),
                   ];
@@ -378,34 +372,34 @@ function ScopedAssets({
                     </section>
                   );
                 })}
-              </div>
+              </>
             ) : (
-              <div className="finance-panel">
-                <EmptyState
-                  icon={<Building2 />}
-                  title={
-                    !hasRecords
-                      ? "등록된 자산이 없어요"
-                      : "이 종류의 자산이 없어요"
-                  }
-                  description={
-                    canCreate && !hasRecords
-                      ? "통장 잔액이나 대출부터 기록해 보세요."
-                      : undefined
-                  }
-                  action={
-                    canCreate && !hasRecords ? (
-                      <Button
-                        className="w-full"
-                        disabled={opening !== null}
-                        onClick={openAdd}
-                      >
-                        자산 추가
-                      </Button>
-                    ) : undefined
-                  }
-                />
-              </div>
+              <EmptyState
+                icon={<Building2 />}
+                title={
+                  !hasRecords
+                    ? "등록된 자산이 없어요"
+                    : "이 종류의 자산이 없어요"
+                }
+                description={
+                  canCreate && !hasRecords
+                    ? "통장 잔액이나 대출부터 기록해 보세요."
+                    : undefined
+                }
+                action={
+                  // 채움 버튼은 화면에 하나 — 오른쪽 아래 + 버튼(FAB)이 주 행동이라 여기는 약한 버튼이다.
+                  canCreate && !hasRecords ? (
+                    <Button
+                      variant="weak"
+                      className="w-full"
+                      disabled={opening !== null}
+                      onClick={openAdd}
+                    >
+                      자산 추가하기
+                    </Button>
+                  ) : undefined
+                }
+              />
             )}
           </section>
           {overview.isFetching ? (
@@ -430,7 +424,7 @@ function ScopedAssets({
           <House className="size-[22px] shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1">주택 납부 일정</span>
           <ChevronRight
-            className="text-muted-foreground/60 size-5 shrink-0"
+            className="text-muted-foreground/70 size-5 shrink-0"
             aria-hidden="true"
           />
         </Link>
@@ -438,7 +432,7 @@ function ScopedAssets({
           <CreditCard className="size-[22px] shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1">결제 카드</span>
           <ChevronRight
-            className="text-muted-foreground/60 size-5 shrink-0"
+            className="text-muted-foreground/70 size-5 shrink-0"
             aria-hidden="true"
           />
         </Link>

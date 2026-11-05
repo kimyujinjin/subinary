@@ -4,6 +4,7 @@
  *
  * 선택할 수 없는 금융사는 누를 수 없는 `준비 중` 행으로만 둔다 — 누를 수 있게 그리면
  * 다시 "되는 것처럼" 읽힌다. 분류는 `providers.ts`가 소유한다.
+ * 준비 중인 이유는 줄 아래 caption으로 보인다 — 예전에는 `title` 툴팁이라 폰에서는 볼 수 없었다.
  */
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -15,7 +16,8 @@ import {
   type MacBankRunnerState,
 } from "@family/contracts";
 
-import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/widgets/error-state";
+import { InlineNotice } from "@/components/widgets/inline-notice";
 import { PageBackHeader } from "@/components/widgets/page-back-header";
 import { StatusChip, type ChipTone } from "@/components/widgets/status-chip";
 import { apiFetch, type AccessToken } from "@/lib/api-client";
@@ -135,9 +137,7 @@ export function AssetConnectionHub({
           />
         ) : (
           // 서버가 보기 전용 구성원의 Mac 조회를 받지 않는다 — 빈 화면 대신 이유를 한 줄로 둔다.
-          <p role="status" className="text-caption text-muted-foreground">
-            보기 전용 권한이라 은행 연결을 쓸 수 없어요.
-          </p>
+          <InlineNotice>보기 전용 권한이라 은행 연결을 쓸 수 없어요.</InlineNotice>
         )}
       </div>
     );
@@ -196,18 +196,11 @@ function ProviderList({
       <PageBackHeader title={CONNECTIONS_TITLE} backHref="/assets" />
 
       {catalogError || runnerError ? (
-        <div role="alert" className="flex items-center justify-between gap-3">
-          <p className="text-caption text-muted-foreground">
-            연결 상태를 불러오지 못했어요.
-          </p>
-          <Button
-            variant="weak"
-            size="sm"
-            onClick={() => setRevision((value) => value + 1)}
-          >
-            다시 불러오기
-          </Button>
-        </div>
+        <ErrorState
+          align="start"
+          message="연결 상태를 불러오지 못했어요."
+          onRetry={() => setRevision((value) => value + 1)}
+        />
       ) : null}
 
       <nav
@@ -238,22 +231,26 @@ function ProviderList({
                 </span>
               )}
               <ChevronRight
-                className="text-muted-foreground/60 size-5 shrink-0"
+                className="text-muted-foreground/70 size-5 shrink-0"
                 aria-hidden="true"
               />
             </Link>
           );
         })}
-        {/* 선택지가 아니라 안내다 — 링크가 아니다. */}
+        {/* 선택지가 아니라 안내다 — 링크가 아니고, 눌림 표시도 없다. 이유는 줄 아래에 보인다. */}
         {UPCOMING_PROVIDERS.map((item) => (
           <div
             key={item.id}
-            className={`${ROW} hover:bg-transparent`}
+            className="flex min-h-16 items-center gap-3 px-5 py-3"
             aria-disabled="true"
-            title={item.reason}
           >
-            <span className="text-body text-muted-foreground min-w-0 flex-1">
-              {item.label}
+            <span className="min-w-0 flex-1">
+              <span className="text-body text-muted-foreground block">
+                {item.label}
+              </span>
+              <span className="text-caption text-muted-foreground block">
+                {item.reason}
+              </span>
             </span>
             <StatusChip>준비 중</StatusChip>
             <span className="size-5 shrink-0" aria-hidden="true" />
@@ -267,7 +264,7 @@ function ProviderList({
         href="/assets/loan-records"
         className="text-caption text-muted-foreground hover:text-foreground inline-flex min-h-11 items-center active:text-foreground"
       >
-        이전에 가져온 대출 기록
+        가져온 대출 기록
       </Link>
     </div>
   );

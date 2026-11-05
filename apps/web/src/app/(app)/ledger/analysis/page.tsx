@@ -1,10 +1,11 @@
 "use client";
 /**
- * 기존 홈의 월별 소비·예산·분석·최근 거래와 초기 설정 흐름을 보존한다.
+ * 가계부 분석 탭 — 고른 달의 소비(대표 숫자 하나)·앞으로 나갈 돈·카테고리·예산·가맹점·구성원·카드와
+ * 첫 설정 흐름(시작하기 체크리스트). 거래 목록은 거래 탭이 맡고, 여기는 그 달 거래로 가는 줄 하나만 둔다.
  * 거래 검토·문자 처리의 전체 목록은 /todo, 판단이 필요한 거래는 /transactions?review=1.
  * 집계는 기존 서버 계약을 그대로 사용하며 이 화면에서 금액을 재합산하지 않는다.
  */
-import { Check, CreditCard, RotateCcw, Sparkles } from "lucide-react";
+import { Check, CreditCard, Sparkles, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -15,13 +16,9 @@ import {
   type ReactNode,
 } from "react";
 
-import type {
-  BudgetScopeType,
-  MemberColor,
-  TransactionSummary,
-} from "@family/contracts";
+import type { BudgetScopeType, MemberColor } from "@family/contracts";
 
-import { Button } from "@/components/ui/button";
+import { Button, touchTarget } from "@/components/ui/button";
 import {
   Card,
   CardAction,
@@ -33,10 +30,11 @@ import {
 import {
   BarList,
   EmptyState,
+  ErrorState,
+  ListLoading,
   ListRow,
   Money,
-  MonthSwitcher,
-  StatusBadge,
+  MonthNav,
   UsageBar,
   type BarListItem,
 } from "@/components/widgets";
@@ -44,22 +42,10 @@ import { UpcomingSpendCard } from "../../dashboard/upcoming-card";
 import { LedgerHeader } from "@/components/ledger-header";
 import { MonthlyInsightsCard } from "@/components/monthly-insights-card";
 import { AddTransactionDialog } from "../../transactions/add-transaction-dialog";
-import { ApiError } from "@/lib/api-client";
-import {
-  currentMonth,
-  formatDate,
-  formatMonth,
-  formatWon,
-  percent,
-} from "@/lib/format";
-import { categoryIcon } from "@/lib/category-icon";
+import { currentMonth, formatMonth, formatWon, percent } from "@/lib/format";
 import { budgetTransactionsHref, transactionsHref } from "@/lib/deep-link";
 import { useHousehold } from "@/lib/household-context";
 import { memberColorClass, sharedColorClass } from "@/lib/member-color";
-import {
-  attributedMemberId,
-  sharedCardIdSet,
-} from "@/lib/transaction-attribution";
 import { addMonths, isMonthKey } from "@/lib/month";
 import {
   useAnalyticsMonths,
@@ -67,7 +53,6 @@ import {
   useCardList,
   useCards,
   useCategories,
-  useCategoryList,
   useDevices,
   useHouseholdMembers,
   useHouseholdSummary,
@@ -84,9 +69,6 @@ const BREAKDOWN_TOP_N = 6;
 /** 예산 사용률 패널에 노출할 상위 예산 개수. */
 const BUDGET_TOP_N = 5;
 
-/** 최근 거래 홈 노출 개수(쿼리는 10건 유지, 표시만 5건). */
-const RECENT_DISPLAY_N = 5;
-
 /** 실시간 카드문자 반영 폴링 간격(ms). 포커스 상태에서만 동작. */
 // 실시간 반영의 주 채널은 SSE(ActivityProvider) — 폴링은 SSE 불통 시 안전망이라
 // 저빈도(60초)로 둔다. staleTime 30초 + 포커스 리페치가 2차 안전망.
@@ -100,7 +82,7 @@ interface ChecklistStep {
   done: boolean;
   /** 미완료일 때 이동할 설정 화면. */
   href?: string;
-  /** 미완료일 때 버튼 라벨('등록'/'연결'). */
+  /** 미완료일 때 버튼 라벨('등록하기'/'연결하기'). */
   cta?: string;
 }
 
@@ -179,13 +161,6 @@ function LedgerAnalysisView() {
       map.set(m.memberId, m.color);
     return map;
   }, [householdMembersQuery.data]);
-  // 전 구성원 이름(카드 소유자가 이달 지출이 없어 analytics.members에 없을 수 있어 폴백).
-  const householdNameById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const m of householdMembersQuery.data ?? [])
-      map.set(m.memberId, m.name);
-    return map;
-  }, [householdMembersQuery.data]);
   // 카드 소유자 매핑: 거래 색/이름은 "카드 소유자" 기준으로 표시한다(문자를 대신
   // 전달한 사람이 아니라 카드 주인이 누구 지출인지를 나타냄 — 카드 화면과 동일 색).
   const cardListQuery = useCardList();
@@ -194,24 +169,22 @@ function LedgerAnalysisView() {
     for (const c of cardListQuery.data ?? []) map.set(c.id, c.ownerMemberId);
     return map;
   }, [cardListQuery.data]);
-  // 공용으로 표시한 카드 — 최근 거래의 귀속 판정에 쓴다(거래 목록과 같은 규칙).
-  const sharedCardIds = useMemo(
-    () => sharedCardIdSet(cardListQuery.data ?? []),
-    [cardListQuery.data]
-  );
   const cardsQuery = useCards(month);
   const categoriesQuery = useCategories(month);
   const budgetsQuery = useBudgets(month);
   const merchantsQuery = useMerchants(month);
-  // 거래가 있는 달 목록 — 스위처가 빈 달을 건너뛰는 데 쓴다.
+  // 거래가 있는 달 목록 — 달 이동이 빈 달을 건너뛰는 데 쓴다(데이터 범위 규칙이라 바꾸지 않는다).
   const monthsQuery = useAnalyticsMonths();
   const availableMonths = useMemo(
     () => monthsQuery.data?.items.map((i) => i.month),
     [monthsQuery.data]
   );
 
-  // 최근 거래 10건(기간 무관, 최신순).
-  const recentQuery = useTransactions({ limit: 10 }, poll);
+  // 거래가 하나라도 있는지(기간 무관) — 시작하기 체크리스트를 띄울지만 판단한다. 예전에는 최근 거래 10건을
+  // 불러 화면에도 그렸는데, 고른 달과 상관없는 목록이라 10월 분석에 11월 거래가 보였다(2026-11-05 HIG 검수).
+  // 거래 탭 빈 상태 판단과 같은 키({ limit: 1 })라 캐시를 함께 쓴다. 첫 문자가 들어오면 체크리스트가
+  // 걷히도록 폴링은 남긴다.
+  const anyTransactionQuery = useTransactions({ limit: 1 }, poll);
 
   // --- 파생 데이터 ----------------------------------------------------------
 
@@ -297,27 +270,6 @@ function LedgerAnalysisView() {
     [budgetsQuery.data]
   );
 
-  // 최근 거래 리스트의 구성원명 매핑(analytics.members 결과 재활용).
-  const memberNameById = useMemo(() => {
-    const map = new Map<string, string>();
-    // '공용'(memberId null)은 사람 이름 매핑에 넣지 않는다 — 이 맵은 거래 행의
-    // memberId로 이름을 찾는 용도이고, 거래의 member_id는 언제나 실제 구성원이다.
-    for (const m of membersQuery.data?.items ?? []) {
-      if (m.memberId !== null) map.set(m.memberId, m.name);
-    }
-    return map;
-  }, [membersQuery.data]);
-
-  // 카테고리 아이콘 선택용 id→이름 맵(거래 목록과 동일한 카테고리 목록 사용).
-  const categoryListQuery = useCategoryList();
-  const categoryNameById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const c of categoryListQuery.data ?? []) map.set(c.id, c.name);
-    return map;
-  }, [categoryListQuery.data]);
-
-  const recentRows = recentQuery.data?.items ?? [];
-
   // --- 온보딩 체크리스트(C-1) ------------------------------------------------
   // 합류 직후 홈은 빈 카드 6장이라 다음 행동이 없었다. 거래가 아직 하나도 없고
   // 3단계를 다 끝내지 않았으면 빈 카드 대신 체크리스트를 보여준다.
@@ -352,7 +304,7 @@ function LedgerAnalysisView() {
         description: "뒤 4자리를 넣으면 문자가 자동으로 연결돼요",
         done: (cardListQuery.data ?? []).length > 0,
         href: "/cards",
-        cta: "등록",
+        cta: "등록하기",
       },
       {
         key: "device",
@@ -360,7 +312,7 @@ function LedgerAnalysisView() {
         description: "카드 문자를 자동으로 모아와요",
         done: (devicesQuery.data ?? []).length > 0,
         href: "/devices",
-        cta: "연결",
+        cta: "연결하기",
       },
     ],
     [activeMembership, cardListQuery.data, devicesQuery.data]
@@ -371,11 +323,13 @@ function LedgerAnalysisView() {
   // 실패한 쿼리도 같다 — 못 읽은 것을 '없음'으로 읽으면 없는 할 일을 만들어 낸다
   // (권한이 좁은 구성원은 장치 목록에서 403을 받을 수 있다).
   const setupLoaded =
-    cardListQuery.isSuccess && devicesQuery.isSuccess && recentQuery.isSuccess;
+    cardListQuery.isSuccess &&
+    devicesQuery.isSuccess &&
+    anyTransactionQuery.isSuccess;
   const showChecklist =
     setupLoaded &&
     checklistDone < checklistSteps.length &&
-    (recentQuery.data?.items.length ?? 0) === 0;
+    (anyTransactionQuery.data?.items.length ?? 0) === 0;
 
   const monthly = monthlyQuery.data;
 
@@ -391,9 +345,9 @@ function LedgerAnalysisView() {
       notes.push({
         key: "manual",
         // 금액을 함께 말한다. 건수만으로는 "18.6%가 빠졌다"를 알 수 없다.
-        text: `직접 빼놓은 ${excludedManual.count}건 ${formatWon(
+        text: `합계 제외 거래 ${excludedManual.count}건 ${formatWon(
           excludedManual.net
-        )}은 합계에 넣지 않았어요.`,
+        )}은 소비에 넣지 않았어요.`,
       });
     }
     if (excludedTransfer.count > 0) {
@@ -401,7 +355,7 @@ function LedgerAnalysisView() {
         key: "transfer",
         text: `자산 이동 ${excludedTransfer.count}건 ${formatWon(
           excludedTransfer.net
-        )}은 쓴 돈이 아니라 옮긴 돈이라 빼놨어요.`,
+        )}은 옮긴 돈이라 소비에 넣지 않았어요.`,
       });
     }
     return notes;
@@ -426,16 +380,15 @@ function LedgerAnalysisView() {
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
       <LedgerHeader active="analysis" month={month} />
 
-      {/* 거래가 한 건도 없으면 달을 옮길 이유가 없다 — 체크리스트 화면에서는 감춘다. */}
+      {/* 거래가 한 건도 없으면 달을 옮길 이유가 없다 — 체크리스트 화면에서는 감춘다.
+          거래 탭과 같은 달 머리(`2026년 11월 ▾` + ‹ ›)다. 고를 수 있는 달은 거래가 있는 달이고,
+          이번 달과 보고 있는 달은 목록에 없어도 MonthNav가 넣는다. 전체 기간은 분석에 뜻이 없어 두지 않는다. */}
       {showChecklist ? null : (
-        <div className="flex min-w-0 items-center justify-start">
-          <MonthSwitcher
-            month={month}
-            months={availableMonths}
-            onChange={changeMonth}
-            className="-ml-3"
-          />
-        </div>
+        <MonthNav
+          month={month}
+          months={availableMonths}
+          onChange={changeMonth}
+        />
       )}
 
       {/* 온보딩 체크리스트 — 아직 거래가 없고 3단계를 다 못 끝낸 새 가족에게만.
@@ -454,9 +407,9 @@ function LedgerAnalysisView() {
           <Card className="finance-panel">
             <CardContent className="flex flex-col gap-4">
               {monthlyQuery.isLoading || monthlyQuery.isError ? (
-                <StateNote
-                  loading={monthlyQuery.isLoading}
-                  error={monthlyQuery.error}
+                <QueryState
+                  query={monthlyQuery}
+                  message="소비 금액을 불러오지 못했어요"
                 />
               ) : monthly && delta ? (
                 <>
@@ -464,14 +417,20 @@ function LedgerAnalysisView() {
                     <span className="text-caption text-muted-foreground">
                       {isCurrentMonth ? "이번 달 소비" : "소비"}
                     </span>
-                    <span className="text-display break-all tracking-tight tabular-nums">
+                    <span
+                      className={cn(
+                        // 홈과 같은 규칙: 숫자 중간에서 줄을 바꾸지 않고, 긴 금액은 한 단계 작은 글자로.
+                        formatWon(monthly.totalNet).length > 12 ? "text-title" : "text-display",
+                        "min-w-0 whitespace-nowrap tracking-tight tabular-nums"
+                      )}
+                    >
                       {formatWon(monthly.totalNet)}
                     </span>
-                    {/* 이번 달은 끝나지 않아 지난달 전체와 증감을 비교하지 않는다(홈과 같은 규칙). */}
+                    {/* 이번 달은 끝나지 않아 지난달과 증감을 비교하지 않는다(홈과 같은 규칙·같은 말). */}
                     {isCurrentMonth ? (
                       monthly.previousNet !== 0 ? (
                         <p className="text-caption text-muted-foreground">
-                          지난달 전체 {formatWon(monthly.previousNet)}
+                          지난달 {formatWon(monthly.previousNet)}
                         </p>
                       ) : null
                     ) : (
@@ -481,23 +440,26 @@ function LedgerAnalysisView() {
                     )}
                   </div>
 
-                  {/* 직접 제외·자산 이동만 공시한다. 비공개 거래의 존재·건수는 표시하지 않는다. */}
+                  {/* 직접 제외·자산 이동만 공시한다. 비공개 거래의 존재·건수는 표시하지 않는다.
+                      끝에 붙던 '볼 수 있는 기록만'은 무슨 뜻인지 알기 어려워 뺐다(2026-11-05 HIG 검수). */}
                   <p className="text-caption text-muted-foreground">
                     승인 {formatWon(monthly.totalApproved)} · 취소{" "}
                     {formatWon(monthly.totalCancelled)} ·{" "}
-                    {monthly.transactionCount.toLocaleString("ko-KR")}건 · 볼 수 있는 기록만
+                    {monthly.transactionCount.toLocaleString("ko-KR")}건
                   </p>
                   {excludedNotes.length > 0 ? (
-                    <div className="text-muted-foreground space-y-1 text-xs">
+                    <div className="text-caption text-muted-foreground flex flex-col items-start gap-1">
                       {excludedNotes.map((note) => (
                         <p key={note.key}>{note.text}</p>
                       ))}
                       {monthly.meta.excludedManual.count > 0 ? (
                         <Link
-                          href={`/transactions?month=${month}&excluded=only`}
-                          className="text-primary inline-block underline-offset-2 hover:underline"
+                          href={`/transactions?month=${encodeURIComponent(
+                            month
+                          )}&excluded=only`}
+                          className="text-primary inline-flex min-h-11 items-center font-medium underline-offset-2 hover:underline active:opacity-60"
                         >
-                          빼놓은 거래 보기
+                          합계 제외 거래 보기
                         </Link>
                       ) : null}
                     </div>
@@ -517,18 +479,19 @@ function LedgerAnalysisView() {
             monthlyNet={monthly?.totalNet ?? null}
           />
 
-          {/* 화면을 열 때 별도 모델 호출을 만들지 않는다 — 그래서 인사이트는 버튼으로만
-          연다. 누르기 전에는 마운트되지 않으므로 요청도 나가지 않는다. */}
+          {/* 화면을 열 때 별도 모델 호출을 만들지 않는다 — 그래서 '이 달의 특징'은 버튼으로만
+          연다. 누르기 전에는 마운트되지 않으므로 요청도 나가지 않는다. 대표 숫자 아래 보조 행동이라
+          전체 폭 버튼이 아니라 텍스트 버튼이다(디자인 문서 §5 분석). 누르면 이 자리가 카드로 바뀐다. */}
           {insightsMonth === month ? (
             <MonthlyInsightsCard month={month} />
           ) : (
             <Button
-              variant="weak"
-              className="w-full"
+              type="button"
+              variant="link"
+              className="-my-2 self-start px-0 has-[>svg]:px-0"
               onClick={() => setInsightsMonth(month)}
             >
-              <Sparkles className="size-4" aria-hidden="true" />이 달의 특징
-              보기
+              <Sparkles aria-hidden="true" />이 달의 특징 보기
             </Button>
           )}
         </>
@@ -543,9 +506,9 @@ function LedgerAnalysisView() {
             </CardHeader>
             <CardContent>
               {categoriesQuery.isLoading || categoriesQuery.isError ? (
-                <StateNote
-                  loading={categoriesQuery.isLoading}
-                  error={categoriesQuery.error}
+                <QueryState
+                  query={categoriesQuery}
+                  message="카테고리별 지출을 불러오지 못했어요"
                 />
               ) : (
                 <BarList
@@ -571,13 +534,13 @@ function LedgerAnalysisView() {
             </CardHeader>
             <CardContent>
               {budgetsQuery.isLoading || budgetsQuery.isError ? (
-                <StateNote
-                  loading={budgetsQuery.isLoading}
-                  error={budgetsQuery.error}
+                <QueryState
+                  query={budgetsQuery}
+                  message="예산을 불러오지 못했어요"
                 />
               ) : topBudgets.length === 0 ? (
                 <EmptyState
-                  emoji="🎯"
+                  icon={<Wallet />}
                   title="아직 예산이 없어요"
                   description={
                     canCreateBudget
@@ -585,7 +548,7 @@ function LedgerAnalysisView() {
                       : "선택한 달에 등록된 예산이 없어요"
                   }
                   action={
-                    <Button asChild variant="tint" className="w-full">
+                    <Button asChild variant="weak" className="w-full">
                       <Link
                         href={`/budgets?month=${encodeURIComponent(month)}`}
                       >
@@ -624,22 +587,15 @@ function LedgerAnalysisView() {
                           {...(href
                             ? { href, hrefLabel: "어디서 썼는지 보기" }
                             : {})}
-                          meta={
-                            b.usageRate >= 1 ? (
-                              <span className="text-destructive font-semibold">
-                                {scope} · 예산을 넘었어요
-                              </span>
-                            ) : (
-                              scope
-                            )
-                          }
+                          // 넘은 금액은 UsageBar가 'N원 초과' 글자로 말한다 — 여기서 한 번 더 말하지 않는다.
+                          meta={scope}
                           spent={b.spent}
                           amount={b.amount}
                           currency={b.currency}
                           usageRate={b.usageRate}
                         />
                         {b.scopeType === "card_group" ? (
-                          <p className="text-muted-foreground break-words text-[13px]">
+                          <p className="text-caption text-muted-foreground break-words">
                             {b.scopeLabel}
                           </p>
                         ) : null}
@@ -651,52 +607,58 @@ function LedgerAnalysisView() {
             </CardContent>
           </Card>
 
-          <details className="finance-panel min-w-0 px-5 py-1">
-            <summary className="min-h-11 cursor-pointer py-3 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-ring">
-              세부 분석 · 가맹점, 구성원, 카드, 최근 거래
-            </summary>
-            <div className="mt-3 flex min-w-0 flex-col gap-5">
-              {/* 가맹점별 지출 — 서버 `analytics/merchants`(타 구성원 summary_only는 '(비공개)'로
-          마스킹된 상태)를 그대로 표시한다. 이 집계는 이미 있었지만 화면 소비자가
-          없었다(ADR-0026). '이번 달 어디서 많이 썼나'는 카테고리보다 구체적이라
-          회고에서 먼저 눈에 들어온다. */}
-              <Card className="finance-panel">
-                <CardHeader>
-                  <CardTitle>자주 간 곳은 어디인가요?</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {merchantsQuery.isLoading || merchantsQuery.isError ? (
-                    <StateNote
-                      loading={merchantsQuery.isLoading}
-                      error={merchantsQuery.error}
-                    />
-                  ) : (
-                    <BarList
-                      items={merchantItems}
-                      formatValue={formatWon}
-                      emptyLabel="아직 지출 내역이 없어요"
-                    />
-                  )}
-                </CardContent>
-              </Card>
+          {/*
+           * 가맹점·구성원·카드는 접지 않고 순서대로 둔다. 예전에는 브라우저 기본 접기(▶) 안에 카드를 또
+           * 넣었고, 고른 달과 상관없는 '최근 거래'가 함께 있어 10월 분석에 11월 거래가 보였다(2026-11-05
+           * HIG 검수). 거래 목록은 거래 탭이 맡는다 — 맨 아래에 그 달 거래로 가는 줄 하나만 둔다.
+           */}
 
-              {/* 구성원 · 카드별 지출 */}
-              <Card className="finance-panel">
-                <CardHeader>
-                  <CardTitle>누가, 어떤 카드로 썼나요?</CardTitle>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-5">
+          {/* 가맹점별 지출 — 서버 `analytics/merchants`(타 구성원 summary_only는 '(비공개)'로
+              마스킹된 상태)를 그대로 표시한다(ADR-0026). '이번 달 어디서 많이 썼나'는 카테고리보다
+              구체적이라 회고에서 먼저 눈에 들어온다. */}
+          <Card className="finance-panel">
+            <CardHeader>
+              <CardTitle>자주 간 곳은 어디인가요?</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {merchantsQuery.isLoading || merchantsQuery.isError ? (
+                <QueryState
+                  query={merchantsQuery}
+                  message="자주 간 곳을 불러오지 못했어요"
+                />
+              ) : (
+                <BarList
+                  items={merchantItems}
+                  formatValue={formatWon}
+                  emptyLabel="아직 지출 내역이 없어요"
+                />
+              )}
+            </CardContent>
+          </Card>
+
+          {/* 구성원 · 카드별 지출. 그 사람·카드의 거래 목록으로 가는 줄에만 ›를 단다
+              (미연결 카드 묶음은 갈 곳이 없어 표시 없이 둔다). */}
+          <Card className="finance-panel">
+            <CardHeader>
+              <CardTitle>누가, 어떤 카드로 썼나요?</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-5">
+              {membersQuery.isLoading || cardsQuery.isLoading ? (
+                // 두 목록을 한 카드에 그리므로 스켈레톤도 하나 — 따로 뜨면 위 목록이 늘며 아래를 민다.
+                <ListLoading rows={2} />
+              ) : (
+                <>
                   <section className="flex flex-col gap-1">
-                    <h3 className="text-muted-foreground text-[13px] font-semibold">
+                    <h3 className="text-caption text-muted-foreground font-semibold">
                       구성원
                     </h3>
-                    {membersQuery.isLoading || membersQuery.isError ? (
-                      <StateNote
-                        loading={membersQuery.isLoading}
-                        error={membersQuery.error}
+                    {membersQuery.isError ? (
+                      <QueryState
+                        query={membersQuery}
+                        message="구성원별 지출을 불러오지 못했어요"
                       />
                     ) : memberItems.length === 0 ? (
-                      <p className="text-muted-foreground py-4 text-center text-[13px]">
+                      <p className="text-caption text-muted-foreground py-4 text-center">
                         아직 구성원 지출이 없어요
                       </p>
                     ) : (
@@ -706,7 +668,7 @@ function LedgerAnalysisView() {
                             key={item.key}
                             {...(item.href ? { href: item.href } : {})}
                             icon={
-                              <span className="text-sm font-semibold">
+                              <span className="text-body font-semibold">
                                 {initialOf(item.label)}
                               </span>
                             }
@@ -733,16 +695,16 @@ function LedgerAnalysisView() {
                   </section>
 
                   <section className="flex flex-col gap-1">
-                    <h3 className="text-muted-foreground text-[13px] font-semibold">
+                    <h3 className="text-caption text-muted-foreground font-semibold">
                       카드
                     </h3>
-                    {cardsQuery.isLoading || cardsQuery.isError ? (
-                      <StateNote
-                        loading={cardsQuery.isLoading}
-                        error={cardsQuery.error}
+                    {cardsQuery.isError ? (
+                      <QueryState
+                        query={cardsQuery}
+                        message="카드별 지출을 불러오지 못했어요"
                       />
                     ) : cardItems.length === 0 ? (
-                      <p className="text-muted-foreground py-4 text-center text-[13px]">
+                      <p className="text-caption text-muted-foreground py-4 text-center">
                         아직 카드 지출이 없어요
                       </p>
                     ) : (
@@ -775,119 +737,19 @@ function LedgerAnalysisView() {
                       </div>
                     )}
                   </section>
-                </CardContent>
-              </Card>
+                </>
+              )}
+            </CardContent>
+          </Card>
 
-              {/* 최근 거래 */}
-              <Card className="finance-panel">
-                <CardHeader>
-                  <CardTitle>최근 거래</CardTitle>
-                  <CardAction>
-                    <SeeAllLink href="/transactions" />
-                  </CardAction>
-                </CardHeader>
-                <CardContent>
-                  {recentQuery.isLoading || recentQuery.isError ? (
-                    <StateNote
-                      loading={recentQuery.isLoading}
-                      error={recentQuery.error}
-                    />
-                  ) : recentRows.length === 0 ? (
-                    <EmptyState
-                      emoji="🧾"
-                      title="아직 거래가 없어요"
-                      description="카드 문자 수집을 시작하면 거래가 여기에 쌓여요"
-                    />
-                  ) : (
-                    <div className="-mx-2 flex flex-col">
-                      {recentRows
-                        .slice(0, RECENT_DISPLAY_N)
-                        .map((t: TransactionSummary) => {
-                          const cancelled =
-                            t.transactionType === "cancellation";
-                          // 제외(excludedAt)는 status와 직교하는 플래그 — 거래 화면과 동일하게
-                          // status 배지보다 우선해 '제외됨'으로 표기하고 금액을 흐리게 처리한다.
-                          const excluded = t.excludedAt != null;
-                          const signed = cancelled ? -t.amount : t.netAmount;
-                          // 색·이름 기준 구성원 — 규칙은 `lib/transaction-attribution`이
-                          // 단일 출처다. 종전에는 여기서만 **카드 소유자**를 썼고, 그래서
-                          // 공용 카드 결제가 소유자 이름으로 보였다(실측 88건 1,458,011원).
-                          // 공용 카드 소유자가 한 명이라 최근 거래 목록이 그 이름으로 덮였다.
-                          const attributedId = attributedMemberId(
-                            t,
-                            sharedCardIds
-                          );
-                          const who =
-                            attributedId === null
-                              ? "공용"
-                              : householdNameById.get(attributedId) ??
-                                memberNameById.get(attributedId);
-                          // 카테고리 = 아이콘(모양), 구성원 = 배경색 — 거래 목록과 동일 규칙.
-                          const Icon = cancelled
-                            ? RotateCcw
-                            : categoryIcon(
-                                t.categoryId
-                                  ? categoryNameById.get(t.categoryId)
-                                  : null
-                              );
-                          return (
-                            <ListRow
-                              key={t.id}
-                              icon={<Icon />}
-                              iconClassName={
-                                cancelled || excluded
-                                  ? "bg-muted text-muted-foreground"
-                                  : attributedId === null
-                                  ? sharedColorClass(sharedColor)
-                                  : memberColorClass(
-                                      attributedId,
-                                      memberColorById.get(attributedId)
-                                    )
-                              }
-                              title={merchantLabel(t)}
-                              subtitle={
-                                who
-                                  ? `${formatDate(t.approvedAt)} · ${who}`
-                                  : formatDate(t.approvedAt)
-                              }
-                              value={
-                                <span
-                                  className={cn(
-                                    excluded && "line-through opacity-60"
-                                  )}
-                                >
-                                  <Money
-                                    amount={signed}
-                                    currency={t.currency}
-                                    muted={cancelled}
-                                  />
-                                </span>
-                              }
-                              valueSub={
-                                cancelled ? (
-                                  <StatusBadge
-                                    status="cancelled"
-                                    label="취소"
-                                  />
-                                ) : excluded ? (
-                                  <StatusBadge
-                                    status="excluded"
-                                    label="제외됨"
-                                    tone="neutral"
-                                  />
-                                ) : (
-                                  <StatusBadge status={t.status} />
-                                )
-                              }
-                            />
-                          );
-                        })}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          </details>
+          {/* 예전 '최근 거래' 자리 — 고른 달의 거래 목록으로 가는 줄. */}
+          <div className="finance-panel min-w-0 px-4 py-1">
+            <ListRow
+              href={transactionsHref({ month })}
+              title="이 달 거래 보기"
+              chevron
+            />
+          </div>
         </>
       )}
 
@@ -923,7 +785,7 @@ function OnboardingChecklist({
           남았어요
         </CardDescription>
         <CardAction>
-          <span className="text-muted-foreground text-[13px] tabular-nums">
+          <span className="text-caption text-muted-foreground tabular-nums">
             {doneCount} / {steps.length}
           </span>
         </CardAction>
@@ -948,7 +810,7 @@ function OnboardingChecklist({
             <li key={step.key} className="flex items-center gap-3 py-3">
               <span
                 className={cn(
-                  "flex size-8 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold",
+                  "text-caption flex size-8 shrink-0 items-center justify-center rounded-full font-semibold",
                   step.done
                     ? "bg-accent text-accent-foreground"
                     : "bg-muted text-muted-foreground"
@@ -960,23 +822,19 @@ function OnboardingChecklist({
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span
                   className={cn(
-                    "text-[15px] font-medium",
+                    "text-body font-medium",
                     step.done && "text-muted-foreground"
                   )}
                 >
                   {step.title}
                 </span>
-                <span className="text-muted-foreground text-[13px]">
+                <span className="text-caption text-muted-foreground">
                   {step.description}
                 </span>
               </span>
               {!step.done && step.href && step.cta ? (
-                <Button
-                  asChild
-                  size="sm"
-                  variant="tint"
-                  className="h-9 shrink-0"
-                >
+                // size="sm"은 보이는 높이 36에 누르는 영역 44(touchTarget)다.
+                <Button asChild size="sm" variant="weak" className="shrink-0">
                   <Link href={step.href}>{step.cta}</Link>
                 </Button>
               ) : null}
@@ -985,15 +843,14 @@ function OnboardingChecklist({
         </ul>
 
         <div className="flex flex-col gap-2 border-t pt-4">
-          <p className="text-[15px] font-semibold">지금 바로 넣어볼까요?</p>
-          <p className="text-muted-foreground text-[13px]">
+          <p className="text-body font-semibold">지금 바로 넣어볼까요?</p>
+          <p className="text-caption text-muted-foreground">
             받은 카드 문자를 붙여넣으면 거래 한 건을 바로 만들어 볼 수 있어요.
           </p>
           <Button
             type="button"
-            size="lg"
-            variant="outline"
-            className="mt-1 h-11 w-full"
+            variant="weak"
+            className="mt-1 w-full"
             onClick={onPasteSms}
           >
             문자 붙여넣어 거래 추가하기
@@ -1049,12 +906,6 @@ function deltaSentence(
   };
 }
 
-/** 마스킹/미확인을 고려한 가맹점 표시명. */
-function merchantLabel(t: TransactionSummary): string {
-  if (t.masked) return "(비공개)";
-  return t.merchantNormalized ?? t.merchantRaw ?? "미확인 가맹점";
-}
-
 /** 구성원 아바타용 첫 글자(라벨이 문자열일 때만). */
 function initialOf(label: ReactNode): string {
   return typeof label === "string" && label.length > 0
@@ -1062,31 +913,43 @@ function initialOf(label: ReactNode): string {
     : "?";
 }
 
-/** 섹션 로딩/에러 표기. 둘 다 아니면 아무것도 렌더하지 않는다. */
-function StateNote({
-  loading,
-  error,
-}: Readonly<{ loading: boolean; error: unknown }>) {
-  if (loading) {
+/** 카드 하나의 불러오기 상태 — `useQuery` 결과에서 이 화면이 쓰는 부분만. */
+type LoadState = Readonly<{
+  isLoading: boolean;
+  isError: boolean;
+  isFetching: boolean;
+  refetch: () => unknown;
+}>;
+
+/**
+ * 카드 안 불러오기 상태. 로딩은 스켈레톤 하나, 실패는 원인 한 줄과 '다시 불러오기'(ErrorState).
+ * 둘 다 아니면 아무것도 그리지 않는다.
+ *
+ * 예전에는 카드마다 '불러오고 있어요…' 글자가 동시에 떴고, 실패는 서버 문구 한 줄뿐이라 다시 시도할
+ * 길이 없었다(2026-11-05 HIG 검수).
+ */
+function QueryState({
+  query,
+  message,
+}: Readonly<{ query: LoadState; message: string }>) {
+  if (query.isLoading) return <ListLoading rows={1} />;
+  if (query.isError) {
     return (
-      <p className="text-muted-foreground py-6 text-center text-sm">
-        불러오고 있어요…
-      </p>
-    );
-  }
-  if (error) {
-    const message =
-      error instanceof ApiError ? error.message : "데이터를 불러오지 못했어요.";
-    return (
-      <p className="text-destructive text-sm" role="alert">
-        {message}
-      </p>
+      <ErrorState
+        message={message}
+        onRetry={() => void query.refetch()}
+        retrying={query.isFetching}
+        className="py-6"
+      />
     );
   }
   return null;
 }
 
-/** 섹션 우측 "전체 보기" 텍스트 링크(오늘의집 톤). */
+/**
+ * 카드 머리 오른쪽 '전체 보기' 텍스트 링크(SectionHeader의 행동 글자와 같은 모양).
+ * 카드 머리 높이를 늘리지 않도록 보이는 글자는 그대로 두고 누르는 영역만 44px로 넓힌다(touchTarget).
+ */
 function SeeAllLink({
   href,
   label = "전체 보기",
@@ -1094,7 +957,10 @@ function SeeAllLink({
   return (
     <Link
       href={href}
-      className="text-accent-foreground text-[13px] font-medium hover:underline"
+      className={cn(
+        "text-caption text-muted-foreground hover:text-foreground active:text-foreground inline-flex items-center font-medium",
+        touchTarget
+      )}
     >
       {label}
     </Link>

@@ -2,16 +2,17 @@
 /* ---------------------------------------------------------------------------
  * Family Memory AI — web · 카테고리 (/categories)
  *
- * 우리 가족만의 커스텀 지출 카테고리를 만들고(이름만), 이름을 바꾸거나 지운다.
- * 시스템 기본 카테고리는 읽기 전용(수정/삭제 불가). 지우면 그 카테고리를 쓰던 거래가
- * 서버에서 '미분류'로 되돌아가므로 ⋯ 메뉴 안에 두고 한 번 더 확인한다(리뉴얼 §3.3).
- * 행을 누르면 그 카테고리의 거래 목록(`/transactions?categoryId=`)으로 간다.
+ * 우리 가족만의 커스텀 지출 카테고리를 만들고(이름만), 이름을 바꾸거나 삭제한다.
+ * 시스템 기본 카테고리는 읽기 전용(수정/삭제 불가). 삭제하면 그 카테고리를 쓰던 거래가
+ * 서버에서 '미분류'로 되돌아가므로 ⋯ 메뉴 안에 두고 액션 시트로 한 번 더 확인한다(리뉴얼 §3.3).
+ * 메뉴·확인 창·버튼은 같은 동사 '삭제'를 쓴다(예전 확인 창은 '지울까요? / 지우기'였다 — 2026-11-05 HIG 검수).
+ * 행을 누르면 그 카테고리의 거래 목록(`/transactions?categoryId=`)으로 가고, 그래서 행 끝에 ›가 있다.
  * 여기서 만든 커스텀 카테고리는 이후 자동 분류 후보에도 자동 포함된다.
  *
  * 가맹점 분류 검토는 '자동 분류 규칙'(/more/category-rules)으로 옮겼다(2026-11-05,
  * 소유자 승인) — 이 화면은 카테고리 자체만 다룬다.
  * ------------------------------------------------------------------------- */
-import { Check, Loader2, Plus, RotateCcw, Tags, X } from "lucide-react";
+import { Check, Loader2, Plus, Tags, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -31,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   EmptyState,
+  ErrorState,
   ListLoading,
   ListRow,
   OverflowMenu,
@@ -86,8 +88,8 @@ export default function CategoriesPage() {
     if (!name) return;
     try {
       await updateMut.mutateAsync({ id, name });
+      // 바뀐 이름이 그 줄에 바로 보이므로 그게 확인이다 — 따로 토스트를 띄우지 않는다.
       setEditingId(null);
-      toast.success("이름을 바꿨어요.");
     } catch (err) {
       toast.error(errMsg(err, "이름을 바꾸지 못했어요."));
     }
@@ -97,9 +99,9 @@ export default function CategoriesPage() {
     try {
       await deleteMut.mutateAsync(cat.id);
       setDeleteTarget(null);
-      toast.success(`'${cat.name}' 카테고리를 지웠어요.`);
+      toast.success(`'${cat.name}' 카테고리를 삭제했어요.`);
     } catch (err) {
-      toast.error(errMsg(err, "카테고리를 지우지 못했어요."));
+      toast.error(errMsg(err, "카테고리를 삭제하지 못했어요."));
     }
   }
 
@@ -131,7 +133,7 @@ export default function CategoriesPage() {
             disabled={createMut.isPending || newName.trim() === ""}
           >
             {createMut.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
-            추가
+            추가하기
           </Button>
         </div>
       </section>
@@ -154,21 +156,12 @@ export default function CategoriesPage() {
         ) : categoriesQuery.isError ? (
           // 조회 실패를 "없음"으로 보여주면 사용자가 이미 있는 카테고리를 다시 만들려
           // 하거나(유니크 충돌) 데이터가 사라졌다고 오인한다 — 에러와 빈 상태는 다르다.
-          <div role="alert">
-            <EmptyState
-              title="카테고리를 불러오지 못했어요"
-              action={
-                <Button
-                  variant="weak"
-                  className="w-full"
-                  onClick={() => void categoriesQuery.refetch()}
-                  disabled={categoriesQuery.isFetching}
-                >
-                  <RotateCcw /> 다시 시도
-                </Button>
-              }
-            />
-          </div>
+          <ErrorState
+            message="카테고리를 불러오지 못했어요"
+            onRetry={() => void categoriesQuery.refetch()}
+            retrying={categoriesQuery.isFetching}
+            className="px-5"
+          />
         ) : custom.length === 0 ? (
           <EmptyState
             icon={<Tags />}
@@ -259,7 +252,7 @@ export default function CategoriesPage() {
         <section className="finance-panel min-w-0 overflow-hidden pt-3 pb-1">
           <SectionHeader className="px-5" title="기본 카테고리" />
           <p className="text-caption text-muted-foreground px-5">
-            기본 카테고리는 이름을 바꾸거나 지울 수 없어요.
+            기본 카테고리는 이름을 바꾸거나 삭제할 수 없어요.
           </p>
           <ul className="divide-border/60 divide-y px-4">
             {system.map((cat) => (
@@ -287,11 +280,11 @@ export default function CategoriesPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              &lsquo;{deleteTarget?.name}&rsquo; 카테고리를 지울까요?
+              &lsquo;{deleteTarget?.name}&rsquo; 카테고리를 삭제할까요?
             </AlertDialogTitle>
             <AlertDialogDescription>
               거래는 미분류로 돌아가고 이 카테고리의 자동 분류 규칙과 예산도 함께
-              지워지며, 되돌릴 수 없어요.
+              삭제되며, 되돌릴 수 없어요.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -305,7 +298,7 @@ export default function CategoriesPage() {
                 if (deleteTarget) void onDelete(deleteTarget);
               }}
             >
-              {deleteMut.isPending ? "지우는 중…" : "지우기"}
+              {deleteMut.isPending ? "삭제하는 중…" : "삭제하기"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

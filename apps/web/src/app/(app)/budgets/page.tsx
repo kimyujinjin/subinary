@@ -2,22 +2,27 @@
 /* ---------------------------------------------------------------------------
  * Family Memory AI — web · 예산 (오늘의집 톤)
  *
- * - 예산 목록: 예산 1건 = Card 1장(UsageBar + 상태 해요체 카피 + 주 액션).
- *   서버가 현재월 순지출을 SQL로 집계·공개범위 반영해 내려준 값을 그대로 표시.
- * - 주 액션은 '어디서 썼는지 보기'(→ 그 예산 스코프로 필터된 거래 목록, C-7).
- *   수정/삭제는 `⋯` 메뉴로 내렸다 — 초과를 알린 뒤 '예산을 늘려라/지워라'만
- *   제안하는 건 가계부가 줄 수 있는 최악의 조언이다.
- * - 상태 카피: usageRate 80%↑ 경고(text-warning-strong), 100%↑ 초과(text-destructive).
- * - 생성: 상단 우측 "예산 만들기" 주 CTA → Dialog("얼마까지 쓸까요?").
- *   scopeType + (member/category/card면) 대상 select + 월 예산 금액(KRW 정수).
- * - 수정(이름/금액/카드 묶음) Dialog / 삭제 AlertDialog(질문형). CRUD는 owner/admin만
- *   (PRD §7.2, 서버에서도 강제). 조건부 대상 필드가 있어 폼은 useState 유지.
+ * - 예산 목록: 예산 1건 = Card 1장(UsageBar + 남은 금액 한 줄 + ⋯).
+ *   서버가 고른 달의 지출을 SQL로 집계·공개범위 반영해 내려준 값을 그대로 표시.
+ * - 주 액션은 '어디서 썼는지 보기' — 막대 전체가 그 예산 범위로 필터된 거래 목록 링크다
+ *   (분석 탭과 같다, C-7). 수정/삭제는 `⋯`(OverflowMenu)로 내렸다 — 초과를 알린 뒤
+ *   '예산을 늘려라/지워라'만 제안하는 건 가계부가 줄 수 있는 최악의 조언이다.
+ * - 상태: usageRate 80%↑ 경고, 100%↑ 초과 — 색과 함께 막대 아래 글자('82.0% 사용'·
+ *   '12,000원 초과', UsageBar)와 남은 금액 한 줄로도 말한다(색에만 기대지 않기).
+ * - 달 이동은 가계부 공용 MonthNav('2026년 11월 ▾' + ‹ ›). 고를 수 있는 달은 거래가 있는 달 +
+ *   이번 달·다음 달(계획을 미리 만드는 달)이다.
+ * - 생성: 오른쪽 아래 FAB(예산이 없으면 빈 상태 버튼) "예산 만들기" → 입력 폼 창.
+ *   scopeType + (member/category/card면) 대상 select + 월 예산 금액(AmountInput, KRW 정수).
+ *   오류는 그 칸 바로 아래에 보여 준다.
+ * - 수정(이름/금액/카드 묶음) 입력 폼 / 삭제는 액션 시트 확인. 삭제하는 동안 시트를 열어 두고,
+ *   실패하면 시트 안에서 알린다. 성공하면 목록에서 빠지는 것이 확인이라 토스트는 없다.
+ *   CRUD는 owner/admin만(PRD §7.2, 서버에서도 강제). 조건부 대상 필드가 있어 폼은 useState 유지.
  * ------------------------------------------------------------------------- */
 import { Suspense, useCallback, useMemo, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, MoreHorizontal, Plus, Wallet } from "lucide-react";
+import { Plus, Wallet } from "lucide-react";
 
 import type {
   BudgetCreateRequest,
@@ -49,6 +54,7 @@ import {
 import { BudgetCardPicker } from "@/components/budget-card-picker";
 import { LedgerHeader } from "@/components/ledger-header";
 import { Fab } from "@/components/widgets/fab";
+import { AmountInput } from "@/components/ui/amount-input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -59,12 +65,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -75,7 +75,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { EmptyState, MonthSwitcher, UsageBar } from "@/components/widgets";
+import {
+  EmptyState,
+  ErrorState,
+  InlineNotice,
+  MonthNav,
+  OverflowMenu,
+  UsageBar,
+  type OverflowAction,
+} from "@/components/widgets";
 import { API_BASE_URL, ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { budgetTransactionsHref, transactionsHref } from "@/lib/deep-link";
@@ -91,6 +99,13 @@ import {
   useHouseholdMembers,
 } from "@/lib/queries";
 import { currentMonth, formatMoney, formatMonth } from "@/lib/format";
+
+import {
+  budgetDisplayName,
+  budgetEditDescription,
+  budgetRemainingLine,
+  type RemainingTone,
+} from "./budget-text";
 
 /** select 옵션(로컬 타입). */
 type Option = { value: string; label: string };
@@ -210,7 +225,7 @@ function parsePositiveInt(value: string): number | null {
  *
  * ## 이미 넘은 예산에는 말하지 않는다
  *
- * `BudgetStatusLine`이 이미 "예산을 N원 넘었어요"라고 말한다. 그 위에 "이대로면
+ * 막대 아래 글자(UsageBar)가 이미 "N원 초과"라고 말한다. 그 위에 "이대로면
  * 초과"를 얹으면 같은 사실을 두 번 말하는 것이다.
  */
 function ProjectedOverLine({
@@ -240,38 +255,24 @@ function ProjectedOverLine({
 
   const overBy = projected - budget.amount;
   return (
-    <p className="text-warning-strong text-[13px] font-medium">
+    <p className="text-caption text-warning-strong font-medium">
       이대로면 {formatMoney(overBy, budget.currency)} 넘어요 · 정기 결제{" "}
       {mine.length}건 {formatMoney(pending, budget.currency)} 남았어요
     </p>
   );
 }
 
-/** 사용률 기반 상태 카피(해요체). 기존 usageRate 데이터로만 계산. */
+const REMAINING_TEXT: Record<RemainingTone, string> = {
+  over: "text-destructive font-medium",
+  warn: "text-warning-strong font-medium",
+  ok: "text-muted-foreground",
+};
+
+/** 남은 금액 한 줄(해요체). 넘은 금액은 막대 아래 글자가 말하므로 그때는 그리지 않는다(`budgetRemainingLine`). */
 function BudgetStatusLine({ budget }: { budget: BudgetSummary }) {
-  if (budget.usageRate >= 1) {
-    const overBy = budget.spent - budget.amount;
-    return (
-      <p className="text-destructive text-[13px] font-medium">
-        {overBy > 0
-          ? `예산을 ${formatMoney(overBy, budget.currency)} 넘었어요`
-          : "예산을 모두 썼어요"}
-      </p>
-    );
-  }
-  if (budget.usageRate >= 0.8) {
-    return (
-      <p className="text-warning-strong text-[13px] font-medium">
-        예산이 얼마 안 남았어요
-      </p>
-    );
-  }
-  return (
-    <p className="text-muted-foreground text-[13px]">
-      {formatMoney(budget.amount - budget.spent, budget.currency)} 더 쓸 수
-      있어요
-    </p>
-  );
+  const line = budgetRemainingLine(budget);
+  if (!line) return null;
+  return <p className={`text-caption ${REMAINING_TEXT[line.tone]}`}>{line.text}</p>;
 }
 
 /**
@@ -376,7 +377,8 @@ function BudgetsView() {
   const [editAmount, setEditAmount] = useState("");
   const [editCardGroup, setEditCardGroup] = useState(false);
   const [editCardIds, setEditCardIds] = useState<string[]>([]);
-  const [editError, setEditError] = useState<string | null>(null);
+  // 오류는 그 칸 바로 아래에 보여 준다 — 금액 칸인지 카드 고르기인지 함께 기억한다.
+  const [editError, setEditError] = useState<{ field: "amount" | "cards"; message: string } | null>(null);
 
   // --- 삭제 확인 상태 -------------------------------------------------------
   const [deleteTarget, setDeleteTarget] = useState<BudgetSummary | null>(null);
@@ -417,7 +419,12 @@ function BudgetsView() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) =>
       authedFetch((token) => api.budgets.delete(token, id)),
-    onSuccess: () => void invalidateBudgets(),
+    // 목록을 다시 받은 뒤에 시트를 닫는다 — 닫히는 순간 그 예산이 목록에서 빠져 있어야 그게 '지웠다'는
+    // 확인이 된다(토스트 없음). 그동안 시트는 '삭제하는 중…'을 보여 준다.
+    onSuccess: async () => {
+      await invalidateBudgets();
+      setDeleteTarget(null);
+    },
   });
 
   const copyMutation = useMutation({
@@ -473,7 +480,7 @@ function BudgetsView() {
 
     const parsedAmount = parsePositiveInt(amount);
     if (parsedAmount === null) {
-      setFormError("예산 금액은 1원 이상의 정수로 입력해 주세요.");
+      setFormError("예산 금액은 1원 이상으로 입력해 주세요.");
       setFormErrorField("amount");
       createAmountInput.current?.focus();
       return;
@@ -523,12 +530,12 @@ function BudgetsView() {
 
     const parsedAmount = parsePositiveInt(editAmount);
     if (parsedAmount === null) {
-      setEditError("예산 금액은 1원 이상의 정수로 입력해 주세요.");
+      setEditError({ field: "amount", message: "예산 금액은 1원 이상으로 입력해 주세요." });
       return;
     }
     if (editCardGroup) {
       const selectionError = budgetCardGroupUpdateError(editing, editCardIds, cardsQuery.data ?? []);
-      if (selectionError) { setEditError(selectionError); return; }
+      if (selectionError) { setEditError({ field: "cards", message: selectionError }); return; }
     }
     // 바뀐 값만 전송한다. 카드 범위 정정에 기존 한도를 다시 쓰지 않는다.
     const body: BudgetUpdateRequest = {
@@ -540,10 +547,14 @@ function BudgetsView() {
     updateMutation.mutate({ id: editing.id, body });
   }
 
+  function openDelete(budget: BudgetSummary) {
+    deleteMutation.reset();
+    setDeleteTarget(budget);
+  }
+
   function confirmDelete() {
-    if (!deleteTarget) return;
+    if (!deleteTarget || deleteMutation.isPending) return;
     deleteMutation.mutate(deleteTarget.id);
-    setDeleteTarget(null);
   }
 
   function openCopy() {
@@ -566,7 +577,6 @@ function BudgetsView() {
 
   const items = budgetsQuery.data?.items ?? [];
   const editGroupChanged = editing !== null && editCardGroup && Object.keys(budgetCardGroupUpdate(editing, editCardIds)).length > 0;
-  const createAmount = parsePositiveInt(amount);
   const createScopeLabel = scopeType === "household"
     ? SCOPE_TYPE_LABEL.household
     : scopeType === "card_group"
@@ -581,9 +591,7 @@ function BudgetsView() {
           <Plus />
         </Fab>
       ) : null}
-      <div className="flex min-w-0 items-center justify-start">
-        <MonthSwitcher month={month} months={availableMonths} onChange={setMonth} className="-ml-3" />
-      </div>
+      <MonthNav month={month} months={availableMonths} onChange={setMonth} />
 
       {/* 목록 ------------------------------------------------------------- */}
       <section className="flex flex-col gap-3" aria-label={isCurrentMonth ? "이번 달 예산" : `${formatMonth(month)} 예산`}>
@@ -601,12 +609,11 @@ function BudgetsView() {
         ) : budgetsQuery.isError ? (
           <Card className="finance-panel">
             <CardContent>
-              <p className="text-destructive text-sm" role="alert">
-                {errorMessage(
-                  budgetsQuery.error,
-                  "예산을 불러오지 못했어요. 잠시 후 다시 시도해 주세요."
-                )}
-              </p>
+              <ErrorState
+                message="예산을 불러오지 못했어요"
+                retrying={budgetsQuery.isFetching}
+                onRetry={() => void budgetsQuery.refetch()}
+              />
             </CardContent>
           </Card>
         ) : items.length === 0 ? (
@@ -620,7 +627,7 @@ function BudgetsView() {
                 title={isPastMonth ? "예산 기록이 없어요" : "아직 예산이 없어요"}
                 description={
                   isPastMonth
-                    ? "월 원장을 도입하기 전이거나 그 달에 만든 계획이 없어요"
+                    ? "그 달에는 만든 예산이 없어요"
                     : isCurrentMonth
                     ? "예산을 만들어 두면 넘치기 전에 미리 알 수 있어요"
                     : "다음 달 계획을 미리 만들어 둘 수 있어요"
@@ -636,7 +643,7 @@ function BudgetsView() {
                       예산 만들기
                     </Button>
                   ) : !canManage && isCurrentMonth ? (
-                    <p className="text-muted-foreground text-[13px]">
+                    <p className="text-caption text-muted-foreground">
                       예산은 가족의 소유자나 관리자가 만들 수 있어요
                     </p>
                   ) : null
@@ -651,23 +658,62 @@ function BudgetsView() {
               budget.scopeRefId,
               month
             );
+            const displayName = budgetDisplayName(budget);
+            // 지난 달은 이름·한도가 고정이라 잘못 지정한 카드 범위만 바로잡을 수 있다.
+            const actions: OverflowAction[] | null =
+              canManage && (!isPastMonth || budget.scopeType === "card" || budget.scopeType === "card_group")
+                ? [
+                    {
+                      label: isPastMonth ? "포함 카드 바로잡기" : "예산 수정",
+                      onSelect: () => openEdit(budget),
+                    },
+                    ...(isPastMonth
+                      ? []
+                      : [
+                          {
+                            label: "예산 삭제",
+                            destructive: true,
+                            disabled: deleteMutation.isPending,
+                            onSelect: () => openDelete(budget),
+                          },
+                        ]),
+                  ]
+                : null;
             return (
               <Card key={budget.id} className="finance-panel border-0 py-5 shadow-none">
                 <CardContent className="flex flex-col gap-3">
-                  <UsageBar
-                    label={budget.name ?? (budget.scopeType === "card_group" ? "카드 묶음 예산" : budget.scopeLabel)}
-                    spent={budget.spent}
-                    amount={budget.amount}
-                    currency={budget.currency}
-                    usageRate={budget.usageRate}
-                    meta={
-                      budget.name && budget.scopeType !== "card_group"
-                        ? `${SCOPE_TYPE_LABEL[budget.scopeType]} · ${
-                            budget.scopeLabel
-                          }`
-                        : SCOPE_TYPE_LABEL[budget.scopeType]
-                    }
-                  />
+                  {/* 주 액션은 '어디서 썼는지 보기'다 — 분석 탭처럼 막대 전체가 링크다. 예산을 넘었다고
+                    알린 뒤 줄 수 있는 게 '예산 늘리기'와 '예산 삭제'뿐이면 가계부가 최악의 조언을 하는
+                    셈이다 — 수정·삭제는 ⋯로 내린다. 딥링크에는 지금 보고 있는 달을 함께 싣는다. */}
+                  <div className="flex min-w-0 items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <UsageBar
+                        label={displayName}
+                        spent={budget.spent}
+                        amount={budget.amount}
+                        currency={budget.currency}
+                        usageRate={budget.usageRate}
+                        meta={
+                          budget.name && budget.scopeType !== "card_group"
+                            ? `${SCOPE_TYPE_LABEL[budget.scopeType]} · ${
+                                budget.scopeLabel
+                              }`
+                            : SCOPE_TYPE_LABEL[budget.scopeType]
+                        }
+                        {...(spentHref
+                          ? { href: spentHref, hrefLabel: "어디서 썼는지 보기" }
+                          : {})}
+                      />
+                    </div>
+                    {actions ? (
+                      <OverflowMenu
+                        label={`${displayName} 예산 관리 메뉴`}
+                        actions={actions}
+                        // 막대가 링크면 위아래 여백(py-2)만큼 제목이 내려와 있다 — ⋯를 제목 줄에 맞춘다.
+                        className={spentHref ? "-mr-2 shrink-0" : "-mr-2 -mt-2.5 shrink-0"}
+                      />
+                    ) : null}
+                  </div>
                   {budget.scopeType === "card_group" ? <p className="text-caption text-muted-foreground -mt-2 break-words">{budget.scopeLabel}</p> : null}
                   <BudgetStatusLine budget={budget} />
                   {/* 넘기 전에 알린다 — P1-22를 정보로 푸는 한 줄(D7). */}
@@ -676,77 +722,27 @@ function BudgetsView() {
                     upcoming={upcomingQuery.data}
                     isCurrentMonth={isCurrentMonth}
                   />
-                  {/* 주 액션은 '어디서 썼는지 보기'다. 예산을 넘었다고 알린 뒤
-                    줄 수 있는 게 '예산 늘리기'와 '예산 삭제'뿐이면 가계부가
-                    최악의 조언을 하는 셈이다 — 수정·삭제는 ⋯로 내린다.
-                    딥링크에는 지금 보고 있는 달을 함께 싣는다. 카드 묶음은
-                    단일 카드 필터 링크를 각각 제공해 다른 지출이 섞이지 않게 한다. */}
-                  <div className="-mb-2 flex items-start gap-2">
-                    {spentHref ? (
-                      <Link href={spentHref} className="text-caption text-muted-foreground hover:text-foreground inline-flex min-h-11 flex-1 items-center font-medium active:text-foreground">
-                        어디서 썼는지 보기 ›
-                      </Link>
-                    ) : budget.scopeType === "card_group" ? (
-                      // 카드 구성(소유자·끝 4자리)은 기본으로 펼치지 않는다(§5 예산) — 필요할 때만 연다.
-                      <details className="min-w-0 flex-1">
-                        <summary className="text-caption text-muted-foreground hover:text-foreground flex min-h-11 cursor-pointer items-center font-medium active:text-foreground">카드별로 어디서 썼는지 보기</summary>
-                        <div className="flex flex-col pb-2">
-                          {budget.cardIds.map((id) => {
-                            const card = cardsQuery.data?.find((item) => item.id === id);
-                            return <Link key={id} href={transactionsHref({ month, cardId: id })} className="text-body hover:bg-muted/50 -mx-2 flex min-h-11 items-center rounded-control px-2 active:bg-muted">{card ? cardIdentityLabel(card, memberNames) : "등록 카드 내역 확인"} ›</Link>;
-                          })}
-                        </div>
-                      </details>
-                    ) : (
-                      <span className="flex-1" />
-                    )}
-                    {canManage && (!isPastMonth || budget.scopeType === "card" || budget.scopeType === "card_group") ? (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="size-11 shrink-0"
-                            aria-label={`${
-                              budget.name ?? budget.scopeLabel
-                            } 예산 관리 메뉴`}
-                          >
-                            <MoreHorizontal />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onSelect={() => openEdit(budget)}>
-                            {isPastMonth ? "포함 카드 바로잡기" : "예산 수정"}
-                          </DropdownMenuItem>
-                          {!isPastMonth ? <DropdownMenuItem
-                            variant="destructive"
-                            disabled={deleteMutation.isPending}
-                            onSelect={() => setDeleteTarget(budget)}
-                          >
-                            예산 삭제
-                          </DropdownMenuItem> : null}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    ) : null}
-                  </div>
+                  {!spentHref && budget.scopeType === "card_group" ? (
+                    // 카드 묶음은 단일 카드 필터 링크를 각각 둔다 — 한 링크로 묶으면 다른 지출이 섞인다.
+                    // 카드 구성(소유자·끝 4자리)은 기본으로 펼치지 않는다(§5 예산) — 필요할 때만 연다.
+                    <details className="-mb-2 min-w-0">
+                      <summary className="text-caption text-muted-foreground hover:text-foreground flex min-h-11 cursor-pointer items-center font-medium active:text-foreground">카드별로 어디서 썼는지 보기</summary>
+                      <div className="flex flex-col pb-2">
+                        {budget.cardIds.map((id) => {
+                          const card = cardsQuery.data?.find((item) => item.id === id);
+                          return <Link key={id} href={transactionsHref({ month, cardId: id })} className="text-body hover:bg-muted/50 -mx-2 flex min-h-11 items-center rounded-control px-2 active:bg-muted">{card ? cardIdentityLabel(card, memberNames) : "등록 카드 내역 확인"} ›</Link>;
+                        })}
+                      </div>
+                    </details>
+                  ) : null}
                 </CardContent>
               </Card>
             );
           })
         )}
 
-        {deleteMutation.isError ? (
-          <p className="text-destructive text-sm" role="alert">
-            {errorMessage(
-              deleteMutation.error,
-              "예산을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요."
-            )}
-          </p>
-        ) : null}
-
         {!canManage && items.length > 0 ? (
-          <p className="text-muted-foreground text-[13px]">
+          <p className="text-caption text-muted-foreground">
             예산 만들기와 수정은 가족의 소유자나 관리자가 할 수 있어요
           </p>
         ) : null}
@@ -781,14 +777,14 @@ function BudgetsView() {
             {items.map((budget) => (
               <div
                 key={budget.id}
-                className="border-border flex items-start justify-between gap-4 rounded-xl border p-3"
+                className="border-border flex items-start justify-between gap-4 rounded-control border p-3"
               >
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">
-                    {budget.name ?? budget.scopeLabel}
+                  <p className="text-body truncate font-medium">
+                    {budgetDisplayName(budget)}
                   </p>
-                  <p className="text-muted-foreground text-[12px]">
-                    {formatMonth(month)} 실지출{" "}
+                  <p className="text-caption text-muted-foreground">
+                    {formatMonth(month)}에 쓴 돈{" "}
                     {formatMoney(budget.spent, budget.currency)} · 최근 3개월
                     평균{" "}
                     {formatMoney(
@@ -797,24 +793,23 @@ function BudgetsView() {
                     )}
                   </p>
                 </div>
-                <p className="shrink-0 text-sm font-semibold tabular-nums">
+                <p className="text-body shrink-0 font-semibold tabular-nums">
                   {formatMoney(budget.amount, budget.currency)}
                 </p>
               </div>
             ))}
           </div>
           {copyMutation.isError ? (
-            <p className="text-destructive text-sm" role="alert">
+            <InlineNotice tone="error">
               {errorMessage(
                 copyMutation.error,
                 "다음 달 계획을 만들지 못했어요. 잠시 후 다시 시도해 주세요."
               )}
-            </p>
+            </InlineNotice>
           ) : null}
           <DialogFooter className="flex-col sm:flex-col">
             <Button
               type="button"
-              size="lg"
               className="w-full"
               disabled={copyMutation.isPending}
               onClick={confirmCopy}
@@ -828,7 +823,7 @@ function BudgetsView() {
               disabled={copyMutation.isPending}
               onClick={() => setCopyOpen(false)}
             >
-              취소
+              닫기
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -884,12 +879,24 @@ function BudgetsView() {
                     ))}
                   </SelectContent>
                 </Select>
+                {formError && formErrorField === "scopeRef" ? (
+                  <p id="budget-create-error" role="alert" className="text-caption text-destructive">
+                    {formError}
+                  </p>
+                ) : null}
               </div>
             ) : null}
 
             {scopeType === "card_group" ? (
-              <div ref={createCardsInput} tabIndex={-1} role="group" aria-label="예산에 포함할 카드" aria-describedby={formErrorField === "cards" ? "budget-create-error" : undefined} className="min-w-0 rounded-md focus-visible:outline-2 focus-visible:outline-ring">
-                <BudgetCardPicker cards={cardsQuery.data ?? []} selectedIds={selectedCardIds} memberNames={memberNames} onChange={(value) => { setSelectedCardIds(value); if (formErrorField === "cards") { setFormError(null); setFormErrorField(null); } }} disabled={createMutation.isPending || cardsQuery.isLoading} isLoading={cardsQuery.isLoading} loadError={cardsQuery.isError} />
+              <div className="flex min-w-0 flex-col gap-2">
+                <div ref={createCardsInput} tabIndex={-1} role="group" aria-label="예산에 포함할 카드" aria-describedby={formErrorField === "cards" ? "budget-create-error" : undefined} className="min-w-0 rounded-control focus-visible:outline-2 focus-visible:outline-ring">
+                  <BudgetCardPicker cards={cardsQuery.data ?? []} selectedIds={selectedCardIds} memberNames={memberNames} onChange={(value) => { setSelectedCardIds(value); if (formErrorField === "cards") { setFormError(null); setFormErrorField(null); } }} disabled={createMutation.isPending || cardsQuery.isLoading} isLoading={cardsQuery.isLoading} loadError={cardsQuery.isError} onRetry={() => void cardsQuery.refetch()} retrying={cardsQuery.isFetching} />
+                </div>
+                {formError && formErrorField === "cards" ? (
+                  <p id="budget-create-error" role="alert" className="text-caption text-destructive">
+                    {formError}
+                  </p>
+                ) : null}
               </div>
             ) : null}
             <div className="flex flex-col gap-2">
@@ -905,49 +912,43 @@ function BudgetsView() {
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="budget-amount">한 달 예산 (원)</Label>
-              <Input
+              <Label htmlFor="budget-amount">한 달 예산</Label>
+              {/* 칸이 콤마와 '원'을 붙여 보여 주므로 아래 요약에 금액을 다시 쓰지 않는다. */}
+              <AmountInput
                 id="budget-amount"
                 ref={createAmountInput}
                 name="budget-amount"
-                type="number"
-                inputMode="numeric"
-                min={1}
-                step={1}
-                placeholder="500000"
+                placeholder="500,000"
                 required
-                className="min-h-11"
                 aria-invalid={formErrorField === "amount"}
                 aria-describedby={formErrorField === "amount" ? "budget-create-error" : undefined}
                 value={amount}
-                onChange={(e) => { setAmount(e.target.value); if (formErrorField === "amount") { setFormError(null); setFormErrorField(null); } }}
+                onValueChange={(raw) => { setAmount(raw); if (formErrorField === "amount") { setFormError(null); setFormErrorField(null); } }}
               />
+              {formError && formErrorField === "amount" ? (
+                <p id="budget-create-error" role="alert" className="text-caption text-destructive">
+                  {formError}
+                </p>
+              ) : null}
             </div>
 
-            {formError ? (
-              <p id="budget-create-error" className="text-destructive text-sm" role="alert">
-                {formError}
-              </p>
-            ) : null}
             {createMutation.isError ? (
-              <p className="text-destructive text-sm" role="alert">
+              <InlineNotice tone="error">
                 {errorMessage(
                   createMutation.error,
                   "예산을 만들지 못했어요. 잠시 후 다시 시도해 주세요."
                 )}
-              </p>
+              </InlineNotice>
             ) : null}
 
-            <dl aria-label="만들 예산 요약" className="space-y-2 border-y py-3 text-sm">
+            <dl aria-label="만들 예산 요약" className="text-body space-y-2 border-y py-3">
               <div className="flex flex-wrap justify-between gap-x-3 gap-y-1"><dt className="text-muted-foreground">적용 월</dt><dd className="font-medium">{formatMonth(month)}</dd></div>
               <div className="flex flex-wrap justify-between gap-x-3 gap-y-1"><dt className="text-muted-foreground">적용 범위</dt><dd className="min-w-0 text-right font-medium [overflow-wrap:anywhere]">{createScopeLabel}</dd></div>
-              <div className="flex flex-wrap justify-between gap-x-3 gap-y-1"><dt className="text-muted-foreground">한 달 예산</dt><dd className="font-semibold tabular-nums">{createAmount === null ? "금액 입력 전" : formatMoney(createAmount, "KRW")}</dd></div>
             </dl>
 
             <DialogFooter className="flex-col sm:flex-col">
               <Button
                 type="submit"
-                size="lg"
                 className="w-full"
                 disabled={createMutation.isPending || (scopeType === "card_group" && (cardsQuery.isLoading || cardsQuery.isError))}
               >
@@ -959,7 +960,7 @@ function BudgetsView() {
                 className="w-full"
                 onClick={() => setCreateOpen(false)}
               >
-                취소
+                닫기
               </Button>
             </DialogFooter>
           </form>
@@ -973,9 +974,18 @@ function BudgetsView() {
       >
         <DialogContent className="overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{isPastMonth ? "포함 카드를 바로잡아요" : "예산을 수정해요"}</DialogTitle>
+            <DialogTitle>
+              {isPastMonth
+                ? "포함 카드를 바로잡아요"
+                : editing
+                  ? `'${budgetDisplayName(editing)}' 예산을 수정해요`
+                  : "예산을 수정해요"}
+            </DialogTitle>
+            {/* 범위마다 무엇을 더하는지 맞게 말한다 — 카드 문구는 카드·카드 묶음 예산에서만. */}
             <DialogDescription>
-              {isPastMonth ? "그 달의 이름과 한도는 유지하고, 지출을 합산할 카드만 바로잡아요. 사용액과 달성률은 다시 계산돼요." : editing ? `'${editing.scopeLabel}' 예산을 수정해요. 선택한 카드의 지출만 합산해요.` : ""}
+              {editing
+                ? budgetEditDescription(editCardGroup ? "card_group" : editing.scopeType, isPastMonth)
+                : ""}
             </DialogDescription>
           </DialogHeader>
           <form className="flex flex-col gap-4" onSubmit={onUpdate} noValidate>
@@ -992,58 +1002,61 @@ function BudgetsView() {
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="edit-budget-amount">한 달 예산 (원)</Label>
-              <Input
+              <Label htmlFor="edit-budget-amount">한 달 예산</Label>
+              <AmountInput
                 id="edit-budget-amount"
                 name="edit-budget-amount"
-                type="number"
-                inputMode="numeric"
-                min={1}
-                step={1}
                 required
                 value={editAmount}
                 disabled={isPastMonth || updateMutation.isPending}
-                onChange={(e) => setEditAmount(e.target.value)}
+                aria-invalid={editError?.field === "amount"}
+                aria-describedby={editError?.field === "amount" ? "edit-budget-error" : undefined}
+                onValueChange={(raw) => { setEditAmount(raw); if (editError?.field === "amount") setEditError(null); }}
               />
+              {editError?.field === "amount" ? (
+                <p id="edit-budget-error" role="alert" className="text-caption text-destructive">
+                  {editError.message}
+                </p>
+              ) : null}
               {/* 실지출 평균은 거래에서 다시 계산한 참고값이다. 계획 금액을 자동으로
                   바꾸지 않는다 — 과거 소비가 다음 계획의 의도라는 근거는 없다. */}
               {editing ? (
-                <p className="text-muted-foreground text-[13px]">
-                  최근 3개월 실지출 평균은{" "}
+                <p className="text-caption text-muted-foreground">
+                  최근 3개월 동안 한 달에 평균{" "}
                   {formatMoney(
                     editing.threeMonthAverageSpent,
                     editing.currency
-                  )}
-                  이에요
+                  )}{" "}
+                  썼어요
                 </p>
               ) : null}
             </div>
             {editing?.scopeType === "card" ? (
-              <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border p-3 text-sm">
+              <label className="text-body flex min-h-11 cursor-pointer items-center gap-3 rounded-control border p-3">
                 <input type="checkbox" className="accent-primary size-4 shrink-0" checked={editCardGroup} disabled={updateMutation.isPending} onChange={(event) => { setEditCardGroup(event.target.checked); setEditCardIds(budgetCardIds(editing)); }} />
                 여러 카드를 한 예산에 묶기
               </label>
             ) : null}
             {editCardGroup ? (
-              <BudgetCardPicker cards={cardsQuery.data ?? []} selectedIds={editCardIds} memberNames={memberNames} onChange={setEditCardIds} disabled={updateMutation.isPending || cardsQuery.isLoading} isLoading={cardsQuery.isLoading} loadError={cardsQuery.isError} />
+              <BudgetCardPicker cards={cardsQuery.data ?? []} selectedIds={editCardIds} memberNames={memberNames} onChange={(value) => { setEditCardIds(value); if (editError?.field === "cards") setEditError(null); }} disabled={updateMutation.isPending || cardsQuery.isLoading} isLoading={cardsQuery.isLoading} loadError={cardsQuery.isError} onRetry={() => void cardsQuery.refetch()} retrying={cardsQuery.isFetching} />
             ) : null}
-            {editError ? (
-              <p className="text-destructive text-sm" role="alert">
-                {editError}
+            {editError?.field === "cards" ? (
+              <p role="alert" className="text-caption text-destructive">
+                {editError.message}
               </p>
             ) : null}
             {updateMutation.isError ? (
-              <p className="text-destructive text-sm" role="alert">
+              <InlineNotice tone="error">
                 {errorMessage(
                   updateMutation.error,
                   "수정 내용을 저장하지 못했어요. 잠시 후 다시 시도해 주세요."
                 )}
-              </p>
+              </InlineNotice>
             ) : null}
             <DialogFooter className="flex-col sm:flex-col">
               <Button
                 type="submit"
-                className="h-11 w-full"
+                className="w-full"
                 disabled={updateMutation.isPending || (editGroupChanged && (cardsQuery.isLoading || cardsQuery.isError))}
               >
                 {updateMutation.isPending ? "저장 중…" : "저장하기"}
@@ -1054,7 +1067,7 @@ function BudgetsView() {
                 className="w-full"
                 onClick={() => setEditing(null)}
               >
-                취소
+                닫기
               </Button>
             </DialogFooter>
           </form>
@@ -1062,35 +1075,45 @@ function BudgetsView() {
       </Dialog>
 
       {/* 삭제 확인 -------------------------------------------------------- */}
+      {/* 삭제하는 동안에는 닫지 않는다 — 진행 표시와 실패 안내를 이 시트 안에서 보여 준다. */}
       <AlertDialog
         open={deleteTarget !== null}
-        onOpenChange={(o) => !o && setDeleteTarget(null)}
+        onOpenChange={(o) => {
+          if (!o && !deleteMutation.isPending) setDeleteTarget(null);
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>이 예산을 삭제할까요?</AlertDialogTitle>
-            <AlertDialogDescription>
+            <AlertDialogTitle>
               {deleteTarget
-                ? `'${
-                    deleteTarget.name ?? deleteTarget.scopeLabel
-                  }' 예산이 목록에서 사라져요. 기록된 거래 내역은 그대로 남아요.`
-                : ""}
+                ? `'${budgetDisplayName(deleteTarget)}' 예산을 삭제할까요?`
+                : "이 예산을 삭제할까요?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              예산만 지워지고 기록된 거래는 그대로 남아요.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col sm:flex-col">
-            <AlertDialogAction
-              onClick={confirmDelete}
-              variant="destructive" className="h-11 w-full"
-            >
-              {deleteMutation.isPending ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                "삭제하기"
+          {deleteMutation.isError ? (
+            <InlineNotice tone="error">
+              {errorMessage(
+                deleteMutation.error,
+                "예산을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요."
               )}
+            </InlineNotice>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>닫기</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={deleteMutation.isPending}
+              onClick={(event) => {
+                // 성공하면 onSuccess가 목록을 다시 받은 뒤 닫는다.
+                event.preventDefault();
+                confirmDelete();
+              }}
+            >
+              {deleteMutation.isPending ? "삭제하는 중…" : "삭제하기"}
             </AlertDialogAction>
-            <AlertDialogCancel className="h-11 w-full border-0 bg-transparent">
-              취소
-            </AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

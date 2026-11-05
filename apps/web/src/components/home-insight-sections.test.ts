@@ -154,6 +154,17 @@ describe("다가오는 지출", () => {
     expect(html).toContain("text-destructive");
     expect(html).toContain("예정일 지남");
   });
+
+  it("날짜 칸은 고정폭이 아니라 '예정일 지남'도 한 줄로 늘어난다", () => {
+    const html = renderToStaticMarkup(
+      createElement(HomeUpcoming, {
+        rows: [row({ when: "예정일 지남", overdue: true })],
+      })
+    );
+    expect(html).not.toMatch(/(?<![\w-])w-16(?![\w-])/);
+    expect(html).toContain("min-w-16");
+    expect(html).toContain("whitespace-nowrap");
+  });
 });
 
 const week: WeekWindow = {
@@ -206,24 +217,25 @@ const recap = (props: Partial<Parameters<typeof HomeWeeklyRecap>[0]> = {}) =>
   );
 
 describe("지난주 회고", () => {
-  it("지난주 합계와 그 전주 대비, 가장 많이 쓴 곳을 보여준다", () => {
+  it("지난주 합계와 그 전주 대비, 가장 많이 쓴 카테고리를 보여준다", () => {
     const html = recap();
     expect(html).toContain("지난주");
     expect(html).toContain("10월 26일 – 11월 1일");
     expect(html).toContain("210,000원");
     expect(html).toContain("그 전주보다");
-    expect(html).toContain("가장 많이 쓴 곳");
+    expect(html).toContain("가장 많이 쓴 카테고리");
+    expect(html).not.toContain("가장 많이 쓴 곳");
     expect(html).toContain("식비");
     expect(html).toContain("80,000원");
   });
 
-  it("카테고리가 없으면 가장 많이 쓴 곳 줄을 빼고, 그 전주가 0이면 비교하지 않는다", () => {
+  it("카테고리가 없으면 가장 많이 쓴 카테고리 줄을 빼고, 그 전주가 0이면 비교하지 않는다", () => {
     const html = recap({
       monthly: weekly({ previousNet: 0, deltaNet: 210000 }),
       categories: categories([]),
     });
     expect(html).toContain("210,000원");
-    expect(html).not.toContain("가장 많이 쓴 곳");
+    expect(html).not.toContain("가장 많이 쓴 카테고리");
     expect(html).not.toContain("그 전주");
   });
 
@@ -268,8 +280,8 @@ describe("홈 소비 카드(개편)", () => {
   it("지난달 이맘때 페이스가 있으면 전월 비교 대신 그 줄을 쓴다", () => {
     const html = consumption({ pace: "지난달 이맘때보다 12,000원 덜 썼어요" });
     expect(html).toContain("지난달 이맘때보다 12,000원 덜 썼어요");
-    expect(html).not.toContain("지난달 전체");
-    expect(consumption()).toContain("지난달 전체 812,414원");
+    expect(html).not.toContain("지난달 812,414원");
+    expect(consumption()).toContain("지난달 812,414원");
   });
 
   it("가족이 물어본 결제는 건수를 알 때만 할 일 화면으로 연결한다", () => {

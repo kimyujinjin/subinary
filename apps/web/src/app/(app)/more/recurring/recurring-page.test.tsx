@@ -181,3 +181,116 @@ describe("정기 지출 화면", () => {
     expect(html).toContain("정기 지출 찾기는 아직 켜지 않았어요.");
   });
 });
+
+describe("정기 지출 화면 — 합계 자리·문구(2026-11-05 HIG 검수)", () => {
+  function seriesOnly(): QueryClient {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryOnMount: false } },
+    });
+    client.setQueryData<RecurringSeriesListResponse>(recurringQueryKey(HOUSEHOLD), {
+      enabled: true,
+      provisional: false,
+      items,
+      computedAt: new Date(Date.now() - 12 * 60_000).toISOString(),
+      calculationStatus: "computed",
+    });
+    return client;
+  }
+  const html = (client: QueryClient) =>
+    renderToStaticMarkup(
+      createElement(QueryClientProvider, { client }, createElement(RecurringPage)),
+    );
+
+  it("합계가 목록보다 늦게 와도 목록을 밀어내지 않게 자리를 스켈레톤으로 잡아 둔다", () => {
+    const out = html(seriesOnly());
+    expect(out).toContain("이번 달 남은 정기 결제를 불러오는 중이에요.");
+    expect(out).toMatch(/<section role="status" aria-busy="true"/);
+    // 화면에 보이는 '불러오는 중' 글자는 없다(읽기 프로그램 전용).
+    expect(out).not.toContain(">불러오고 있어요");
+  });
+
+  it("예정 0건 응답에서도 확정된 정기 결제가 있으면 합계 자리가 남는다(월말 레이아웃 이동 방지)", () => {
+    const client = seriesOnly();
+    client.setQueryData<RecurringUpcomingResponse>(
+      recurringUpcomingQueryKey(HOUSEHOLD, endOfMonthKst()),
+      {
+        enabled: true,
+        until: endOfMonthKst(),
+        items: [],
+        totalAmount: 0,
+        totalCurrency: "KRW",
+        forecastableCount: 0,
+        excludedCount: 0,
+        otherCurrencyCount: 0,
+      },
+    );
+    const out = html(client);
+    expect(out).toContain("이번 달 남은 정기 결제");
+    expect(out).toContain("이번 달에 더 나갈 정기 결제는 없어요.");
+    // 빈 합계를 금액(0원)으로 말하지 않는다 — '정기 결제가 없다'로 읽히지 않게 남은 것이 없다는 사실만.
+    expect(out).not.toMatch(/text-display[^>]*>/);
+    expect(out).not.toContain("불러오는 중이에요");
+  });
+
+  it("확정된 정기 결제가 없으면(예정은 확정만 센다) 합계 자리를 잡지 않는다", () => {
+    const client = seriesOnly();
+    client.setQueryData<RecurringSeriesListResponse>(recurringQueryKey(HOUSEHOLD), {
+      enabled: true,
+      provisional: false,
+      items: items.filter((item) => item.status !== "confirmed"),
+      computedAt: new Date().toISOString(),
+      calculationStatus: "computed",
+    });
+    const before = html(client);
+    expect(before).not.toContain("이번 달 남은 정기 결제를 불러오는 중이에요.");
+    expect(before).not.toContain("이번 달 남은 정기 결제");
+
+    client.setQueryData<RecurringUpcomingResponse>(
+      recurringUpcomingQueryKey(HOUSEHOLD, endOfMonthKst()),
+      {
+        enabled: true,
+        until: endOfMonthKst(),
+        items: [],
+        totalAmount: 0,
+        totalCurrency: "KRW",
+        forecastableCount: 0,
+        excludedCount: 0,
+        otherCurrencyCount: 0,
+      },
+    );
+    expect(html(client)).not.toContain("이번 달 남은 정기 결제");
+  });
+
+  it("합계를 못 불러오면 조용히 빼지 않고 '다시 불러오기'를 준다", async () => {
+    const client = seriesOnly();
+    await client.prefetchQuery({
+      queryKey: recurringUpcomingQueryKey(HOUSEHOLD, endOfMonthKst()),
+      queryFn: () => Promise.reject(new Error("offline")),
+    });
+    const out = html(client);
+    expect(out).toMatch(/<p role="alert"[^>]*>이번 달 남은 정기 결제를 불러오지 못했어요<\/p>/);
+    expect(out).toMatch(/<button[^>]*>다시 불러오기<\/button>/);
+  });
+
+  it("예상일 범위는 기호(±) 대신 말로 쓴다", () => {
+    const out = render();
+    expect(out).toMatch(/다음 결제 (\d{4}년 )?11월 3일쯤\(2일 앞뒤\)/);
+    expect(out).not.toContain("±");
+  });
+
+  it("링크가 걸린 줄은 폰에서도 ›를 보인다", () => {
+    expect(render()).toContain("lucide-chevron-right");
+  });
+
+  it("결제 실패 링크는 손가락 영역 44px이다", () => {
+    const client = seriesOnly();
+    client.setQueryData<RecurringSeriesListResponse>(recurringQueryKey(HOUSEHOLD), {
+      enabled: true,
+      provisional: false,
+      items: [{ ...base, recentDeclineAttempts: 3 }],
+      computedAt: new Date().toISOString(),
+      calculationStatus: "computed",
+    });
+    expect(html(client)).toMatch(/class="[^"]*min-h-11[^"]*" href="\/declines"/);
+  });
+});

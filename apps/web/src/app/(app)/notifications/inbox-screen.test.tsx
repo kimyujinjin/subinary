@@ -5,6 +5,7 @@ import type { NotificationItem } from "@family/contracts";
 const state = vi.hoisted(() => ({
   items: [] as NotificationItem[],
   hasNextPage: false,
+  isError: false,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -15,7 +16,8 @@ vi.mock("@/lib/queries", () => ({
   useNotifications: () => ({
     data: { pages: [{ items: state.items, nextCursor: null }] },
     isLoading: false,
-    isError: false,
+    isError: state.isError,
+    isFetching: false,
     hasNextPage: state.hasNextPage,
     isFetchingNextPage: false,
     fetchNextPage: vi.fn(),
@@ -50,6 +52,7 @@ function titleClass(html: string, title: string): string {
 beforeEach(() => {
   state.items = [];
   state.hasNextPage = false;
+  state.isError = false;
 });
 
 describe("알림함", () => {
@@ -87,6 +90,26 @@ describe("알림함", () => {
     expect(html).not.toContain('href="/transactions?txn=1"');
     expect(html).toMatch(/<button[^>]*>더 보기<\/button>/);
     expect(html).not.toContain("bg-primary/10");
+  });
+
+  it("갈 곳이 있는 줄만 폰에서도 ›를 단다", () => {
+    state.items = [item({ title: "새 결제" })];
+    expect(renderToStaticMarkup(<NotificationsPage />)).toContain(
+      "lucide-chevron-right"
+    );
+
+    state.items = [item({ deepLink: null, title: "소비 요약", kind: "summary" })];
+    expect(renderToStaticMarkup(<NotificationsPage />)).not.toContain(
+      "lucide-chevron-right"
+    );
+  });
+
+  it("불러오지 못하면 공용 오류 상태로 원인 한 줄과 '다시 불러오기'를 보여 준다", () => {
+    state.isError = true;
+    const html = renderToStaticMarkup(<NotificationsPage />);
+    expect(html).toMatch(/<p role="alert"[^>]*>알림을 불러오지 못했어요<\/p>/);
+    expect(html).toMatch(/<button[^>]*>다시 불러오기<\/button>/);
+    expect(html).not.toContain("잠시 후 다시 시도해 주세요");
   });
 
   it("비어 있으면 공용 빈 상태를 쓴다(이모지 없음)", () => {

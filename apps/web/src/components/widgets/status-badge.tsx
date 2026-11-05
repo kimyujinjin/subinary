@@ -33,11 +33,14 @@ const STATUS_TONES: Record<string, BadgeTone> = {
   ignored: "neutral",
 };
 
-/** 상태값 → 한국어 라벨. 띄어쓰기는 맞춤법대로(가계부 목록의 상태 칩과 같은 글자). */
+/**
+ * 상태값 → 한국어 라벨. 띄어쓰기는 맞춤법대로(가계부 목록의 상태 칩과 같은 글자).
+ * 취소된 원래 결제는 '취소됨'이다 — 취소로 생긴 기록('환불')과 구분한다(2026-11-05 HIG 검수 3·4단계, 앱 전체 이름 규칙).
+ */
 const STATUS_LABELS: Record<string, string> = {
   approved: "승인",
   partially_cancelled: "부분 취소",
-  cancelled: "취소",
+  cancelled: "취소됨",
   pending_review: "확인 필요",
   duplicate_suspected: "중복 의심",
   active: "활성",

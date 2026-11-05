@@ -100,6 +100,19 @@ describe("진입점 문구", () => {
     for (const provider of UPCOMING_PROVIDERS)
       expect(provider.reason.trim().length).toBeGreaterThan(10);
   });
+
+  it("부제와 준비 중 사유에 서버의 분류 이름·개발 용어를 쓰지 않는다", () => {
+    // '공식 API'·'웹 로그인'은 서버 분류 이름이라 사용자가 무엇을 하는지 알 수 없었다(2026-11-05 HIG 검수).
+    const copy = [
+      ...CONNECTABLE_PROVIDERS.map((provider) => provider.method),
+      ...UPCOMING_PROVIDERS.map((provider) => provider.reason),
+    ];
+    for (const text of copy) expect(text).not.toMatch(/API|웹 로그인|공식|토큰|스크래핑/);
+  });
+
+  it("준비 중 사유는 화면에 보이는 caption 문장이라 폰에서 두 줄 안팎으로 짧다", () => {
+    for (const provider of UPCOMING_PROVIDERS) expect(provider.reason.length).toBeLessThanOrEqual(40);
+  });
 });
 
 describe("기관 행 상태 한 줄", () => {

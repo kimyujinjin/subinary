@@ -5,10 +5,15 @@ import { loanImportUpdateRequestSchema, type ImportedLoanRecord, type ManualAsse
 import { Button } from "@/components/ui/button";
 import { ConfirmAction, RecordDialog } from "@/components/manual-finance/shared";
 import { displayManualKrw } from "@/components/manual-finance/model";
+import { ErrorState } from "@/components/widgets/error-state";
+import { FieldList, FieldRow } from "@/components/widgets/field-row";
+import { InlineNotice } from "@/components/widgets/inline-notice";
 import { useAuth } from "@/lib/auth-context";
+import { formatMonthDay } from "@/lib/format";
 import { loanImportApi } from "@/lib/loan-import-client";
 import { manualFinanceApi, useManualFinanceRefresh } from "@/lib/manual-finance-client";
 import { createLoanTaskSession, displayLoanCapturedAt, loanFailureMessage, loanReviewDraft, loanReviewFields } from "./model";
+import { loanInclusionLabel } from "./loan-rows";
 import { LoanReviewFields } from "./review-fields";
 
 export function LoanRecordEditor({ item, observedVersion, householdId, userId, onClose }: {
@@ -55,7 +60,7 @@ export function LoanRecordEditor({ item, observedVersion, householdId, userId, o
     event.preventDefault();
     if (completed.current || disabled || session.current.pending || optionsLoading || optionsError) return;
     const parsed = loanImportUpdateRequestSchema.safeParse({ expectedVersion: current.version, ...loanReviewFields(draft, options, userId, householdId) });
-    if (!parsed.success) { setError("이름, 가족 공유 동의와 연결할 대출을 확인해 주세요."); return; }
+    if (!parsed.success) { setError("대출 이름, 가족 공유 동의, 연결할 대출을 확인해 주세요."); return; }
     setPhase("saving"); setError(null);
     await session.current.run(
       (signal) => authedFetch((token) => loanImportApi.update(token, householdId, userId, current.id, parsed.data, signal)),
@@ -87,40 +92,40 @@ export function LoanRecordEditor({ item, observedVersion, householdId, userId, o
         if (!found || !found.canEdit) { onClose(); return; }
         setCurrent(found); setDraft(loanReviewDraft(found)); setReadRequired(false); setOptionsEpoch((value) => value + 1);
       },
-      () => { setPhase("idle"); setReadRequired(true); setError("저장된 내용을 확인하지 못했어요. 잠시 후 다시 불러와 주세요."); }
+      () => { setPhase("idle"); setReadRequired(true); setError("저장된 내용을 확인하지 못했어요. 잠시 뒤 '저장된 내용 불러오기'를 다시 눌러 주세요."); }
     );
   };
+  // 2026-11-05 HIG 검수: 가져온 값은 읽기 전용 줄(이름 · 값), 바꿀 수 있는 것만 폼. 목록에서 빼기는 맨 아래 빨간 글자 버튼.
   return (
-    <RecordDialog title="대출 기록 수정" description="이전에 저장한 이름·가족 공유·합계 반영 방법을 바꿔요. 새 은행 자동 연결은 연결 관리에서 설정해 주세요."
+    <RecordDialog title="대출 기록 수정" description="이름·공개 범위·합계 반영 방법을 바꿀 수 있어요."
       dirty={JSON.stringify(draft) !== JSON.stringify(loanReviewDraft(current))}
       busy={busy} pending={() => session.current.pending} readRequired={readRequired || changedElsewhere}
       invalidate={invalidate} onClose={onClose}
       footer={<>
-        <Button form={formId} type="submit" className="min-h-11 w-full" disabled={disabled || optionsLoading || optionsError}> {phase === "saving" ? "저장 중…" : "변경 저장"}</Button>
-        <ConfirmAction label="목록에서 제거" title="이 대출을 목록에서 제거할까요?"
-          description="목록·공유·합계에서 제외해요. 이전 원금·만기 기록은 서버에 남아요. 직접 입력한 대출과 은행 계좌는 그대로이며, 연결했던 대출은 합계에 다시 반영될 수 있어요."
-          destructive disabled={disabled} onConfirm={() => void remove()} />
+        {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
+        {changedElsewhere ? <InlineNotice>다른 곳에서 이 기록이 바뀌었어요. 저장된 내용을 불러와 주세요.</InlineNotice> : null}
+        {busy ? <p role="status" className="text-body text-muted-foreground">{phase === "reading" ? "저장된 내용을 확인하고 있어요." : phase === "removing" ? "목록에서 빼는 중이에요." : "변경 내용을 저장하고 있어요."}</p> : null}
+        <Button form={formId} type="submit" className="min-h-11 w-full" disabled={disabled || optionsLoading || optionsError}>{phase === "saving" ? "저장 중…" : "저장하기"}</Button>
       </>}>
-      <section className="bg-muted/40 grid min-w-0 grid-cols-1 gap-1 rounded-lg p-3 text-sm">
-        <p>{current.loanType === "interim" ? "중도금 대출" : "전세 대출"} · 계좌 끝 {current.accountLast4}</p>
-        <p className="break-all font-semibold tabular-nums">남은 원금 {displayManualKrw(current.outstandingPrincipalKrw)}</p>
-        <p>만기일 {current.maturityDate ?? "확인되지 않음"}</p>
-        <p className="text-muted-foreground text-xs">은행 잔액 기준일 미확인</p>
-        <details className="min-w-0 text-xs">
-          <summary className="text-muted-foreground min-h-11 cursor-pointer py-3">출처·확인 시각</summary>
-          <p className="text-muted-foreground pb-2">신한은행 대출계좌조회 화면에서 가져옴</p>
-          <p className="text-muted-foreground pb-2">화면 확인 {displayLoanCapturedAt(current.capturedAt)} (한국 시간)</p>
-        </details>
-      </section>
+      <FieldList>
+        <FieldRow label="종류" value={current.loanType === "interim" ? "중도금 대출" : "전세 대출"} />
+        <FieldRow label="계좌" value={`끝 ${current.accountLast4}`} />
+        <FieldRow label="남은 원금" value={<span className="tabular-nums">{displayManualKrw(current.outstandingPrincipalKrw)}</span>} />
+        <FieldRow label="만기일" value={current.maturityDate ? formatMonthDay(current.maturityDate) : "확인되지 않음"} muted={!current.maturityDate} />
+        <FieldRow label="화면 확인" value={displayLoanCapturedAt(current.capturedAt)}>
+          신한은행 대출계좌조회 화면에서 가져왔어요. 은행의 잔액 기준일은 알 수 없어요.
+        </FieldRow>
+      </FieldList>
+      <InlineNotice>{loanInclusionLabel(current)}</InlineNotice>
       <form id={formId} onSubmit={(event) => void save(event)} className="grid min-w-0 grid-cols-1 gap-4" noValidate>
         <LoanReviewFields draft={draft} onChange={setDraft} options={options} userId={userId} householdId={householdId} disabled={disabled} />
       </form>
-      {optionsLoading ? <p role="status" className="text-muted-foreground text-xs">연결할 수동 대출을 확인하고 있어요.</p> : null}
-      {optionsError ? <div role="alert" className="grid gap-2 text-sm"><p>연결할 수동 대출을 불러오지 못했어요.</p><Button variant="outline" onClick={() => setOptionsEpoch((value) => value + 1)}>다시 불러오기</Button></div> : null}
-      {error ? <p role="alert" className="text-destructive text-sm">{error}</p> : null}
-      {changedElsewhere ? <p role="status" className="text-sm">다른 곳에서 이 기록이 바뀌었어요. 저장된 내용을 불러와 주세요.</p> : null}
+      {optionsLoading ? <p role="status" className="text-caption text-muted-foreground">연결할 대출 목록을 확인하고 있어요.</p> : null}
+      {optionsError ? <ErrorState align="start" message="연결할 대출 목록을 불러오지 못했어요. 불러와야 저장할 수 있어요." onRetry={() => setOptionsEpoch((value) => value + 1)} /> : null}
       {readRequired || changedElsewhere ? <ConfirmAction label="저장된 내용 불러오기" title="저장된 내용으로 다시 열까요?" description="지금 수정한 내용은 사라지고 최신 저장 내용으로 바뀌어요." disabled={busy} onConfirm={() => void reread()} /> : null}
-      {busy ? <p role="status" className="text-muted-foreground text-sm">{phase === "reading" ? "저장된 내용을 확인하고 있어요." : phase === "removing" ? "제거 결과를 확인하고 있어요." : "변경 내용을 저장하고 있어요."}</p> : null}
+      <ConfirmAction appearance="text" label="목록에서 빼기" title="이 대출 기록을 목록에서 뺄까요?"
+        description={`목록·가족 공유·합계에서 빠져요. 가져온 원금·만기 기록은 지워지지 않고 보관돼요.${current.totalMode === "replacement" ? " 이 기록 대신 계산하던 직접 입력 대출은 다시 합계에 들어가요." : ""}`}
+        destructive disabled={disabled} onConfirm={() => void remove()} />
     </RecordDialog>
   );
 }

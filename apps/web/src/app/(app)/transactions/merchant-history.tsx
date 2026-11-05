@@ -4,6 +4,7 @@
  *
  * 같은 곳에서 얼마나 자주·얼마씩 썼는지는 시트를 닫고 검색해야만 알 수 있었다. 최근 5건을
  * 보여 주고, 누르면 그 거래 상세로 바로 넘어간다(목록에 없으면 기존 딥링크 폴백이 단건 조회).
+ * 넘어간 시트 머리에는 '‹ 이전 거래'가 생겨 한 단계 돌아갈 수 있다(page.tsx, HIG 검수 3·4단계).
  * 보조 정보라 로딩·실패·없음에는 아무것도 그리지 않는다.
  * ------------------------------------------------------------------------- */
 import type { TransactionSummary } from "@family/contracts";
@@ -14,7 +15,7 @@ import { Money } from "@/components/widgets";
 import { SectionHeader } from "@/components/widgets/section-header";
 import { api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
-import { formatDate } from "@/lib/format";
+import { formatMonthDayTime } from "@/lib/format";
 import { useHousehold } from "@/lib/household-context";
 import { queryKeys } from "@/lib/queries";
 import {
@@ -76,7 +77,7 @@ export function MerchantHistory({
               className="hover:bg-muted/50 focus-visible:outline-ring flex min-h-12 w-full min-w-0 items-center gap-3 text-left focus-visible:outline-2 disabled:opacity-50 active:bg-muted"
             >
               <span className="text-caption text-muted-foreground min-w-0 flex-1 truncate">
-                {formatDate(transactionOccurredAt(item))}
+                {formatMonthDayTime(transactionOccurredAt(item))}
               </span>
               <span className="text-body shrink-0 tabular-nums">
                 <Money
@@ -89,7 +90,7 @@ export function MerchantHistory({
                 />
               </span>
               <ChevronRight
-                className="text-muted-foreground/60 size-4 shrink-0"
+                className="text-muted-foreground/70 size-4 shrink-0"
                 aria-hidden="true"
               />
             </button>

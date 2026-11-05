@@ -479,6 +479,59 @@ export async function initPushNotifications(
   await PushNotifications.register();
 }
 
+/** 이 휴대폰의 OS 알림 권한. 웹이거나 읽을 수 없으면 'unsupported'. */
+export type PushPermissionState = "granted" | "denied" | "prompt" | "unsupported";
+
+/** 앱이 도는 곳. 설정 앱 경로처럼 기기마다 다른 안내를 고를 때 쓴다. */
+export type NativePlatform = "android" | "ios" | "web";
+
+export function getNativePlatform(): NativePlatform {
+  if (!isNative()) return "web";
+  const platform = Capacitor.getPlatform();
+  return platform === "android" || platform === "ios" ? platform : "web";
+}
+
+/**
+ * 이 휴대폰의 알림 권한을 **읽기만** 한다(요청하지 않는다).
+ *
+ * 서버에 저장된 '푸시 알림'이 켜져 있어도 OS 권한이 없으면 이 휴대폰에는 하나도 오지 않는다
+ * (initPushNotifications가 조용히 멈춘다). 알림 설정 화면이 이 값으로 그 사실을 알린다.
+ * 한 번 거절한 상태('prompt-with-rationale')도 아직 허용이 아니므로 'prompt'로 묶는다.
+ * 읽지 못하면 'unsupported' — 모를 때 "꺼져 있어요"라고 말하지 않는다.
+ * Android 12 이하는 플러그인이 늘 'granted'를 준다(알림 런타임 권한이 없는 OS).
+ */
+export async function getPushPermissionState(): Promise<PushPermissionState> {
+  if (getNativePlatform() === "web") return "unsupported";
+  try {
+    const { PushNotifications } = await import("@capacitor/push-notifications");
+    const { receive } = await PushNotifications.checkPermissions();
+    if (receive === "granted") return "granted";
+    if (receive === "denied") return "denied";
+    if (receive === "prompt" || receive === "prompt-with-rationale") return "prompt";
+    return "unsupported";
+  } catch {
+    return "unsupported";
+  }
+}
+
+/**
+ * 권한이 허용인데 이번 실행에서 아직 푸시 토큰을 받지 못했으면 등록을 다시 건다.
+ *
+ * 권한이 없는 채로 앱을 열면 initPushNotifications가 등록 없이 끝난다. 사용자가 안내대로 설정에서
+ * 알림을 켜고 돌아와도 Android는 앱을 다시 띄우지 않으므로, 앱을 새로 켜기 전까지 서버에 토큰이 없어
+ * 푸시가 오지 않는다. 앞서 initPushNotifications가 불린 적이 있을 때만(콜백이 있을 때만) 하고,
+ * 권한은 요청하지 않는다(허용일 때만 다시 건다). 실패는 삼킨다 — 다음 실행에서 다시 등록한다.
+ */
+export async function retryPushRegistrationIfGranted(): Promise<void> {
+  if (pushPlatform === null || lastPushToken !== null) return;
+  try {
+    if ((await getPushPermissionState()) !== "granted") return;
+    await initPushNotifications(pushCallbacks);
+  } catch {
+    // 등록 실패는 조용히 둔다(initPushNotifications와 같은 정책).
+  }
+}
+
 /** 로컬 알림 액션 타입 등록 여부(세션 1회). */
 let localActionsRegistered = false;
 

@@ -33,6 +33,11 @@ export type PickerMenuProps = {
   /** 목록 아래 덧붙이는 동작 한 줄(예: 새 카테고리 만들기). */
   footer?: { label: string; onSelect: () => void };
   align?: "start" | "end";
+  /**
+   * 메뉴를 열지 않는다. 트리거 버튼의 disabled 속성만으로는 막히지 않는다 — Radix는 자기 Trigger의
+   * disabled만 보고 pointerdown에서 메뉴를 연다(Android 웹뷰는 disabled 버튼에도 pointer 이벤트를 보낸다).
+   */
+  disabled?: boolean;
 };
 
 const ITEM =
@@ -46,10 +51,13 @@ export function PickerMenu({
   onSelect,
   footer,
   align = "start",
+  disabled,
 }: PickerMenuProps) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+      <DropdownMenuTrigger asChild disabled={disabled}>
+        {trigger}
+      </DropdownMenuTrigger>
       <DropdownMenuContent
         align={align}
         aria-label={label}

@@ -117,7 +117,7 @@ export function cardRowChips(
   if (card.visibility === "private") {
     chips.push({ label: "나만 보기", tone: "neutral" });
   } else if (card.visibility === "summary_only") {
-    chips.push({ label: "요약만 공유", tone: "neutral" });
+    chips.push({ label: "금액만 공개", tone: "neutral" });
   }
   return chips;
 }

@@ -46,7 +46,7 @@ interface InlineNoticeProps {
 /**
  * 화면 안에 붙는 한 줄 알림 — 저장 실패, 완료, 참고 안내.
  *
- * 화면마다 `<p role="alert" className="text-destructive text-sm">`를 따로 쓰면서 글자 크기·여백·역할이
+ * 화면마다 빨간 글자 `<p role="alert">`를(옛 글자 크기 sm) 따로 쓰면서 글자 크기·여백·역할이
  * 제각각이었다. 예상 못 한 문제로 흐름을 멈춰야 할 때만 얼럿(AlertDialogContent의 alert 변형)을 쓰고,
  * 나머지는 이 줄로 그 자리에서 알린다.
  */

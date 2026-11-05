@@ -19,6 +19,9 @@
  *   2. 무엇이 자동으로 붙는지 보여준다(규칙 목록 — 이전에는 볼 방법이 0개였다).
  *   3. "과거에도 적용"을 **미리보기와 함께** 제안한다(조용히 하지 않는다).
  *   4. 되돌린다(적용 단위 batch + 행별 이전 값).
+ *
+ * 세 목록(검토할 가맹점·규칙·바꾼 기록)은 못 불러오면 각자 자리에서 원인 한 줄 + '다시 불러오기'
+ * (ErrorState)를 보인다 — 예전에는 빨간 글자만 있거나(검토) 아무것도 안 보였다(바꾼 기록).
  * ------------------------------------------------------------------------- */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2, RotateCcw } from "lucide-react";
@@ -55,6 +58,7 @@ import {
 } from "@/components/ui/select";
 import {
   EmptyState,
+  ErrorState,
   ListLoading,
   ListRow,
   Money,
@@ -65,6 +69,7 @@ import {
 } from "@/components/widgets";
 import { ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
+import { formatMonthDay, formatMonthDayTime } from "@/lib/format";
 import { useHousehold } from "@/lib/household-context";
 import {
   invalidateTransactionScope,
@@ -106,15 +111,6 @@ const previewKey = (householdId: string | null, target: RecategorizeTarget | nul
 /** 서버가 준 한국어 문구(`ApiError.message`)를 그대로 띄운다 — 실패 이유가 거기 있다. */
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
-}
-
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString("ko-KR", {
-    month: "long",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 /** `YYYY-MM` → "8월". 연도는 올해가 아닐 때만 붙인다. */
@@ -420,9 +416,13 @@ export default function CategoryRulesPage() {
           {labelCandidatesQuery.isLoading ? (
             <ListLoading rows={1} label="검토할 가맹점을 불러오는 중이에요." className="px-5 py-4" />
           ) : labelCandidatesQuery.isError ? (
-            <p className="text-caption text-destructive px-5 py-4" role="alert">
-              검토할 가맹점을 불러오지 못했어요.
-            </p>
+            <ErrorState
+              align="start"
+              className="px-5 py-4"
+              message="검토할 가맹점을 불러오지 못했어요"
+              retrying={labelCandidatesQuery.isFetching}
+              onRetry={() => void labelCandidatesQuery.refetch()}
+            />
           ) : activeCandidate === null ? (
             deferredInBatch > 0 ? (
               <div className="flex flex-col items-start gap-3 px-5 py-4">
@@ -484,7 +484,7 @@ export default function CategoryRulesPage() {
                     )
                   }
                 >
-                  나중에
+                  나중에 하기
                 </Button>
                 {/* 이 화면의 주 행동 — 채움 버튼은 이것 하나다. */}
                 <Button
@@ -524,25 +524,15 @@ export default function CategoryRulesPage() {
         {rulesQuery.isPending ? (
           <ListLoading rows={3} label="자동 분류 규칙을 불러오는 중이에요." className="px-5 pb-4" />
         ) : rulesQuery.isError ? (
-          <div role="alert">
-            <EmptyState
-              title="규칙을 불러오지 못했어요"
-              action={
-                <Button
-                  variant="weak"
-                  className="w-full"
-                  disabled={rulesQuery.isFetching}
-                  onClick={() => void rulesQuery.refetch()}
-                >
-                  <RotateCcw /> 다시 시도
-                </Button>
-              }
-            />
-          </div>
+          <ErrorState
+            message="규칙을 불러오지 못했어요"
+            retrying={rulesQuery.isFetching}
+            onRetry={() => void rulesQuery.refetch()}
+          />
         ) : rules.length === 0 ? (
           <EmptyState
             title="아직 규칙이 없어요"
-            description="거래를 열어 카테고리를 바꾼 뒤 ‘앞으로도 이렇게 분류’를 누르면 여기에 생겨요."
+            description="거래를 열어 카테고리를 바꾼 뒤 ‘앞으로도 이렇게 분류하기’를 누르면 여기에 생겨요."
           />
         ) : (
           <ul className="divide-border/60 divide-y px-4">
@@ -601,7 +591,19 @@ export default function CategoryRulesPage() {
       </section>
 
       {/* ---- 바꾼 기록 · 되돌리기 ---- */}
-      {batches.length > 0 ? (
+      {batchesQuery.isError ? (
+        <section className="finance-panel min-w-0 overflow-hidden pt-3 pb-1">
+          <SectionHeader className="px-5" title="바꾼 기록" />
+          {/* 못 불러오면 되돌릴 길이 사라진 것처럼 보인다 — 비워 두지 않고 알린다. */}
+          <ErrorState
+            align="start"
+            className="px-5 pt-1 pb-4"
+            message="바꾼 기록을 불러오지 못했어요"
+            retrying={batchesQuery.isFetching}
+            onRetry={() => void batchesQuery.refetch()}
+          />
+        </section>
+      ) : batches.length > 0 ? (
         <section className="finance-panel min-w-0 overflow-hidden pt-3 pb-1">
           <SectionHeader className="px-5" title="바꾼 기록" />
           <ul className="divide-border/60 divide-y px-4">
@@ -611,7 +613,7 @@ export default function CategoryRulesPage() {
                   className="flex-1"
                   title={`${batch.merchantCanonical} → ${batch.toCategoryName ?? "알 수 없는 카테고리"}`}
                   titleClassName="font-medium"
-                  subtitle={`${formatDateTime(batch.appliedAt)} · ${batch.appliedCount}건`}
+                  subtitle={`${formatMonthDayTime(batch.appliedAt)} · ${batch.appliedCount}건`}
                   valueSub={
                     batch.revertedAt ? (
                       <StatusChip>
@@ -659,7 +661,7 @@ export default function CategoryRulesPage() {
                 {previewQuery.isPending ? (
                   <span>불러오는 중…</span>
                 ) : previewQuery.isError || !preview ? (
-                  <span>미리보기를 불러오지 못했어요.</span>
+                  <span>바꿀 거래를 세지 못했어요. 닫았다가 다시 열어 주세요.</span>
                 ) : preview.count === 0 ? (
                   <span>바꿀 지난 거래가 없어요. 모두 이미 이 분류예요.</span>
                 ) : (
@@ -669,7 +671,7 @@ export default function CategoryRulesPage() {
                       <strong>{preview.count}건</strong>을{" "}
                       <strong>{preview.toCategoryName}</strong> 분류로 바꿔요
                       {preview.oldestAt
-                        ? ` (${new Date(preview.oldestAt).toLocaleDateString("ko-KR")}부터)`
+                        ? ` (${formatMonthDay(preview.oldestAt)}부터)`
                         : ""}
                       .
                     </span>

@@ -87,14 +87,14 @@ function ChoiceCard({
     <button
       type="button"
       onClick={onClick}
-      className="bg-card hover:border-foreground/20 flex w-full items-center gap-4 rounded-xl border p-5 text-left transition-colors active:scale-[0.99]"
+      className="bg-card hover:border-foreground/20 flex w-full items-center gap-4 rounded-card border p-5 text-left transition-colors active:scale-[0.99]"
     >
       <span className="bg-accent text-accent-foreground flex size-12 shrink-0 items-center justify-center rounded-full [&_svg]:size-5">
         {icon}
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="text-[15px] font-semibold">{title}</span>
-        <span className="text-muted-foreground text-[13px]">{description}</span>
+        <span className="text-body font-semibold">{title}</span>
+        <span className="text-muted-foreground text-caption">{description}</span>
       </span>
       <ChevronRight className="text-muted-foreground/50 size-4 shrink-0" />
     </button>
@@ -151,12 +151,12 @@ export function Onboarding() {
         <div className="bg-accent text-accent-foreground flex size-14 items-center justify-center rounded-full">
           <Sparkles className="size-6" />
         </div>
-        <h1 className="text-2xl font-bold tracking-tight">
+        <h1 className="text-title tracking-tight">
           가장 먼저,
           <br />
           가족을 만들어 주세요
         </h1>
-        <p className="text-muted-foreground max-w-sm text-sm">
+        <p className="text-muted-foreground text-body max-w-sm">
           {user?.name ? `${user.name}님, 반가워요. ` : ""}
           가족 단위로 카드 지출과 예산을 함께 살펴볼 수 있어요.
         </p>
@@ -254,7 +254,7 @@ export function Onboarding() {
                   aria-invalid={inviteError != null}
                 />
                 {inviteError ? (
-                  <p className="text-destructive text-sm">{inviteError}</p>
+                  <p className="text-destructive text-caption">{inviteError}</p>
                 ) : null}
               </div>
               <Button

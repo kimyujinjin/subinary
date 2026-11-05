@@ -19,6 +19,12 @@ vi.mock("@/lib/queries", () => ({
   }),
   useUpdateNotificationPreferences: () => ({ mutateAsync: vi.fn() }),
 }));
+// 권한 읽기는 effect에서만 돈다(정적 렌더에서는 늘 '모름'). 문구는 notification-settings.test.ts가 고정한다.
+vi.mock("@/lib/native", () => ({
+  getNativePlatform: () => "web",
+  getPushPermissionState: async () => "unsupported",
+  retryPushRegistrationIfGranted: async () => undefined,
+}));
 
 import NotificationSettingsPage from "./page";
 
@@ -30,6 +36,13 @@ const prefs: NotificationPreferences = {
   notifyOwnCollected: false,
   disabledKinds: ["summary"],
 };
+
+/** id로 입력 칸 태그를 찾는다(속성 순서와 무관하게 검사하려고). */
+function inputTag(html: string, id: string): string {
+  const tag = html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`))?.[0];
+  if (!tag) throw new Error(`input ${id} not rendered`);
+  return tag;
+}
 
 /** id로 스위치 버튼 태그를 찾는다(Radix Switch는 role="switch" 버튼). */
 function switchTag(html: string, id: string): string {
@@ -65,6 +78,9 @@ describe("알림 설정 화면", () => {
     ]) {
       expect(html).toContain(name);
     }
+    // 이름이 비슷한 둘은 무엇을 알리는지 설명으로 가른다(이름은 Android 채널 이름이라 그대로).
+    expect(html).toContain("확인 필요·중복 의심으로 남은 거래 알림");
+    expect(html).toContain("가족끼리 물어본 결제와 그 답");
     expect(switchTag(html, "kind-summary")).toContain('aria-checked="false"');
     expect(switchTag(html, "kind-transaction")).toContain(
       'aria-checked="true"'
@@ -73,8 +89,27 @@ describe("알림 설정 화면", () => {
 
   it("최소 금액은 천 단위 쉼표와 원으로 보인다", () => {
     const html = renderToStaticMarkup(<NotificationSettingsPage />);
-    expect(html).toMatch(/<input[^>]*id="min-amount"[^>]*value="1,234,567"/);
+    expect(inputTag(html, "min-amount")).toContain('value="1,234,567"');
+    expect(inputTag(html, "min-amount")).toContain('inputMode="numeric"');
     expect(html).toContain(">원</span>");
+  });
+
+  it("최소 금액이 비어 있으면 '제한 없음'만 보이고 단위는 숨긴다", () => {
+    state.data = { ...prefs, minAmount: null };
+    const html = renderToStaticMarkup(<NotificationSettingsPage />);
+    expect(inputTag(html, "min-amount")).toContain('placeholder="제한 없음"');
+    expect(html).toContain("[&amp;&gt;span]:hidden [&amp;&gt;input]:pr-4");
+  });
+
+  it("최소 금액이 있으면 단위를 보이고 단위 자리 여백을 되돌리지 않는다", () => {
+    const html = renderToStaticMarkup(<NotificationSettingsPage />);
+    expect(html).not.toContain("[&amp;&gt;span]:hidden");
+    expect(html).not.toContain("[&amp;&gt;input]:pr-4");
+  });
+
+  it("권한을 아직 모르면(웹·정적 렌더) 휴대폰 알림 안내를 띄우지 않는다", () => {
+    const html = renderToStaticMarkup(<NotificationSettingsPage />);
+    expect(html).not.toContain("이 휴대폰은 알림이 꺼져 있어요");
   });
 
   it("푸시를 끄면 내 결제도 알림·종류·무음 시간대가 함께 잠긴다", () => {
@@ -90,7 +125,7 @@ describe("알림 설정 화면", () => {
     state.data = { ...prefs, disabledKinds: ["transaction"] };
     const html = renderToStaticMarkup(<NotificationSettingsPage />);
     expect(switchTag(html, "notify-own")).toContain('disabled=""');
-    expect(html).toMatch(/<input[^>]*id="min-amount"[^>]*disabled=""/);
+    expect(inputTag(html, "min-amount")).toContain('disabled=""');
   });
 
   it("불러오지 못하면 공용 오류 상태로 원인 한 줄과 '다시 불러오기'를 보여 준다", () => {

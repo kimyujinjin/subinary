@@ -8,8 +8,8 @@
  *
  * 시간 경계는 모두 Asia/Seoul이다. 서버 analytics도 달 경계를 KST로 자른다.
  * ------------------------------------------------------------------------- */
-import { formatWon } from "@/lib/format";
-import { manualDateText, manualKrwText } from "@/lib/home-finance-summary";
+import { formatMonthDay, formatWon } from "@/lib/format";
+import { manualKrwText } from "@/lib/home-finance-summary";
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -88,13 +88,8 @@ export function paceText(
 }
 
 export interface WeekWindow extends TimeWindow {
-  /** `10월 27일 – 11월 2일` */
+  /** `10월 27일 – 11월 2일`. 해가 다른 날은 `2026년 12월 28일`(lib/format 날짜 표기). */
   label: string;
-}
-
-function monthDayText(epochMs: number): string {
-  const shifted = new Date(epochMs + KST_OFFSET_MS);
-  return `${shifted.getUTCMonth() + 1}월 ${shifted.getUTCDate()}일`;
 }
 
 /** 지난주 월요일 0시 ~ 이번 주 월요일 0시(KST). 서버가 그 앞 같은 길이(그 전주)를 비교 구간으로 준다. */
@@ -111,7 +106,10 @@ export function lastWeekWindow(now: Date): WeekWindow {
   return {
     from: new Date(from).toISOString(),
     to: new Date(thisMonday).toISOString(),
-    label: `${monthDayText(from)} – ${monthDayText(thisMonday - DAY_MS)}`,
+    label: `${formatMonthDay(new Date(from), now)} – ${formatMonthDay(
+      new Date(thisMonday - DAY_MS),
+      now
+    )}`,
   };
 }
 
@@ -215,13 +213,13 @@ function daysBetween(fromKey: string, toKey: string): number {
   );
 }
 
+/** `오늘`·`내일`·`11월 7일`(해가 바뀌면 `2027년 1월 2일`)·`예정일 지남`. 날짜는 둘 다 KST `YYYY-MM-DD`. */
 export function whenText(dateKey: string, todayKey: string): string {
   const days = daysBetween(todayKey, dateKey);
   if (days < 0) return "예정일 지남";
   if (days === 0) return "오늘";
   if (days === 1) return "내일";
-  const [, month, day] = dateKey.split("-").map(Number);
-  return `${month}월 ${day}일`;
+  return formatMonthDay(dateKey, new Date(`${todayKey}T12:00:00+09:00`));
 }
 
 /**
@@ -302,6 +300,7 @@ export function buildUpcomingRows(input: {
 
   const next = input.housing?.nextPayment ?? null;
   if (next && daysBetween(todayKey, next.dueDate) <= HOUSING_NOTICE_DAYS) {
+    const overdueDays = daysBetween(next.dueDate, todayKey);
     rows.push({
       key: "housing:next",
       date: next.dueDate,
@@ -309,10 +308,12 @@ export function buildUpcomingRows(input: {
       title: `주택 ${HOUSING_PAYMENT_LABEL[next.kind]}${
         next.installment !== null ? ` ${next.installment}회차` : ""
       }`,
-      subtitle: `${next.label} · ${manualDateText(next.dueDate)}`,
+      // 날짜는 왼쪽 칸이 이미 말한다 — 부제에 다시 쓰지 않는다. 지난 일정은 정기 결제처럼 며칠 지났는지만.
+      subtitle:
+        overdueDays > 0 ? `${next.label} · ${overdueDays}일 지났어요` : next.label,
       amountText: manualKrwText(next.remainingAmountKrw),
       href: "/plan?scope=household",
-      overdue: next.dueDate < todayKey,
+      overdue: overdueDays > 0,
     });
   } else if (input.housing?.hasIncompletePayments && !next) {
     rows.push({

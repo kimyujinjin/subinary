@@ -1,7 +1,4 @@
-import {
-  manualFinanceDateSchema,
-  type CardSmsEventSummary,
-} from "@family/contracts";
+import type { CardSmsEventSummary } from "@family/contracts";
 
 import {
   todoSectionHref,
@@ -201,7 +198,7 @@ export interface HomeStatusRow {
 
 /**
  * 환율 대기는 '반영하는 중'이 아니라 멈춘 상태라 따로 말한다. 언제 풀릴지 모르니 어떤
- * 문자인지 볼 수 있게 할 일 화면의 처리 대기 섹션으로 보낸다. 사용자가 고칠 것은 없어
+ * 문자인지 볼 수 있게 할 일 화면의 '반영을 기다리는 문자' 섹션으로 보낸다. 사용자가 고칠 것은 없어
  * 할 일 합계에는 넣지 않는다(할 일 화면도 '다시 등록하지 않아도 돼요'라고 안내한다).
  */
 export function homeFxWaitRow(
@@ -222,10 +219,4 @@ export function homeFxWaitRow(
 export function manualKrwText(value: string | null | undefined): string {
   if (value == null || !/^-?(0|[1-9]\d*)$/.test(value)) return "— 원";
   return `${new Intl.NumberFormat("ko-KR").format(BigInt(value))}원`;
-}
-
-/** Keep a stored calendar date as a calendar date, without a timezone shift. */
-export function manualDateText(value: string | null | undefined): string {
-  if (!value || !manualFinanceDateSchema.safeParse(value).success) return "미입력";
-  return value;
 }

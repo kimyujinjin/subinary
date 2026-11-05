@@ -10,10 +10,15 @@ import { describe, expect, it } from "vitest";
 import { cardSmsIngestRequestSchema } from "@family/contracts";
 
 import {
+  AUTHORIZATION_HEADER,
   COLLECT_PATH,
   buildCollectSetup,
   buildJsonBody,
   buildSetupClipboardText,
+  buildSetupCopySections,
+  collectWizardBackAction,
+  collectWizardCloseNeedsConfirm,
+  defaultDevicePlatform,
 } from "./collect-setup";
 
 const TOKEN = "a".repeat(64);
@@ -185,5 +190,154 @@ describe("baseUrl 조립", () => {
       apiBaseUrl: "https://api.example.com/",
     });
     expect(plan.endpoint).toBe("https://api.example.com/v1/mobile-events/card-sms-token");
+  });
+});
+
+describe("defaultDevicePlatform — 등록 창의 기기 종류 기본값", () => {
+  it("앱에서는 지금 휴대폰의 종류, 웹이면 Android(주 사용 기기)", () => {
+    expect(defaultDevicePlatform("android")).toBe("android");
+    expect(defaultDevicePlatform("ios")).toBe("ios");
+    // 예전 기본값은 iOS라, 기본값 그대로 등록한 Android 사용자가 단축어 안내를 받았다.
+    expect(defaultDevicePlatform("web")).toBe("android");
+  });
+});
+
+describe("buildSetupCopySections — 2단계 칸마다 복사", () => {
+  const rowsOf = (platform: "ios" | "android" | "other") =>
+    buildSetupCopySections(
+      buildCollectSetup({ platform, collectToken: TOKEN, apiBaseUrl: BASE }),
+      { hasKey: true },
+    ).flatMap((section) => section.rows);
+
+  it("Android: 주소·헤더 이름/값·본문을 칸마다 복사할 수 있다(요청 방식은 앱에서 고르는 값)", () => {
+    const plan = buildCollectSetup({
+      platform: "android",
+      collectToken: TOKEN,
+      apiBaseUrl: BASE,
+    });
+    const rows = rowsOf("android");
+    const copyable = rows.filter((row) => row.copyable).map((row) => row.value);
+    expect(copyable).toContain(plan.endpoint);
+    for (const header of plan.headers) {
+      expect(copyable).toContain(header.label);
+      expect(copyable).toContain(header.value);
+    }
+    expect(copyable).toContain(plan.body);
+    expect(rows.find((row) => row.id === "method")).toMatchObject({
+      value: "POST",
+      copyable: false,
+    });
+  });
+
+  it.each(["ios", "android", "other"] as const)(
+    "%s: 열쇠는 Authorization 헤더 값 한 칸에만 있고, 그 칸만 '열쇠를 챙겼다'로 센다",
+    (platform) => {
+      const rows = rowsOf(platform);
+      const withToken = rows.filter((row) => row.value.includes(TOKEN));
+      expect(withToken).toHaveLength(1);
+      expect(withToken[0]).toMatchObject({
+        value: `Bearer ${TOKEN}`,
+        holdsKey: true,
+        name: `${AUTHORIZATION_HEADER} 헤더 값`,
+      });
+      expect(rows.filter((row) => row.holdsKey)).toHaveLength(1);
+    },
+  );
+
+  it.each(["ios", "android", "other"] as const)(
+    "%s: 복사 버튼 이름이 칸마다 다르다(화면 읽기 사용자가 어느 칸인지 알 수 있게)",
+    (platform) => {
+      const names = rowsOf(platform)
+        .filter((row) => row.copyable)
+        .map((row) => row.name);
+      expect(new Set(names).size).toBe(names.length);
+      expect(names.every((name) => name.trim() !== "")).toBe(true);
+    },
+  );
+
+  it.each(["ios", "android", "other"] as const)(
+    "%s: 열쇠가 없으면(설정 계속하기) Authorization 값은 자리표시자라 복사할 수 없다",
+    (platform) => {
+      const placeholder = "(등록할 때 받은 연결 열쇠)";
+      const rows = buildSetupCopySections(
+        buildCollectSetup({ platform, collectToken: placeholder, apiBaseUrl: BASE }),
+        { hasKey: false },
+      ).flatMap((section) => section.rows);
+      const authValue = rows.find((row) => row.holdsKey);
+      // 값은 보여 주되, 그대로 붙여 이미 넣어 둔 진짜 열쇠를 덮어쓰지 않게 복사 버튼은 없다.
+      expect(authValue).toMatchObject({
+        value: `Bearer ${placeholder}`,
+        copyable: false,
+      });
+      expect(authValue?.note).toContain("이미 넣었다면 그대로 두세요");
+      expect(
+        rows.filter((row) => row.copyable && row.value.includes(placeholder)),
+      ).toHaveLength(0);
+      // 나머지 칸(헤더 이름 포함)은 그대로 복사할 수 있다.
+      expect(rows.find((row) => row.name === `${AUTHORIZATION_HEADER} 헤더 이름`)).toMatchObject({
+        copyable: true,
+      });
+      expect(rows.find((row) => row.id === "url")?.copyable).toBe(true);
+    },
+  );
+
+  it("iOS: 단축어에 키마다 적는 본문 키 이름도 복사할 수 있다", () => {
+    const keys = rowsOf("ios")
+      .filter((row) => row.id.startsWith("field-"))
+      .map((row) => row.value);
+    expect(keys).toEqual(["eventId", "sender", "content"]);
+  });
+});
+
+describe("collectWizardCloseNeedsConfirm — 열쇠를 챙기기 전 닫기", () => {
+  it("방금 받은 열쇠를 아직 챙기지 않았으면 닫기 전에 묻는다", () => {
+    expect(
+      collectWizardCloseNeedsConfirm({
+        hasIssuedKey: true,
+        keyKept: false,
+        received: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("복사했거나('옮겨 적었어요' 포함) 첫 문자를 받았거나 열쇠가 없는 이어가기면 묻지 않는다", () => {
+    expect(
+      collectWizardCloseNeedsConfirm({
+        hasIssuedKey: true,
+        keyKept: true,
+        received: false,
+      }),
+    ).toBe(false);
+    expect(
+      collectWizardCloseNeedsConfirm({
+        hasIssuedKey: true,
+        keyKept: false,
+        received: true,
+      }),
+    ).toBe(false);
+    expect(
+      collectWizardCloseNeedsConfirm({
+        hasIssuedKey: false,
+        keyKept: false,
+        received: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("collectWizardBackAction — 안드로이드 뒤로 버튼", () => {
+  it("닫기 확인 시트가 떠 있으면 그 시트만 닫는다(뒤로는 한 겹씩)", () => {
+    expect(
+      collectWizardBackAction({ confirmOpen: true, needsConfirm: true }),
+    ).toBe("dismiss-confirm");
+  });
+
+  it("열쇠를 챙기기 전이면 닫기 버튼처럼 먼저 묻고, 아니면 창을 닫는다(앞 화면으로 가지 않는다)", () => {
+    expect(
+      collectWizardBackAction({ confirmOpen: false, needsConfirm: true }),
+    ).toBe("ask");
+    expect(
+      collectWizardBackAction({ confirmOpen: false, needsConfirm: false }),
+    ).toBe("close");
   });
 });

@@ -5,6 +5,7 @@
  * 다른 탭에 이미 있는 행은 두지 않는다 — 결제 카드는 자산 탭, 정기 지출은 가계부에 있다.
  * 운영자 화면(`/ai-operations`)은 메뉴에서 뺐다: 서버가 운영자 허용 목록으로만 열어 주므로
  * 메뉴에 두면 거의 모든 사람에게 "접근할 수 없어요"로 끝나는 행이 된다(주소로는 그대로 열린다).
+ * 메뉴 이름은 누른 뒤 뜨는 화면 제목과 같다('가족' → 가족 화면).
  */
 import {
   Bell,
@@ -46,6 +47,9 @@ import {
   isBiometryAvailable,
   setBiometricPref,
 } from "@/lib/biometric";
+import { useMerchantLabelCandidates } from "@/lib/queries";
+
+import { ruleReviewLeftText } from "./menu-counts";
 
 interface MoreItem {
   href: string;
@@ -79,7 +83,7 @@ const GROUPS: ReadonlyArray<MoreGroup> = [
     key: "household",
     title: "가족 · 연결",
     items: [
-      { href: "/household", icon: Users, title: "가족 관리" },
+      { href: "/household", icon: Users, title: "가족" },
       { href: "/devices", icon: Smartphone, title: "문자 연동" },
       { href: "/more/connections", icon: Link2, title: "은행·증권 연결" },
     ],
@@ -99,35 +103,36 @@ const GROUPS: ReadonlyArray<MoreGroup> = [
   },
 ];
 
-/** 확인 시트의 '닫기' — 채움 버튼 아래의 글자 버튼(§3.3). */
-const SHEET_CLOSE_CLASS =
-  "h-11 w-full bg-transparent text-muted-foreground hover:bg-muted dark:bg-transparent dark:hover:bg-muted active:bg-muted";
-
 const ROW_CLASS =
   "hover:bg-muted/60 active:bg-muted focus-visible:ring-ring flex min-h-14 w-full items-center gap-4 px-5 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset";
 
-/** 아이콘(배경 없음) · 제목 · 화살표. */
-function MoreRow({ item }: Readonly<{ item: MoreItem }>) {
+/**
+ * 아이콘(배경 없음) · 제목 · (남은 일 수) · 화살표.
+ * ›는 눌리는 줄 표시라 바탕 대비 3:1 이상(/70)으로 둔다 — 목록 줄(`ListRow`)의 ›와 같다.
+ */
+function MoreRow({ item, value }: Readonly<{ item: MoreItem; value?: string | null }>) {
   const Icon = item.icon;
   return (
     <Link href={item.href} className={ROW_CLASS}>
       <Icon className="text-muted-foreground size-6 shrink-0" strokeWidth={1.7} aria-hidden="true" />
       <span className="text-body min-w-0 flex-1">{item.title}</span>
-      <ChevronRight className="text-muted-foreground/40 size-5 shrink-0" aria-hidden="true" />
+      {value ? <span className="text-body text-muted-foreground shrink-0 tabular-nums">{value}</span> : null}
+      <ChevronRight className="text-muted-foreground/70 size-5 shrink-0" aria-hidden="true" />
     </Link>
   );
 }
 
 function MoreSection({
   group,
+  values,
   children,
-}: Readonly<{ group: MoreGroup; children?: ReactNode }>) {
+}: Readonly<{ group: MoreGroup; values?: Readonly<Record<string, string | null>>; children?: ReactNode }>) {
   return (
     // 제목을 섹션 안에 둔다 — 밖에 두면 회색 띠가 제목과 목록 사이를 가른다(§8).
     <section className="finance-panel min-w-0 overflow-hidden pt-4 pb-1">
       <h2 className="text-caption text-muted-foreground px-5 pb-1 font-semibold">{group.title}</h2>
       {group.items.map((item) => (
-        <MoreRow key={item.href} item={item} />
+        <MoreRow key={item.href} item={item} value={values?.[item.href]} />
       ))}
       {children}
     </section>
@@ -232,8 +237,9 @@ function LogoutRow() {
         onClick={() => setConfirming(true)}
         className={ROW_CLASS}
       >
-        <LogOut className="text-muted-foreground size-6 shrink-0" strokeWidth={1.7} aria-hidden="true" />
-        <span className="text-body text-muted-foreground">로그아웃</span>
+        {/* 위험 색 글자 — 회색이면 눌리지 않는 줄처럼 보였다(2026-11 HIG 검수). */}
+        <LogOut className="text-destructive size-6 shrink-0" strokeWidth={1.7} aria-hidden="true" />
+        <span className="text-body text-destructive">로그아웃</span>
       </button>
       <AlertDialog
         open={confirming}
@@ -248,10 +254,12 @@ function LogoutRow() {
               다시 들어오려면 이메일과 비밀번호를 입력해야 해요.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col sm:flex-col">
+          {/* 다른 확인 시트와 같은 모양: 위험 색 확인 버튼 + '닫기'. */}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>닫기</AlertDialogCancel>
             <AlertDialogAction
+              variant="destructive"
               disabled={busy}
-              className="h-11 w-full"
               onClick={(event) => {
                 // 시트가 먼저 닫히면 진행 표시를 보여 줄 자리가 없다.
                 event.preventDefault();
@@ -260,9 +268,6 @@ function LogoutRow() {
             >
               {busy ? "로그아웃하는 중…" : "로그아웃"}
             </AlertDialogAction>
-            <AlertDialogCancel disabled={busy} className={SHEET_CLOSE_CLASS}>
-              닫기
-            </AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -272,6 +277,8 @@ function LogoutRow() {
 
 export default function MorePage() {
   const { user } = useAuth();
+  // 자동 분류 규칙 화면과 같은 훅·같은 캐시 키 — 그 화면에 들어가도 요청이 늘지 않는다.
+  const ruleReviewLeft = ruleReviewLeftText(useMerchantLabelCandidates().data);
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
@@ -284,7 +291,11 @@ export default function MorePage() {
       </header>
 
       {GROUPS.map((group) => (
-        <MoreSection key={group.key} group={group}>
+        <MoreSection
+          key={group.key}
+          group={group}
+          values={group.key === "ledger" ? { "/more/category-rules": ruleReviewLeft } : undefined}
+        >
           {group.key === "display" ? <ThemeSettingRow /> : null}
           {group.key === "account" ? (
             <>

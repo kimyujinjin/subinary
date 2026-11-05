@@ -5,6 +5,7 @@
  * 최근 30일 알림을 최신순으로 모아 본다. 진입하면 전체가 자동 읽음 처리되고(헤더 벨
  * 뱃지 0), 화면은 진입 당시 스냅샷 기준으로 "새 알림"(그때 안읽음, 굵게)/"지난 알림"
  * (읽음, 보통 굵기)을 나눠 보여준다. 항목 탭 → 해당 화면으로 딥링크 이동. 커서 페이지.
+ * 갈 곳이 있는 줄만 ›를 단다 — 폰에서도 눌리는 줄과 아닌 줄이 구분돼야 한다(2026-11-05 HIG 검수).
  *
  * 전체 읽음은 **벨 숫자**를 보고도 건다: 안읽음이 아직 안 불러온 페이지에만 있으면 첫
  * 페이지만 보고는 알 수 없어서, 예전에는 벨 숫자가 알림함을 열어도 남았다. 서버의 전체
@@ -28,6 +29,7 @@ import { useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
   EmptyState,
+  ErrorState,
   ListLoading,
   ListRow,
   PageBackHeader,
@@ -81,6 +83,7 @@ function NotificationRow({
 }: Readonly<{ item: NotificationItem; unread: boolean }>) {
   const meta = kindMeta(item.kind);
   const Icon = meta.icon;
+  const href = item.deepLink || undefined;
   return (
     <ListRow
       icon={<Icon />}
@@ -90,8 +93,9 @@ function NotificationRow({
       titleClassName={unread ? undefined : "font-normal"}
       subtitle={item.body}
       valueSub={formatRelativeTime(item.createdAt)}
-      // 갈 곳이 없는 알림은 눌리는 행처럼 보이지 않게 한다.
-      href={item.deepLink ?? undefined}
+      // 갈 곳이 없는 알림은 눌리는 행처럼 보이지 않게 한다(링크도 ›도 없다).
+      href={href}
+      chevron={href !== undefined}
     />
   );
 }
@@ -139,15 +143,10 @@ export default function NotificationsPage() {
       {query.isLoading ? (
         <ListLoading rows={4} label="알림을 불러오는 중이에요." />
       ) : query.isError ? (
-        <EmptyState
-          icon={<AlertTriangle />}
-          title="알림을 불러오지 못했어요"
-          description="잠시 후 다시 시도해 주세요"
-          action={
-            <Button variant="weak" className="w-full" onClick={() => void query.refetch()}>
-              다시 불러오기
-            </Button>
-          }
+        <ErrorState
+          message="알림을 불러오지 못했어요"
+          retrying={query.isFetching}
+          onRetry={() => void query.refetch()}
         />
       ) : items.length === 0 ? (
         <EmptyState icon={<Bell />} title="최근 30일 동안 온 알림이 없어요" />

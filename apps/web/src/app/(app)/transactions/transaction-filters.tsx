@@ -4,6 +4,7 @@
  *
  * 이 화면에서 사용자가 하는 일은 셋이다 — 달을 넘겨 보기, 가맹점 찾기, 조건으로 좁히기.
  * - 달: `2026년 11월 ▾`(눌러서 고르기, 전체 기간 포함) + `‹ ›`로 한 달씩. 가장 자주 하므로 한 번에 닿게 둔다.
+ *   이 머리는 가계부 세 탭이 함께 쓰도록 공용 `MonthNav`로 올렸다(2026-11-05 HIG 검수 3·4단계).
  * - 검색: 늘 보이는 검색칸(`children`).
  * - 조건: 가로로 넘기는 칩 한 줄. 칩을 누르면 그 자리 아래로 드롭다운이 펼쳐지고, 고른 값이 칩에 바로 보인다.
  *   칩 순서는 쓰는 빈도 — 확인할 거래(할 일) · 카테고리 · 구성원(가족 앱) · 카드 · 취소·환불.
@@ -11,14 +12,15 @@
  * 예전에는 '필터' 버튼 → 라벨 붙은 드롭다운 5개를 쌓은 패널 → '필터 닫기' 순서였고, 적용된 조건은
  * 패널 밖 칩 줄에 한 번 더 보여 같은 정보가 두 군데 있었다. 유형·상태는 '취소·환불' 하나로 합쳤다
  * (`filter-summary.ts`). '초기화'는 기간과 검색어를 남기고 조건만 지운다.
+ * 이름은 앱 전체 규칙을 따른다 — 링크로 켜지는 조건 '합계 제외 거래', 취소 선택지 '취소된 결제·부분 취소된 결제·환불 기록'.
  * 값 고르기는 시트가 아니라 드롭다운이다(`components/ui/sheet-layout.ts` 표).
  */
-import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { Check } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { Button } from "@/components/ui/button";
 import { PickerMenu } from "@/components/ui/picker-menu";
 import { FilterChip, FilterClearChip } from "@/components/widgets/filter-chip";
+import { MonthNav } from "@/components/widgets/month-nav";
 import {
   CANCELLATION_FILTER_OPTIONS,
   TRANSACTION_FILTER_LABELS,
@@ -67,69 +69,20 @@ export function TransactionFilters({
   onToggleReview: () => void;
   children?: ReactNode;
 }) {
-  // 한 달씩 이동은 고를 수 있는 달 안에서만. 전체 기간이면 화살표를 두지 않는다.
-  const months = [
-    ...new Set(monthOptions.map((option) => option.value)),
-  ].sort();
-  const index = month ? months.indexOf(month) : -1;
-  const prev = index > 0 ? months[index - 1] : null;
-  const next =
-    index >= 0 && index < months.length - 1 ? months[index + 1] : null;
-  const monthLabel = month
-    ? monthOptions.find((option) => option.value === month)?.label ?? month
-    : "전체 기간";
+  // 달 이름은 MonthNav가 formatMonth로 직접 만든다(page.tsx가 주는 label도 같은 formatMonth다).
+  // 한 달씩 이동·정렬·이번 달/보고 있는 달 보충·전체 기간일 때 화살표 숨김도 MonthNav가 맡는다.
+  const months = monthOptions.map((option) => option.value);
 
   const cancellationLabel = cancellationFilterLabel(values, choices);
 
   return (
     <section className="flex min-w-0 flex-col gap-3" aria-label="거래 필터">
-      <div className="flex min-w-0 items-center justify-between gap-2">
-        <PickerMenu
-          label="기간"
-          options={[{ value: ALL, label: "전체 기간" }, ...monthOptions]}
-          value={month || ALL}
-          onSelect={(value) => onMonthChange(value === ALL ? "" : value)}
-          trigger={
-            <button
-              type="button"
-              aria-label={`기간: ${monthLabel}`}
-              className="text-heading flex min-h-11 min-w-0 items-center gap-1 font-bold tabular-nums"
-            >
-              <span className="truncate">{monthLabel}</span>
-              <ChevronDown
-                aria-hidden="true"
-                className="text-muted-foreground size-5 shrink-0"
-              />
-            </button>
-          }
-        />
-        {month ? (
-          <div className="flex shrink-0 items-center">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-11"
-              disabled={prev == null}
-              aria-label="이전 달"
-              onClick={() => prev && onMonthChange(prev)}
-            >
-              <ChevronLeft className="size-5" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-11"
-              disabled={next == null}
-              aria-label="다음 달"
-              onClick={() => next && onMonthChange(next)}
-            >
-              <ChevronRight className="size-5" />
-            </Button>
-          </div>
-        ) : null}
-      </div>
+      <MonthNav
+        month={month}
+        months={months}
+        onChange={onMonthChange}
+        allowAll
+      />
 
       {children}
 
@@ -145,7 +98,7 @@ export function TransactionFilters({
         >
           {values.excludedOnly ? (
             <FilterClearChip
-              label="합계에서 뺀 거래"
+              label="합계 제외 거래"
               onClear={() => onClear("excludedOnly")}
             />
           ) : null}
@@ -155,11 +108,18 @@ export function TransactionFilters({
               onClear={() => onClear("sharedOnly")}
             />
           ) : null}
+          {/* 켜고 끄는 칩은 켜졌을 때 체크를 붙인다 — 색만 바뀌면 색을 구분하기 어려운 사람에게 상태가 안 보인다. */}
           <FilterChip
             active={values.reviewOnly}
             aria-pressed={values.reviewOnly}
             onClick={onToggleReview}
           >
+            {values.reviewOnly ? (
+              <Check
+                aria-hidden="true"
+                className="mr-1 inline-block size-3.5 align-middle"
+              />
+            ) : null}
             확인할 거래
           </FilterChip>
           {PICKER_CHIPS.map((key) => {
@@ -228,9 +188,10 @@ export function TransactionFilters({
           </button>
         ) : null}
       </div>
+      {/* 서버의 review 필터는 거래만 센다. 아직 거래가 되지 않은 문자(읽지 못함·환율 대기)는 할 일 화면에 있다. */}
       {values.reviewOnly ? (
         <p className="text-caption text-muted-foreground">
-          문자·환율 처리 대기는 제외해요.
+          아직 거래로 반영되지 않은 문자는 여기 없고 할 일에 있어요.
         </p>
       ) : null}
     </section>

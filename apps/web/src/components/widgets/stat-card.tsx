@@ -30,14 +30,14 @@ const TREND_CLASS: Record<TrendDirection, string> = {
 export function StatCard({ label, value, sub, trend }: StatCardProps) {
   return (
     <Card className="gap-2 p-5">
-      <span className="text-muted-foreground text-sm">{label}</span>
-      <span className="text-2xl font-semibold tracking-tight tabular-nums">
+      <span className="text-muted-foreground text-caption">{label}</span>
+      <span className="text-title tracking-tight tabular-nums">
         {value}
       </span>
       {trend ? (
         <span
           className={cn(
-            "flex items-center gap-1 text-sm font-medium",
+            "text-caption flex items-center gap-1 font-medium",
             TREND_CLASS[trend.direction],
           )}
         >
@@ -46,7 +46,7 @@ export function StatCard({ label, value, sub, trend }: StatCardProps) {
         </span>
       ) : null}
       {sub ? (
-        <span className="text-muted-foreground text-xs">{sub}</span>
+        <span className="text-muted-foreground text-micro">{sub}</span>
       ) : null}
     </Card>
   );

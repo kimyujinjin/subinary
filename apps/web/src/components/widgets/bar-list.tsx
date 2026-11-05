@@ -29,11 +29,11 @@ interface BarListProps {
 export function BarList({
   items,
   formatValue,
-  emptyLabel = "데이터가 없습니다",
+  emptyLabel = "아직 기록이 없어요",
 }: BarListProps) {
   if (items.length === 0) {
     return (
-      <p className="text-muted-foreground py-6 text-center text-sm">
+      <p className="text-body text-muted-foreground py-6 text-center">
         {emptyLabel}
       </p>
     );
@@ -44,7 +44,7 @@ export function BarList({
         const width = Math.min(100, Math.max(0, item.ratio * 100));
         const body = (
           <>
-            <div className="flex items-baseline justify-between gap-2 text-sm">
+            <div className="text-body flex items-baseline justify-between gap-2">
               <span className="truncate">{item.label}</span>
               <span className="flex shrink-0 items-center gap-1">
                 <span className="tabular-nums font-medium">
@@ -52,7 +52,7 @@ export function BarList({
                 </span>
                 {item.href ? (
                   <ChevronRight
-                    className="text-muted-foreground/50 size-4 self-center"
+                    className="text-muted-foreground/70 size-4 self-center"
                     aria-hidden="true"
                   />
                 ) : null}
@@ -65,7 +65,7 @@ export function BarList({
               />
             </div>
             {item.meta ? (
-              <span className="text-muted-foreground text-xs">{item.meta}</span>
+              <span className="text-caption text-muted-foreground">{item.meta}</span>
             ) : null}
           </>
         );
@@ -76,7 +76,7 @@ export function BarList({
               // (세 줄 구성이라 세로 크기는 44px을 넘는다).
               <Link
                 href={item.href}
-                className="hover:bg-muted/70 -mx-2 flex flex-col gap-1.5 rounded-lg px-2 py-2 transition-colors active:scale-[0.99]"
+                className="hover:bg-muted/70 active:bg-muted -mx-2 flex flex-col gap-1.5 rounded-control px-2 py-2 transition-colors"
               >
                 {body}
               </Link>

@@ -1,10 +1,14 @@
 "use client";
 /* ---------------------------------------------------------------------------
- * Family Memory AI — web · 월간 인사이트 카드 (AI)
+ * Family Memory AI — web · '이 달의 특징' 카드 (분석 탭)
  *
  * GET /v1/ai/monthly-insights 로 전월 대비 추세·이상 지출·예산 소진 예측을 해요체
  * 문구로 보여준다. 사실은 전부 서버가 계산하고 LLM은 문구만 다듬는다(키 없으면 서버
- * 문구 그대로). 인사이트가 없으면 렌더 안 함.
+ * 문구 그대로).
+ *
+ * 화면 이름은 여는 버튼과 같은 '이 달의 특징' 하나다 — 예전에는 '이 달의 특징 보기'를 누르면
+ * 'AI 인사이트'가 열려 같은 기능이 두 이름이었다(2026-11-05 HIG 검수). 로딩은 스켈레톤, 실패는
+ * 원인과 '다시 불러오기', 찾은 것이 없으면 그렇다고 말한다(사용자가 눌러 연 카드라 숨기지 않는다).
  *
  * **화면을 여는 것만으로 조회하지 않는다.** 분석 화면은 "화면을 열 때 별도 모델
  * 호출을 만들지 않는다"는 결정을 갖고 있고, 그 결정 때문에 이 카드는 한동안 아무
@@ -14,14 +18,17 @@
  * ------------------------------------------------------------------------- */
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Sparkles, TrendingUp, Wallet } from "lucide-react";
+import type { ReactNode } from "react";
 
 import type { MonthlyInsight, MonthlyInsightKind } from "@family/contracts";
 
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ErrorState } from "@/components/widgets/error-state";
+import { ListLoading } from "@/components/widgets/list-loading";
 import { api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
-import { formatMonth } from "@/lib/format";
 import { useHousehold } from "@/lib/household-context";
+import { cn } from "@/lib/utils";
 
 /** insight 종류별 아이콘/색조. */
 const KIND_STYLE: Record<
@@ -55,81 +62,63 @@ export function MonthlyInsightsCard({ month }: { month?: string }) {
 
   const insights: MonthlyInsight[] = query.data?.insights ?? [];
 
-  const title = month ? `${formatMonth(month)} AI 인사이트` : "AI 인사이트";
-
   // 사용자가 직접 눌러서 연 카드다 — 로딩과 "찾은 것 없음"을 숨기면 아무 일도
   // 일어나지 않은 것처럼 보인다. 둘과 오류는 각각 다른 상태로 구분해 보여 준다.
+  let body: ReactNode;
   if (query.isLoading) {
-    return (
-      <Card>
-        <CardContent className="flex items-center gap-2">
-          <Sparkles
-            className="text-muted-foreground size-4"
-            aria-hidden="true"
-          />
-          <span role="status" className="text-muted-foreground text-sm">
-            {title}를 확인하고 있어요
-          </span>
-        </CardContent>
-      </Card>
+    body = <ListLoading rows={1} label="이 달의 특징을 찾고 있어요." />;
+  } else if (query.isError) {
+    body = (
+      <ErrorState
+        message="이 달의 특징을 불러오지 못했어요"
+        onRetry={() => void query.refetch()}
+        retrying={query.isFetching}
+        className="py-6"
+      />
     );
-  }
-
-  if (!query.isError && insights.length === 0) {
-    return (
-      <Card>
-        <CardContent className="flex items-center gap-2">
-          <Sparkles
-            className="text-muted-foreground size-4"
-            aria-hidden="true"
-          />
-          <span role="status" className="text-muted-foreground text-sm">
-            이 달에는 알려드릴 만한 특징을 찾지 못했어요
-          </span>
-        </CardContent>
-      </Card>
+  } else if (insights.length === 0) {
+    body = (
+      <p role="status" className="text-body text-muted-foreground">
+        이 달에는 눈에 띄는 특징이 없어요
+      </p>
     );
-  }
-
-  if (query.isError) {
-    return (
-      <Card>
-        <CardContent className="flex items-center gap-2">
-          <Sparkles className="text-muted-foreground size-4" />
-          <span className="text-muted-foreground text-sm">
-            인사이트를 불러오지 못했어요
-          </span>
-        </CardContent>
-      </Card>
+  } else {
+    body = (
+      <ul className="flex flex-col gap-3">
+        {insights.map((insight, i) => {
+          const style = KIND_STYLE[insight.kind];
+          const Icon = style.icon;
+          return (
+            <li key={i} className="flex items-start gap-3">
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-full",
+                  style.className
+                )}
+              >
+                <Icon className="size-4" />
+              </span>
+              <span className="text-body pt-1">{insight.message}</span>
+            </li>
+          );
+        })}
+      </ul>
     );
   }
 
   return (
     <Card>
-      <CardContent className="flex flex-col gap-3">
-        <div className="flex items-center gap-2">
-          <Sparkles className="text-accent-foreground size-4" />
-          <span className="text-[15px] font-semibold">{title}</span>
-        </div>
-        <ul className="flex flex-col gap-2.5">
-          {insights.map((insight, i) => {
-            const style = KIND_STYLE[insight.kind];
-            const Icon = style.icon;
-            return (
-              <li key={i} className="flex items-start gap-3">
-                <span
-                  className={`flex size-8 shrink-0 items-center justify-center rounded-full ${style.className}`}
-                >
-                  <Icon className="size-4" />
-                </span>
-                <span className="pt-1 text-sm leading-snug">
-                  {insight.message}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      </CardContent>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Sparkles
+            aria-hidden="true"
+            className="text-accent-foreground size-4 shrink-0"
+          />
+          이 달의 특징
+        </CardTitle>
+      </CardHeader>
+      <CardContent>{body}</CardContent>
     </Card>
   );
 }

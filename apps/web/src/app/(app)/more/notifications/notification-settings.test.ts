@@ -4,6 +4,9 @@ import type { NotificationPreferences } from "@family/contracts";
 import {
   draftFromServer,
   groupDigits,
+  pushBlockedOnThisPhone,
+  pushPermissionNotice,
+  pushSwitchDescription,
   quietError,
   SaveQueue,
   toUpdateRequest,
@@ -176,5 +179,39 @@ describe("SaveQueue — 바꾸면 바로 저장", () => {
     queue.schedule({ value: 9 }, 600);
     queue.flush();
     expect(calls).toEqual([9]);
+  });
+});
+
+describe("이 휴대폰의 알림 권한 안내", () => {
+  it("거부·아직 허용 전이면 맨 위에 꺼져 있다는 사실과 켜는 곳을 알린다", () => {
+    for (const state of ["denied", "prompt"] as const) {
+      expect(pushBlockedOnThisPhone(state)).toBe(true);
+      expect(pushPermissionNotice(state, "android")).toEqual({
+        title: "이 휴대폰은 알림이 꺼져 있어요",
+        howTo: "휴대폰 설정 › 애플리케이션 › 모아 › 알림에서 켜 주세요",
+      });
+    }
+    expect(pushPermissionNotice("denied", "ios")?.howTo).toBe(
+      "iPhone 설정 › 앱 › 모아 › 알림에서 켜 주세요"
+    );
+  });
+
+  it("허용이거나 모르면(웹·읽기 실패) 안내하지 않는다 — 모를 때 꺼졌다고 말하지 않는다", () => {
+    for (const state of ["granted", "unsupported"] as const) {
+      expect(pushBlockedOnThisPhone(state)).toBe(false);
+      expect(pushPermissionNotice(state, "android")).toBeNull();
+    }
+  });
+
+  it("막혀 있으면 푸시 스위치 설명이 실제 범위(내 다른 기기)를 말한다", () => {
+    expect(pushSwitchDescription("denied")).toBe(
+      "지금은 내 다른 기기에만 적용돼요. 알림함에는 그대로 남아요"
+    );
+    expect(pushSwitchDescription("granted")).toBe(
+      "끄면 내 모든 기기로 푸시가 가지 않고, 알림함에는 그대로 남아요"
+    );
+    expect(pushSwitchDescription("unsupported")).toBe(
+      pushSwitchDescription("granted")
+    );
   });
 });

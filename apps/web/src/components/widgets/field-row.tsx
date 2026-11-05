@@ -102,7 +102,7 @@ export function FieldRow({
   return (
     <div className="flex min-w-0 flex-col">
       {menu ? (
-        <PickerMenu {...menu} align="end" trigger={button} />
+        <PickerMenu {...menu} align="end" disabled={disabled} trigger={button} />
       ) : onClick ? (
         button
       ) : (

@@ -32,7 +32,7 @@ export default function RootPage() {
   return (
     <main className="flex min-h-dvh items-center justify-center">
       <div
-        className="text-muted-foreground flex items-center gap-2 text-sm"
+        className="text-muted-foreground text-body flex items-center gap-2"
         role="status"
         aria-live="polite"
       >

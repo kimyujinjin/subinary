@@ -1,5 +1,7 @@
 import { MutationObserver, onlineManager, QueryClient } from "@tanstack/react-query";
 import type { CardSummary } from "@family/contracts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { acceptsLast4Insertion, assertCardCorrectionReady, beginCardCorrectionRead, canCorrectCardLast4, CardCorrectionPendingError, CardCorrectionReadRequiredError, cardCorrectionIsPending, cardCorrectionRequiresRead, cardLast4, cardLast4MutationOptions, correctionError, correctionRequest, createCardCorrectionReadGate, hasUnknownCardLast4, markCardCorrectionUncertain, subscribeCardCorrectionState, writeCorrectedCard } from "./card-last4-correction";
 import { createTransactionEditSession } from "./transaction-edit";
@@ -20,8 +22,16 @@ describe("card last4 correction boundary", () => {
   it.each([[true, false], [false, true], [true, true]])("does not claim an uncertain remote request was unsaved when closing (%s/%s)", (globalRead, localRead) => {
     const message = cardLast4DiscardDescription(globalRead, localRead);
     expect(message).toContain("입력한 내용은 닫으면 사라져요");
-    expect(message).toContain("정정 요청 처리 여부는 현재 카드 정보를 다시 확인");
+    expect(message).toContain("정정이 반영됐는지는 다시 열어 '카드 정보 다시 불러오기'로 확인해 주세요");
     expect(message).not.toContain("저장되지 않아요");
+  });
+  it("names the discard confirm buttons like the other discard confirms: '계속 입력하기' stays, '버리기' discards", () => {
+    // 확인 시트는 상태로 열려 node에서 그릴 수 없다 — 소스를 직접 확인한다.
+    const source = readFileSync(join(process.cwd(), "src/components/card-last4-correction-dialog.tsx"), "utf8");
+    expect(source).toContain("<AlertDialogCancel>계속 입력하기</AlertDialogCancel>");
+    expect(source).toMatch(/<AlertDialogAction variant="destructive"[^\n]*?>버리기<\/AlertDialogAction>/);
+    expect(source).not.toContain("버리고 닫기");
+    expect(source).not.toMatch(/<AlertDialogCancel>\s*닫기\s*</);
   });
   it("retains the ordinary unsent-draft cancellation meaning", () => {
     expect(cardLast4DiscardDescription(false, false)).toBe("입력한 뒤 4자리는 저장되지 않아요.");

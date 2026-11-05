@@ -2,10 +2,12 @@
 /* ---------------------------------------------------------------------------
  * Family Memory AI — web · 할 일 (/todo)  [C-8]
  *
- * 매일 생기는 **처리 작업** 3종을 한 화면에 모은다:
+ * 매일 생기는 **처리 작업**을 한 화면에 모은다(섹션 id = `TODO_SECTION_IDS`):
  *  1) 결제 실패(미해결) — `declined`는 거래로 승격되지 않아 어떤 집계에도 안 잡힌다
- *  2) 확인이 필요한 거래 — 확인 필요 · 중복 의심
- *  3) 읽지 못한 문자 — 파싱 실패 · LLM 격리
+ *  2) 가족이 물어본 결제
+ *  3) 확인할 거래 — 확인 필요 · 중복 의심
+ *  4) 확인할 문자 — 파싱 실패 · LLM 격리 묶음과 그 밖에 반영 전 확인이 필요한 문자를 한 섹션으로
+ *  5) 반영을 기다리는 문자 — 할 일이 아니라 상태(합계에 넣지 않는다)
  *
  * **왜 이 화면이 따로 필요한가**: 예전 홈은 '확인이 필요한 문자'를 최근 3일만 보여줬다.
  * 홈을 깔끔하게 유지하려는 결정이었지만, 그 결과 처리되지 않은 문자가 3일 뒤 조용히
@@ -17,7 +19,7 @@
  *
  * **진입점**: 가계부 섹션 내비의 '할 일'(`components/ledger-nav.tsx`), 홈 소비 카드의
  * 할 일 줄(`/todo?section=…` — 그 섹션으로 스크롤한다). 홈에서 처리 대기는 상태
- * 문구일 뿐이고, 환율이 없어 멈춘 문자만 처리 대기 섹션으로 가는 줄이 있다.
+ * 문구일 뿐이고, 환율이 없어 멈춘 문자만 '반영을 기다리는 문자' 섹션으로 가는 줄이 있다.
  * 하단 탭이 5개에서 3개로 줄며 전용 탭은 사라졌고, 숫자 배지는 섹션 내비로 옮겼다.
  * 배지는 이 화면과 같은 `useTodoCounts().total`을 쓴다 — 배지와 목록이 다른 수를 세면
  * 안 된다.
@@ -26,10 +28,13 @@
  * 문자·거래에 "누가 언제 처리했는지"를 남기는 테이블이 없다(결제 실패만 해결/확인
  * 여부를 갖고 있어 `/declines`가 그 역할을 한다). 없는 이력을 지어내지 않는다.
  * ------------------------------------------------------------------------- */
+import { useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronRight,
   CircleAlert,
+  Clock,
   MailWarning,
   MessageCircleQuestionMark,
 } from "lucide-react";
@@ -37,16 +42,31 @@ import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import type {
-  CardSmsEventSummary,
+  CardSmsReviewPolicy,
   TransactionSummary,
 } from "@family/contracts";
 
 import { LedgerHeader } from "@/components/ledger-header";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import {
+  EmptyState,
+  ErrorState,
+  InlineNotice,
+  ListLoading,
   ListRow,
   Money,
   ReviewInboxDialog,
+  SectionHeader,
   StatusBadge,
   StatusChip,
   declineGroupKey,
@@ -60,16 +80,19 @@ import {
   useDisableSmsReviewPolicy,
 } from "@/lib/queries";
 import { useReviewRequests } from "@/lib/review-requests";
-import { Button } from "@/components/ui/button";
 import { transactionDetailHref } from "@/lib/deep-link";
 import {
-  formatDate,
-  formatMoney,
+  formatMonthDay,
+  formatMonthDayTime,
   formatRelativeTime,
-  formatSender,
   formatWon,
 } from "@/lib/format";
-import { postingMessage } from "@/lib/sms-posting";
+import { todoSmsTaskText } from "@/lib/sms-posting";
+import {
+  smsGroupTaskText,
+  smsSourceLabel,
+  smsWaitTitle,
+} from "@/lib/sms-review-copy";
 import { isTodoSectionId } from "@/components/widgets/todo-counts";
 
 export default function TodoPage() {
@@ -83,6 +106,10 @@ export default function TodoPage() {
   const smsGroups = useCardSmsReviewGroups();
   const cardQuery = useCardList();
   const stopPolicy = useDisableSmsReviewPolicy();
+  // 자동 정리 중지는 액션 시트로 한 번 더 묻는다 — 이 화면에는 다시 켜는 버튼이 없다.
+  const [stopTarget, setStopTarget] = useState<CardSmsReviewPolicy | null>(null);
+  const queryClient = useQueryClient();
+  const [retrying, setRetrying] = useState(false);
   const scrolledToSection = useRef(false);
   const policies = smsGroups.data?.policies ?? [];
   const groups = smsGroups.data?.items ?? [];
@@ -108,7 +135,7 @@ export default function TodoPage() {
     todo.unpostedLoading;
   // 홈 줄로 `/todo?section=…`에 오면 그 섹션으로 스크롤한다. 화면 전체를 다 읽은 뒤에만
   // 한다 — 위쪽 스켈레톤이 남아 있을 때 스크롤하면 스켈레톤이 빠지면서 목표 섹션이 위로
-  // 밀려 올라간다. 처리 대기(문자함 쿼리)도 기다린다 — 끝나면 '확인이 필요한 문자'가 줄어
+  // 밀려 올라간다. 처리 대기(문자함 쿼리)도 기다린다 — 끝나면 '확인할 문자'가 줄어
   // 아래 섹션이 움직인다. 오류도 isLoading을 false로 만드니 영영 막히지는 않는다.
   const settled = !loading && !todo.processingLoading;
   useEffect(() => {
@@ -131,6 +158,25 @@ export default function TodoPage() {
     todo.reviewsError ||
     smsGroups.isError ||
     todo.unpostedError;
+
+  // 확인할 문자 = 본인 문자 묶음(같은 모양끼리) + 그 밖에 반영 전에 확인이 필요한 문자. 둘은 같은 확인
+  // 창을 열어 사용자에게는 차이가 없어 한 섹션으로 합쳤다(2026-11-05 HIG 검수). 묶음 대표와 같은 문자는
+  // 한 번만 보인다.
+  const representativeIds = new Set(
+    groups.map((group) => group.representativeEventId)
+  );
+  const smsRows = todo.unpostedNeedsReview.filter(
+    (event) => !representativeIds.has(event.id)
+  );
+  const smsLoading = smsGroups.isLoading || todo.unpostedLoading;
+  const smsError = smsGroups.isError || todo.unpostedError;
+  // 묶음에는 카드사 필드가 없다 — 대표 문자가 문자함 목록에 있으면 거기서 읽은 카드사를 쓴다.
+  const issuerById = new Map<string, string | null>();
+  for (const event of [...todo.sms, ...todo.unposted]) {
+    issuerById.set(event.id, event.issuer);
+  }
+  const waitingRows = [...todo.processing, ...todo.unpostedUnknown];
+
   // 빈 상태는 **다 읽어낸 뒤에만** 보여준다. 못 읽은 것을 "할 일 없음"으로 쓰면
   // 사용자는 처리할 게 없다고 믿는다.
   const showEmpty =
@@ -140,27 +186,39 @@ export default function TodoPage() {
       todo.declines.length +
       todo.reviews.length +
       groups.length +
-      todo.unpostedNeedsReview.length ===
+      smsRows.length ===
       0;
 
+  // '다시 불러오기'는 실패한 쿼리를 한꺼번에 다시 읽는다 — useTodoCounts가 쿼리별 refetch를
+  // 내주지 않고, 실패가 겹쳤다면 사용자는 어차피 전부 다시 읽기를 바란다.
+  const retryFailed = () => {
+    if (retrying) return;
+    setRetrying(true);
+    void queryClient
+      .refetchQueries({
+        type: "active",
+        predicate: (query) => query.state.status === "error",
+      })
+      .finally(() => setRetrying(false));
+  };
+  const cardAlias = (policy: CardSmsReviewPolicy) =>
+    cardQuery.data?.find((card) => card.id === policy.approvedCardId)?.alias ??
+    "고른 카드";
+
   return (
-    <div className="mx-auto w-full max-w-2xl space-y-5">
+    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-4">
       {/* `nav-tabs.ts`가 이 경로를 가계부 탭으로 판정하므로 같은 섹션 내비를 둔다. */}
       <LedgerHeader active="todo" />
 
-      {loading ? (
-        <div className="space-y-2">
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-20 w-full rounded-2xl" />
-          ))}
-        </div>
-      ) : null}
+      {loading ? <ListLoading rows={3} label="할 일을 불러오는 중이에요." /> : null}
 
       {showEmpty ? (
-        <div className="finance-panel flex items-center gap-3 p-5">
-          <CheckCircle2 className="text-success-strong size-6 shrink-0" aria-hidden="true" />
-          <p className="text-body font-medium">확인할 내역이 없어요</p>
-        </div>
+        <EmptyState
+          icon={<CheckCircle2 />}
+          iconClassName="bg-success/15 text-success-strong"
+          title="지금은 할 일이 없어요"
+          description="결제 실패나 확인할 거래·문자가 생기면 여기에 모여요."
+        />
       ) : null}
 
       {/* 1) 결제 실패 — 가장 위에 둔다. 셋 중 유일하게 **돈이 나가지 않은** 사고라
@@ -175,12 +233,11 @@ export default function TodoPage() {
           todo.declines.length,
           false
         )}
-        error={todo.declinesError}
-        errorText="실패한 결제를 불러오지 못했어요"
+        error={todo.declinesError ? "실패한 결제를 불러오지 못했어요" : null}
+        onRetry={retryFailed}
+        retrying={retrying}
         footer={
-          <FooterLink href="/declines">
-            해결됐거나 확인한 실패도 보기
-          </FooterLink>
+          <FooterLink href="/declines">해결됐거나 확인한 결제도 보기</FooterLink>
         }
       >
         {todo.declines.map((d) => {
@@ -196,12 +253,8 @@ export default function TodoPage() {
               title={d.merchant ?? "확인 안 된 가맹점"}
               subtitle={`${
                 d.amount === null ? "금액 미확인" : formatWon(d.amount)
-              } · ${d.attempts}번 거절${hint ? ` · ${hint}` : ""}`}
-              value={
-                <span className="text-destructive text-[13px] font-medium">
-                  {formatRelativeTime(d.lastAttemptAt)}
-                </span>
-              }
+              } · ${d.attempts}번 실패${hint ? ` · ${hint}` : ""}`}
+              value={<TimeText iso={d.lastAttemptAt} />}
               chevron
             />
           );
@@ -215,8 +268,9 @@ export default function TodoPage() {
         show={requests.isError || received.length > 0}
         title="가족이 물어본 결제"
         countText={pendingCountText(requests.isLoading, requests.isError, received.length, false)}
-        error={requests.isError}
-        errorText="물어본 결제를 불러오지 못했어요"
+        error={requests.isError ? "물어본 결제를 불러오지 못했어요" : null}
+        onRetry={retryFailed}
+        retrying={retrying}
       >
         {received.map((item) => (
           <ListRow
@@ -225,30 +279,32 @@ export default function TodoPage() {
             icon={<MessageCircleQuestionMark />}
             iconClassName="bg-accent text-accent-foreground"
             title={item.merchant ?? "가맹점 미확인"}
-            subtitle={`${item.requesterName}님이 물어봤어요 · ${formatDate(item.occurredAt, { dateOnly: true })}`}
+            subtitle={`${item.requesterName}님이 물어봤어요 · ${formatMonthDay(item.occurredAt)}`}
             value={<Money amount={item.amount} currency={item.currency} />}
             chevron
           />
         ))}
       </Section>
 
-      {/* 2) 확인이 필요한 거래 — 탭하면 그 건의 상세가 바로 열린다(목록으로 보내면
-          사용자가 방금 누른 건을 다시 찾아야 한다). */}
+      {/* 2) 확인할 거래 — 탭하면 그 건의 상세가 바로 열린다(목록으로 보내면 사용자가 방금 누른
+          건을 다시 찾아야 한다). 섹션 제목이 이미 '확인'이라 줄마다 '확인 필요' 칩을 달지 않고,
+          다른 상태(중복 의심)일 때만 칩을 단다. */}
       <Section
         id="reviews"
         show={todo.reviewsError || todo.reviews.length > 0}
-        title="확인이 필요한 거래"
+        title="확인할 거래"
         countText={pendingCountText(
           todo.reviewsLoading,
           todo.reviewsError,
           todo.reviews.length,
           todo.reviewsTruncated
         )}
-        error={todo.reviewsError}
-        errorText="거래를 불러오지 못했어요"
+        error={todo.reviewsError ? "확인할 거래를 불러오지 못했어요" : null}
+        onRetry={retryFailed}
+        retrying={retrying}
         footer={
           <FooterLink href="/transactions?review=1">
-            가계부에서 확인이 필요한 거래 보기
+            가계부에서 확인할 거래 보기
           </FooterLink>
         }
       >
@@ -259,64 +315,36 @@ export default function TodoPage() {
             icon={<CircleAlert />}
             iconClassName="bg-warning/15 text-warning-strong"
             title={merchantLabel(t)}
-            subtitle={formatDate(t.approvedAt)}
+            subtitle={formatMonthDayTime(t.approvedAt ?? t.createdAt)}
             value={<Money amount={t.netAmount} currency={t.currency} />}
-            valueSub={<StatusBadge status={t.status} />}
-            chevron
-          />
-        ))}
-      </Section>
-
-      {/* 홈의 '확인할 문자' 줄은 화면에 먼저 보이는 문자 섹션으로 온다(section=sms). */}
-      <Section
-        id={todo.unpostedNeedsReview.length > 0 ? "sms" : undefined}
-        show={todo.unpostedNeedsReview.length > 0}
-        title="확인이 필요한 문자"
-        countText={pendingCountText(
-          todo.unpostedLoading,
-          todo.unpostedError,
-          todo.unpostedNeedsReview.length,
-          todo.unpostedTruncated
-        )}
-        error={todo.unpostedError}
-        errorText="거래 반영 상태를 확인하지 못했어요. 잠시 후 새로고침해 주세요."
-      >
-        {todo.unpostedNeedsReview.map((event) => (
-          <ListRow
-            key={event.id}
-            onClick={() => setSelectedSms(event.id)}
-            icon={<MailWarning />}
-            title={`${formatSender(event.sender)}에서 온 문자`}
-            subtitle={postingMessage(event)}
-            value={
-              <span className="text-muted-foreground text-xs">
-                {formatRelativeTime(event.receivedAt)}
-              </span>
+            valueSub={
+              t.status === "pending_review" ? null : <StatusBadge status={t.status} />
             }
             chevron
           />
         ))}
       </Section>
 
-      {/* 본인 문자를 같은 양식으로 묶고 대표 한 건을 검토한다. */}
+      {/* 3) 확인할 문자 — 홈의 '확인할 문자' 줄이 이 id(section=sms)로 온다. */}
       <Section
-        id={todo.unpostedNeedsReview.length > 0 ? undefined : "sms"}
-        show={smsGroups.isError || groups.length > 0}
-        title="거래 반영 전 문자"
+        id="sms"
+        show={smsError || groups.length + smsRows.length > 0}
+        title="확인할 문자"
         countText={pendingCountText(
-          smsGroups.isLoading,
-          smsGroups.isError,
-          smsGroups.data?.scannedCount ?? 0,
-          smsGroups.data?.truncated ?? false
+          smsLoading,
+          smsError,
+          (smsGroups.data?.scannedCount ?? 0) + smsRows.length,
+          (smsGroups.data?.truncated ?? false) || todo.unpostedTruncated
         )}
-        error={smsGroups.isError}
-        errorText="문자 묶음을 불러오지 못했어요"
+        error={smsError ? "확인할 문자를 다 불러오지 못했어요" : null}
+        onRetry={retryFailed}
+        retrying={retrying}
         footer={
           smsGroups.data?.truncated ? (
-            <p className="text-muted-foreground px-4 py-3 text-xs">
-              최근 미처리 {smsGroups.data.scannedCount}건을 묶었어요. 처리하면
-              이전 문자가 이어서 나타나요.
-            </p>
+            <FooterNote>
+              최근 문자 {smsGroups.data.scannedCount}건만 보여 드려요. 확인하면 이전
+              문자가 이어서 나와요.
+            </FooterNote>
           ) : null
         }
       >
@@ -326,96 +354,110 @@ export default function TodoPage() {
             onClick={() => setSelectedSms(group.representativeEventId)}
             icon={<MailWarning />}
             iconClassName="bg-warning/15 text-warning-strong"
-            title={`${formatSender(group.sender)}에서 온 문자 ${group.count}건`}
-            subtitle={`읽지 못함 ${group.parseFailed}건 · 확인 대기 ${group.quarantined}건`}
-            value={
-              <span className="text-muted-foreground text-[13px]">
-                {formatRelativeTime(group.latestReceivedAt)}
-              </span>
-            }
+            title={`${smsSourceLabel(
+              group.sender,
+              issuerById.get(group.representativeEventId)
+            )}${group.count > 1 ? ` ${group.count}건` : ""}`}
+            subtitle={smsGroupTaskText(group)}
+            value={<TimeText iso={group.latestReceivedAt} />}
+            chevron
+          />
+        ))}
+        {smsRows.map((event) => (
+          <ListRow
+            key={event.id}
+            onClick={() => setSelectedSms(event.id)}
+            icon={<MailWarning />}
+            iconClassName="bg-warning/15 text-warning-strong"
+            title={smsSourceLabel(event.sender, event.issuer)}
+            subtitle={todoSmsTaskText(event)}
+            value={<TimeText iso={event.receivedAt} />}
             chevron
           />
         ))}
       </Section>
 
       {policies.length > 0 ? (
-        <section className="space-y-2">
-          <h2 className="text-heading px-1">문자 자동 정리</h2>
-          <div className="finance-panel divide-y divide-border/60 px-5">
+        <section className="finance-panel min-w-0 overflow-hidden pt-2">
+          <SectionHeader className="px-5" title="문자 자동 정리" />
+          <ul className="divide-border/60 divide-y px-5">
             {policies.map((policy) => (
-              <div
+              <li
                 key={policy.id}
-                className="flex items-center justify-between gap-3 py-3"
+                className="flex min-h-16 items-center justify-between gap-3 py-3"
               >
-                <div className="text-body">
-                  <p>
-                    {cardQuery.data?.find(
-                      (card) => card.id === policy.approvedCardId
-                    )?.alias ?? "선택한 카드"}{" "}
-                    · {policy.enabled ? "자동 정리 중" : "중지됨"}
+                <div className="min-w-0 flex-1">
+                  <p className="flex min-w-0 items-center gap-2">
+                    <span className="text-body truncate font-semibold">
+                      {cardAlias(policy)}
+                    </span>
+                    <StatusChip tone={policy.enabled ? "ok" : "neutral"}>
+                      {policy.enabled ? "자동 정리 중" : "중지됨"}
+                    </StatusChip>
                   </p>
                   <p className="text-caption text-muted-foreground">
-                    {formatDate(policy.createdAt)}부터 · 약 5분마다 확인
+                    {policy.enabled
+                      ? `${formatMonthDay(policy.createdAt)}부터 · 약 5분마다 확인해요`
+                      : "같은 모양의 문자를 확인할 때 다시 켤 수 있어요"}
                   </p>
                 </div>
                 {policy.enabled ? (
                   <Button
+                    type="button"
                     variant="weak"
-                    size="sm"
                     disabled={stopPolicy.isPending}
-                    onClick={() => stopPolicy.mutate(policy.id)}
+                    onClick={() => setStopTarget(policy)}
                   >
-                    중지
+                    중지하기
                   </Button>
                 ) : null}
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
           {stopPolicy.isError ? (
-            <p role="alert" className="text-destructive text-sm">
-              자동 정리 중지를 확인하지 못했어요. 다시 시도해 주세요.
-            </p>
+            <InlineNotice tone="error" className="mx-5 mb-4">
+              자동 정리를 중지하지 못했어요. 다시 시도해 주세요.
+            </InlineNotice>
           ) : null}
         </section>
       ) : null}
 
+      {/* 반영을 기다리는 문자 — 사용자가 할 일은 없어 할 일 합계에 넣지 않는다. 홈의 환율 대기 줄이
+          이 id(section=processing)로 온다. 섹션 제목이 이미 '기다리는'이라 줄마다 대기 칩을 달지 않는다. */}
       <Section
         id="processing"
-        show={
-          todo.processingLoading ||
-          todo.processingError ||
-          todo.processing.length + todo.unpostedUnknown.length > 0
-        }
-        title="처리 대기"
+        show={todo.processingError || waitingRows.length > 0}
+        title="반영을 기다리는 문자"
+        description="따로 할 일은 없어요. 같은 문자를 다시 등록하지 않아도 돼요."
         countText={pendingCountText(
           todo.processingLoading,
           todo.processingError,
-          todo.processing.length + todo.unpostedUnknown.length,
+          waitingRows.length,
           todo.processingTruncated
         )}
-        error={todo.processingError}
-        errorText="대기 중인 문자를 불러오지 못했어요."
+        error={
+          todo.processingError ? "반영을 기다리는 문자를 불러오지 못했어요" : null
+        }
+        onRetry={retryFailed}
+        retrying={retrying}
         footer={
           todo.processingTruncated ? (
-            <p className="text-muted-foreground px-4 py-3 text-xs">
-              조회 상한이 있어 일부 상태만 표시될 수 있어요.
-            </p>
+            <FooterNote>
+              일부만 보여 드려요. 반영되면 나머지가 이어서 나와요.
+            </FooterNote>
           ) : null
         }
       >
-        {[...todo.processing, ...todo.unpostedUnknown].map((event) => (
-          <div key={event.id} className="space-y-1 px-3 py-3">
-            <p className="flex items-center justify-between gap-2">
-              <span className="text-body font-medium">
-                {event.currency ?? "통화 확인 중"} ·{" "}
-                {formatRelativeTime(event.receivedAt)}
-              </span>
-              <StatusChip tone="pending">대기 중</StatusChip>
-            </p>
-            <p className="text-caption text-muted-foreground">
-              {postingMessage(event)}
-            </p>
-          </div>
+        {waitingRows.map((event) => (
+          <ListRow
+            key={event.id}
+            icon={<Clock />}
+            iconClassName="bg-muted text-muted-foreground"
+            title={smsWaitTitle(event)}
+            subtitle={[event.merchantRaw, formatRelativeTime(event.receivedAt)]
+              .filter(Boolean)
+              .join(" · ")}
+          />
         ))}
       </Section>
 
@@ -427,11 +469,47 @@ export default function TodoPage() {
         // 계속 보여주지 않도록 닫는다.
         onReviewed={() => setSelectedSms(null)}
       />
+
+      <AlertDialog
+        open={stopTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setStopTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {stopTarget
+                ? `${cardAlias(stopTarget)} 문자 자동 정리를 중지할까요?`
+                : "문자 자동 정리를 중지할까요?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              자동으로 읽지 못한 같은 모양의 문자는 다시 여기서 확인을 기다려요. 그
+              문자를 확인할 때 자동 정리를 다시 켤 수 있어요.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>닫기</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (stopTarget) stopPolicy.mutate(stopTarget.id);
+              }}
+            >
+              중지하기
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
 
-/** 섹션 1개(제목 + 건수 + 행 목록). `show`가 false면 아무것도 렌더하지 않는다. */
+/**
+ * 섹션 1개(제목 + 건수 + 행 목록). `show`가 false면 아무것도 렌더하지 않는다.
+ * 모양은 홈·정기 지출 섹션과 같다(finance-panel + SectionHeader). 못 읽은 축이 있으면 읽은 줄은
+ * 그대로 두고 그 아래에 원인 + '다시 불러오기'를 둔다.
+ */
 function Section({
   id,
   show,
@@ -439,7 +517,8 @@ function Section({
   description,
   countText,
   error,
-  errorText,
+  onRetry,
+  retrying,
   footer,
   children,
 }: Readonly<{
@@ -448,8 +527,10 @@ function Section({
   title: string;
   description?: string;
   countText: string;
-  error: boolean;
-  errorText: string;
+  /** 못 읽었을 때 무엇을 못 했는지 한 줄. 읽었으면 `null`. */
+  error: string | null;
+  onRetry: () => void;
+  retrying: boolean;
   footer?: ReactNode;
   children: ReactNode;
 }>) {
@@ -458,32 +539,36 @@ function Section({
     <section
       id={id}
       // 고정 헤더(--app-header-h) 밑에 제목이 가리지 않게 헤더 높이만큼 더 띄운다.
-      className="finance-panel scroll-mt-[calc(var(--app-header-h)+1rem)] overflow-hidden pt-4"
+      className="finance-panel min-w-0 scroll-mt-[calc(var(--app-header-h)+1rem)] overflow-hidden pt-2"
     >
-      <div className="flex items-baseline justify-between gap-2 px-5">
-        <h2 className="text-heading">{title}</h2>
-        <span className="text-caption text-muted-foreground tabular-nums">
-          {countText}
-        </span>
-      </div>
+      <SectionHeader
+        className="px-5"
+        title={title}
+        trailing={
+          <span className="text-caption text-muted-foreground tabular-nums">
+            {countText}
+          </span>
+        }
+      />
       {description ? (
         <p className="text-caption text-muted-foreground px-5">{description}</p>
       ) : null}
-      <div className="divide-border/60 divide-y">
-        {error ? (
-          <p className="text-body text-muted-foreground px-4 py-6 text-center">
-            {errorText}
-          </p>
-        ) : (
-          <div className="flex flex-col px-2 py-1">{children}</div>
-        )}
-        {footer}
-      </div>
+      <div className="flex flex-col px-4 pb-1 sm:px-3">{children}</div>
+      {error ? (
+        <ErrorState
+          align="start"
+          className="px-5 pb-4 pt-1"
+          message={error}
+          onRetry={onRetry}
+          retrying={retrying}
+        />
+      ) : null}
+      {footer}
     </section>
   );
 }
 
-/** 섹션 하단의 보조 링크(전체 보기 등). */
+/** 섹션 하단의 보조 링크(전체 보기 등). 다른 화면으로 가는 줄이라 ›를 단다. */
 function FooterLink({
   href,
   children,
@@ -491,10 +576,32 @@ function FooterLink({
   return (
     <Link
       href={href}
-      className="text-caption text-muted-foreground hover:bg-muted/50 hover:text-foreground block px-5 py-3 font-medium transition-colors active:bg-muted"
+      className="text-caption text-muted-foreground hover:bg-muted/50 hover:text-foreground border-border/60 flex min-h-11 items-center justify-between gap-2 border-t px-5 font-medium transition-colors active:bg-muted active:text-foreground"
     >
-      {children} ›
+      <span className="min-w-0">{children}</span>
+      <ChevronRight
+        className="text-muted-foreground/70 size-5 shrink-0"
+        aria-hidden="true"
+      />
     </Link>
+  );
+}
+
+/** 섹션 하단의 안내 한 줄(일부만 보인다는 사실 등). */
+function FooterNote({ children }: Readonly<{ children: ReactNode }>) {
+  return (
+    <p className="text-caption text-muted-foreground border-border/60 border-t px-5 py-3">
+      {children}
+    </p>
+  );
+}
+
+/** 줄 오른쪽의 상대 시각('3시간 전'). 금액 자리라 기본 굵기를 덜어 낸다. */
+function TimeText({ iso }: Readonly<{ iso: string | null }>) {
+  return (
+    <span className="text-caption text-muted-foreground font-normal">
+      {formatRelativeTime(iso)}
+    </span>
   );
 }
 
@@ -502,19 +609,4 @@ function FooterLink({
 function merchantLabel(t: TransactionSummary): string {
   if (t.masked) return "(비공개)";
   return t.merchantNormalized ?? t.merchantRaw ?? "미확인 가맹점";
-}
-
-/**
- * 문자 한 줄 부제.
- * `quarantined`는 LLM이 값을 이미 뽑아 둔 상태라 **확인만** 하면 되고,
- * `parse_failed`는 값이 비어 있어 사용자가 직접 채워야 한다 — 그 차이를 알려 준다.
- */
-function smsSubtitle(e: CardSmsEventSummary): string {
-  if (e.parseStatus === "quarantined") {
-    const amount =
-      e.amount === null ? null : formatMoney(e.amount, e.currency ?? "KRW");
-    const merchant = e.merchantRaw ?? "가맹점 미상";
-    return `${merchant}${amount ? ` ${amount}` : ""} · 확인만 하면 돼요`;
-  }
-  return "자동으로 읽지 못했어요 · 문자를 보고 확정해 주세요";
 }

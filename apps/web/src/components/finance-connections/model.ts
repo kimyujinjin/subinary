@@ -4,6 +4,8 @@ import type {
   FinanceConnectionStatus,
 } from "@family/contracts";
 
+import { formatMonthDayTime } from "@/lib/format";
+
 export const CONNECTION_STATUS: Record<FinanceConnectionStatus, string> = {
   connecting: "연결 확인 중",
   select_account: "계좌 선택 필요",
@@ -17,7 +19,7 @@ export const CONNECTION_ERROR: Record<FinanceConnectionError, string> = {
   provider_unavailable:
     "토스증권에 연결하지 못했어요. 잠시 후 다시 확인해 주세요.",
   provider_denied:
-    "토스증권에서 조회를 허용하지 않았어요. API 키와 허용 IP 설정을 확인해 주세요.",
+    "토스증권이 조회를 거절했어요. 토스증권 개발자 센터에서 키와 접속 허용 설정을 확인해 주세요.",
   token_expired: "조회 인증이 만료됐어요. 연결을 해제한 뒤 다시 연결해 주세요.",
   rate_limited: "짧은 시간에 여러 번 조회했어요. 잠시 후 다시 확인해 주세요.",
   invalid_response:
@@ -57,17 +59,10 @@ export function connectionMoney(
     .padStart(2, "0")}`;
   return `${negative && cents > 0n ? "-" : ""}$${text}`;
 }
-export function connectionTime(value: string | null): string {
+/** 조회 시각 — 앱 공통 날짜 표기(`11월 5일 오후 9:17`, 해가 다르면 연도). 예전 `2026. 11. 05. 21:17`은 목록의 표기와 달랐다. */
+export function connectionTime(value: string | null, now?: Date): string {
   if (!value) return "아직 없음";
-  return new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(value));
+  return formatMonthDayTime(value, now);
 }
 export function canRefreshOnOpen(item: FinanceConnection): boolean {
   return (

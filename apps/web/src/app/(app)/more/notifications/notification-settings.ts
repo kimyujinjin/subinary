@@ -10,6 +10,8 @@ import type {
   NotificationPreferencesUpdateRequest,
 } from "@family/contracts";
 
+import type { NativePlatform, PushPermissionState } from "@/lib/native";
+
 export const DEFAULT_QUIET_START = "22:00";
 export const DEFAULT_QUIET_END = "07:00";
 
@@ -110,6 +112,48 @@ export function toUpdateRequest(
     notifyOwnCollected: draft.notifyOwnCollected,
     disabledKinds: draft.disabledKinds,
   };
+}
+
+/**
+ * 화면에서만 풀어 쓰는 종류 설명. 이름('확인 리마인더'·'확인 요청')은 Android 시스템 설정의 채널 이름과
+ * 같아야 해서(packages/shared) 그대로 두고, 이름이 비슷한 두 알림이 무엇을 알리는지만 여기서 가른다.
+ */
+export const KIND_DESCRIPTION_OVERRIDES: Partial<Record<NotificationKind, string>> = {
+  reminder: "확인 필요·중복 의심으로 남은 거래 알림",
+  review: "가족끼리 물어본 결제와 그 답",
+};
+
+/** 이 휴대폰이 푸시를 못 받는 권한 상태인가 — 거부, 그리고 아직 허용하지 않은 상태(한 번 거절 포함). */
+export function pushBlockedOnThisPhone(permission: PushPermissionState): boolean {
+  return permission === "denied" || permission === "prompt";
+}
+
+/**
+ * 맨 위 안내(받을 수 있으면 null). 설정 앱을 여는 플러그인이 없고 새 네이티브 플러그인은 앱 업데이트
+ * 없이 나갈 수 없어서, 켜는 곳을 글로 안내한다.
+ */
+export function pushPermissionNotice(
+  permission: PushPermissionState,
+  platform: NativePlatform
+): { title: string; howTo: string } | null {
+  if (!pushBlockedOnThisPhone(permission)) return null;
+  return {
+    title: "이 휴대폰은 알림이 꺼져 있어요",
+    howTo:
+      platform === "ios"
+        ? "iPhone 설정 › 앱 › 모아 › 알림에서 켜 주세요"
+        : "휴대폰 설정 › 애플리케이션 › 모아 › 알림에서 켜 주세요",
+  };
+}
+
+/**
+ * '푸시 알림' 스위치 설명. 이 휴대폰이 OS에서 막혀 있으면 스위치가 켜져 있어도 여기로는 오지 않으므로,
+ * 스위치가 지금 실제로 다루는 범위(내 다른 기기)를 말한다.
+ */
+export function pushSwitchDescription(permission: PushPermissionState): string {
+  return pushBlockedOnThisPhone(permission)
+    ? "지금은 내 다른 기기에만 적용돼요. 알림함에는 그대로 남아요"
+    : "끄면 내 모든 기기로 푸시가 가지 않고, 알림함에는 그대로 남아요";
 }
 
 export type SaveState = "idle" | "saving" | "saved" | "error";

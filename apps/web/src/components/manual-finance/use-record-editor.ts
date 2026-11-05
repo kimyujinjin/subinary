@@ -58,6 +58,9 @@ export function useRecordEditor<D, B, R extends { item: RecordMeta }>(options: {
     "idle" | "saving" | "reading" | "removing"
   >("idle");
   const [error, setError] = useState<string | null>(null);
+  // 입력 검사 실패는 서버 실패(error)와 따로 둔다 — 폼이 해당 칸 아래에 붙인다. 다음 저장 때 다시 검사한다
+  // (입력 중에 지우면 오류 칸이 든 접힘 상자가 타자 도중 닫힌다).
+  const [invalid, setInvalid] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [readRequired, setReadRequired] = useState(false);
   const [latest, setLatest] = useState<R | null>(null);
@@ -99,10 +102,12 @@ export function useRecordEditor<D, B, R extends { item: RecordMeta }>(options: {
     if (session.current.pending || requiresRead || !canEdit) return;
     const validation = options.validate(draft, id);
     if (!validation.ok) {
-      setError(validation.message);
+      setError(null);
+      setInvalid(validation.message);
       return;
     }
     setError(null);
+    setInvalid(null);
     setNotice(null);
     setLatest(null);
     setPhase("saving");
@@ -116,12 +121,8 @@ export function useRecordEditor<D, B, R extends { item: RecordMeta }>(options: {
         }
       },
       (read) => {
+        // 저장하면 창이 닫히고 목록의 줄이 그 자리에서 바뀐다 — 그게 확인이라 토스트를 띄우지 않는다.
         setPhase("idle");
-        toast.success(
-          read.item.visibility === "private"
-            ? "비공개로 저장했어요. 나만 보기에서 확인해 주세요."
-            : "가족 공개로 저장했어요."
-        );
         options.onChanged(read);
       },
       failed
@@ -164,7 +165,7 @@ export function useRecordEditor<D, B, R extends { item: RecordMeta }>(options: {
           setReadRequired(false);
           setError(null);
           setNotice(
-            "현재 해당 기록을 찾지 못했어요. 같은 식별자로 다시 저장할 수 있어요. 이미 처리되었더라도 새 기록을 중복 생성하지 않아요."
+            "아직 저장되지 않았어요. 다시 저장해도 같은 기록이 두 번 생기지 않아요."
           );
         } else if (statusOf(failure) === 403 || statusOf(failure) === 404)
           unavailable();
@@ -186,6 +187,7 @@ export function useRecordEditor<D, B, R extends { item: RecordMeta }>(options: {
     setReadRequired(false);
     setLatest(null);
     setError(null);
+    setInvalid(null);
     setNotice("현재 기록으로 다시 시작했어요.");
   };
   const remove = async () => {
@@ -211,8 +213,8 @@ export function useRecordEditor<D, B, R extends { item: RecordMeta }>(options: {
         }
       },
       () => {
+        // 확인 시트를 거쳐 지웠고 목록에서 줄이 사라지는 것이 결과라 토스트를 띄우지 않는다.
         setPhase("idle");
-        toast.success("수동 기록을 목록에서 삭제했어요.");
         options.onClose();
       },
       failed
@@ -229,6 +231,8 @@ export function useRecordEditor<D, B, R extends { item: RecordMeta }>(options: {
     error: versionChanged
       ? "다른 곳에서 현재 기록이 바뀌었어요. 입력은 그대로 남아 있어요. 다시 저장하기 전에 현재 기록을 확인해 주세요."
       : error,
+    /** 입력 검사 실패 문구(서버 실패와 별개). 어느 칸인지는 폼이 정한다(`field-errors.ts`). */
+    invalid,
     notice,
     readRequired: requiresRead,
     latest,

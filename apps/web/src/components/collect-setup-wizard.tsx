@@ -8,7 +8,7 @@
  *
  * 3단계:
  *   1) 앱 설치 — 플랫폼별. 암호학 용어는 이 화면에 절대 노출하지 않는다.
- *   2) 설정 복사 — 한 번에 복사 + '연결 테스트'(인증만 먼저 확인).
+ *   2) 설정 옮겨 적기 — 자동화 앱의 칸마다 복사(전체 복사는 보조) + '연결 확인'(인증만 먼저 확인).
  *   3) 첫 문자 대기 — firstEventAt이 생기면 자동으로 성공 화면.
  *
  * 왜 '연결 테스트'와 '첫 문자'를 나누는가: 인증 성공(lastSeenAt)과 문자 수신
@@ -18,6 +18,9 @@
  *
  * 보안: 연결 열쇠(collect token)는 Bearer 자격증명이라 등록/회전 응답에서 **한 번만**
  * 나온다. 화면을 닫으면 복구가 불가능(재발급만 가능)하므로 그 사실을 계속 보이게 둔다.
+ * 열쇠를 챙기기 전(복사하거나 '옮겨 적었어요'로 넘어가기 전)에 닫으려 하면 액션 시트로 한 번
+ * 묻고(안드로이드 뒤로 버튼도 같다), 열쇠가 있는 동안에는 바깥을 눌러도 닫히지 않는다 — 예전에는
+ * 1단계의 '나중에 할게요'·바깥 누르기·X가 확인 없이 닫아 열쇠를 잃었다(2026-11-05 HIG 검수).
  * 서명용 값(HMAC secret 등)은 화면에 내지 않는다 — 연결 열쇠만으로 수집이 동작한다.
  * ------------------------------------------------------------------------- */
 import {
@@ -31,10 +34,20 @@ import {
   Stethoscope,
   TriangleAlert,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { DeviceSecretResponse, DeviceSummary } from "@family/contracts";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -48,11 +61,15 @@ import { API_BASE_URL, ApiError, api } from "@/lib/api-client";
 import {
   buildCollectSetup,
   buildSetupClipboardText,
-  type SetupEntry,
+  buildSetupCopySections,
+  collectWizardBackAction,
+  collectWizardCloseNeedsConfirm,
+  type SetupCopyRow,
 } from "@/lib/collect-setup";
 import { FIRST_EVENT_WAIT_MS, diagnoseDeviceSignal } from "@/lib/device-signal";
-import { formatDate } from "@/lib/format";
+import { formatMonthDayTime } from "@/lib/format";
 import { useDevices } from "@/lib/queries";
+import { registerTransactionDetailBack } from "@/lib/transaction-detail-back";
 
 /** 첫 문자 대기 중 기기 목록을 다시 읽는 주기. */
 const WAIT_POLL_MS = 5_000;
@@ -87,14 +104,61 @@ interface CollectSetupWizardProps {
   initialStep?: WizardStep;
 }
 
-/** 값 한 줄(라벨 + 모노스페이스 값 + 왜 그대로 쓰면 안 되는지). */
-function SettingRow({ entry }: { entry: SetupEntry }) {
+/** 마지막 복사 결과. id는 칸의 id 또는 전체 복사('all'), name은 스크린 리더에 알릴 이름. */
+type CopyResult = { id: string; name: string; ok: boolean } | null;
+
+/**
+ * 칸 하나: 이름 + 값(고정폭) + 복사 버튼(44px, 누르면 '복사됨'). 자동화 앱에서 고르는 값(요청 방식)은
+ * 보여 주기만 한다. 복사에 실패하면 그 칸 바로 아래에 알린다 — 멀리 있는 한 줄은 폰에서 안 보인다.
+ */
+function CopyRow({
+  row,
+  result,
+  onCopy,
+}: {
+  row: SetupCopyRow;
+  result: CopyResult;
+  onCopy: (row: SetupCopyRow) => void;
+}) {
+  const copied = result?.id === row.id && result.ok;
+  const failed = result?.id === row.id && !result.ok;
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-caption text-muted-foreground">{entry.label}</span>
-      <code className="text-caption font-mono break-all">{entry.value}</code>
-      {entry.note ? (
-        <span className="text-micro text-muted-foreground">{entry.note}</span>
+    <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="text-caption text-muted-foreground">{row.label}</span>
+          <code className="text-caption font-mono break-all whitespace-pre-wrap">
+            {row.value}
+          </code>
+        </div>
+        {row.copyable ? (
+          <Button
+            type="button"
+            variant="ghost"
+            // 회색 상자 안이라 ghost의 회색 눌림이 보이지 않는다 — 바탕색으로 눌림을 보인다.
+            className="text-primary hover:bg-background active:bg-background min-w-20 shrink-0 px-2"
+            aria-label={`${row.name} ${copied ? "복사됨" : "복사"}`}
+            onClick={() => onCopy(row)}
+          >
+            {copied ? (
+              <>
+                <Check className="size-4" /> 복사됨
+              </>
+            ) : (
+              <>
+                <Copy className="size-4" /> 복사
+              </>
+            )}
+          </Button>
+        ) : null}
+      </div>
+      {row.note ? (
+        <span className="text-micro text-muted-foreground">{row.note}</span>
+      ) : null}
+      {failed ? (
+        <p className="text-caption text-destructive" role="alert">
+          복사하지 못했어요. 값을 길게 눌러 직접 복사해 주세요.
+        </p>
       ) : null}
     </div>
   );
@@ -111,8 +175,10 @@ export function CollectSetupWizard({
   initialStep = 1,
 }: CollectSetupWizardProps) {
   const [step, setStep] = useState<WizardStep>(initialStep);
-  const [copied, setCopied] = useState(false);
-  const [copyFailed, setCopyFailed] = useState(false);
+  const [copyResult, setCopyResult] = useState<CopyResult>(null);
+  // 연결 열쇠를 챙겼는가 — 열쇠가 든 값을 복사했거나(전체 복사 포함) '옮겨 적었어요'로 넘어갔다.
+  const [keyKept, setKeyKept] = useState(false);
+  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
 
   // 연결 테스트(인증만 확인).
   const [pingState, setPingState] = useState<
@@ -139,6 +205,10 @@ export function CollectSetupWizard({
       }),
     [device.platform, device.name, collectToken],
   );
+  const copySections = useMemo(
+    () => buildSetupCopySections(plan, { hasKey: collectToken != null }),
+    [plan, collectToken],
+  );
 
   // 첫 문자 대기 중에만 폴링한다. 다이얼로그가 닫히면 이 컴포넌트가 사라지고
   // 폴링도 함께 멈춘다.
@@ -151,8 +221,9 @@ export function CollectSetupWizard({
   useEffect(() => {
     if (!open) return;
     setStep(initialStep);
-    setCopied(false);
-    setCopyFailed(false);
+    setCopyResult(null);
+    setKeyKept(false);
+    setConfirmCloseOpen(false);
     setPingState("idle");
     setPingError(null);
     setWaitStartedAt(null);
@@ -175,20 +246,68 @@ export function CollectSetupWizard({
   }, [step, waitStartedAt]);
 
   const received = device.firstEventAt != null;
+  const needsCloseConfirm = collectWizardCloseNeedsConfirm({
+    hasIssuedKey: collectToken != null,
+    keyKept,
+    received,
+  });
 
-  async function copyAll() {
-    setCopyFailed(false);
+  /** 닫기(X·Esc·닫기 버튼). 열쇠를 아직 챙기지 않았으면 바로 닫지 않고 액션 시트로 묻는다. */
+  function requestClose() {
+    if (needsCloseConfirm) {
+      setConfirmCloseOpen(true);
+      return;
+    }
+    onOpenChange(false);
+  }
+
+  // 안드로이드 뒤로 버튼 — 이 창이 먼저 받는다. 받지 않으면 앱이 앞 화면으로 돌아가 열쇠가 든 창이
+  // 확인 없이 사라진다(카드 뒤 4자리 정정 창과 같은 방식). 처리기는 매 렌더의 최신 상태를 본다.
+  const onNativeBack = useRef<() => void>(() => undefined);
+  onNativeBack.current = () => {
+    const action = collectWizardBackAction({
+      confirmOpen: confirmCloseOpen,
+      needsConfirm: needsCloseConfirm,
+    });
+    if (action === "dismiss-confirm") setConfirmCloseOpen(false);
+    else if (action === "ask") setConfirmCloseOpen(true);
+    else onOpenChange(false);
+  };
+  useEffect(() => {
+    if (!open) return;
+    // 브라우저 뒤로(popstate)는 주소가 이미 바뀐 뒤라 막을 수 없다 — 화면과 함께 창도 사라진다.
+    return registerTransactionDetailBack(window, (source) => {
+      if (source === "native") onNativeBack.current();
+    });
+  }, [open]);
+
+  async function copyText(
+    target: { id: string; name: string },
+    text: string,
+    holdsKey: boolean,
+  ) {
     try {
-      await navigator.clipboard.writeText(
-        buildSetupClipboardText(plan, device.name),
-      );
-      setCopied(true);
+      await navigator.clipboard.writeText(text);
+      setCopyResult({ id: target.id, name: target.name, ok: true });
+      if (holdsKey) setKeyKept(true);
     } catch {
       // 클립보드는 권한·컨텍스트(비-HTTPS)로 막힐 수 있다. 실패를 삼키면
       // 사용자는 복사됐다고 믿고 빈 값을 붙여넣는다.
-      setCopied(false);
-      setCopyFailed(true);
+      setCopyResult({ id: target.id, name: target.name, ok: false });
     }
+  }
+
+  function copyAll() {
+    void copyText(
+      { id: "all", name: "설정 전체" },
+      buildSetupClipboardText(plan, device.name),
+      true,
+    );
+  }
+
+  function copyRow(row: SetupCopyRow) {
+    // 상태에는 id·이름만 남긴다 — 열쇠가 든 값을 복사 결과에 들고 다니지 않는다.
+    void copyText({ id: row.id, name: row.name }, row.value, row.holdsKey === true);
   }
 
   async function runPing() {
@@ -211,8 +330,17 @@ export function CollectSetupWizard({
   const diagnosis = diagnoseDeviceSignal(device);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="overflow-y-auto">
+    <Dialog
+      open={open}
+      onOpenChange={(next) => (next ? onOpenChange(true) : requestClose())}
+    >
+      <DialogContent
+        className="overflow-y-auto"
+        // 열쇠가 이 창에만 있는 동안에는 바깥을 눌러 닫지 않는다 — 실수 한 번에 열쇠를 잃는다.
+        onInteractOutside={(event) => {
+          if (collectToken) event.preventDefault();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>
             {received
@@ -248,7 +376,7 @@ export function CollectSetupWizard({
             </span>
             <p className="text-body font-semibold">첫 문자를 받았어요</p>
             <p className="text-caption text-muted-foreground">
-              {formatDate(device.firstEventAt)}에 이 휴대폰에서 카드 문자가
+              {formatMonthDayTime(device.firstEventAt)}에 이 휴대폰에서 카드 문자가
               도착했어요. 앞으로는 따로 할 일이 없어요.
             </p>
           </div>
@@ -257,7 +385,10 @@ export function CollectSetupWizard({
           <div className="text-body flex flex-col gap-4">
             <div className="flex flex-col gap-1">
               <p className="text-body font-semibold">
-                ① {plan.appName} 앱을 준비해 주세요
+                {/* '직접 연동'은 앱 이름이 아니다 — '직접 연동 앱'이라고 쓰지 않는다. */}
+                {plan.platform === "other"
+                  ? "① 문자를 보낼 도구를 준비해 주세요"
+                  : `① ${plan.appName} 앱을 준비해 주세요`}
               </p>
               <p className="text-caption text-muted-foreground">
                 {plan.appDescription}
@@ -288,10 +419,10 @@ export function CollectSetupWizard({
           <div className="text-body flex flex-col gap-4">
             <div className="flex flex-col gap-1">
               <p className="text-body font-semibold">
-                ② 아래 설정을 그대로 옮겨 적어 주세요
+                ② 아래 값을 앱의 칸마다 옮겨 적어 주세요
               </p>
               <p className="text-caption text-muted-foreground">
-                {plan.actionSummary}
+                {plan.actionSummary} · 값 옆 &lsquo;복사&rsquo;를 누른 뒤 앱의 같은 칸에 붙여 넣어요.
               </p>
             </div>
 
@@ -315,7 +446,6 @@ export function CollectSetupWizard({
                   <Button
                     type="button"
                     variant="weak"
-                    size="sm"
                     onClick={onReissue}
                     disabled={reissuePending}
                   >
@@ -331,35 +461,35 @@ export function CollectSetupWizard({
               </div>
             )}
 
-            <div className="bg-muted flex flex-col gap-3 rounded-control p-3">
-              <div className="flex flex-col gap-1">
-                <span className="text-caption text-muted-foreground">
-                  요청 방식 · 주소
-                </span>
-                <code className="text-caption font-mono break-all">
-                  {plan.method} {plan.endpoint}
-                </code>
-              </div>
-              {plan.headers.map((header) => (
-                <SettingRow key={header.label} entry={header} />
-              ))}
-              <div className="flex flex-col gap-1">
-                <span className="text-caption text-muted-foreground">
-                  {plan.bodyLabel}
-                </span>
-                <code className="text-caption font-mono break-all whitespace-pre-wrap">
-                  {plan.body}
-                </code>
-              </div>
-              {plan.bodyFields.map((field) => (
-                <SettingRow key={field.label} entry={field} />
-              ))}
-            </div>
+            {/* 자동화 앱의 칸 순서대로 — 칸마다 복사하고 붙여 넣는다. */}
+            {copySections.map((section) => (
+              <section
+                key={section.title}
+                aria-label={section.title}
+                className="bg-muted flex min-w-0 flex-col gap-3 rounded-control p-3"
+              >
+                <h3 className="text-caption font-semibold">{section.title}</h3>
+                {section.rows.map((row) => (
+                  <CopyRow
+                    key={row.id}
+                    row={row}
+                    result={copyResult}
+                    onCopy={copyRow}
+                  />
+                ))}
+              </section>
+            ))}
 
-            <Button type="button" variant="weak" className="w-full" onClick={copyAll}>
-              {copied ? (
+            {/* 전체 복사는 보조 — 메모 앱에 한꺼번에 남겨 두고 싶을 때. */}
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-primary w-full"
+              onClick={copyAll}
+            >
+              {copyResult?.id === "all" && copyResult.ok ? (
                 <>
-                  <Check /> 복사했어요
+                  <Check /> 전체를 복사했어요
                 </>
               ) : (
                 <>
@@ -367,11 +497,15 @@ export function CollectSetupWizard({
                 </>
               )}
             </Button>
-            {copyFailed ? (
+            {copyResult?.id === "all" && !copyResult.ok ? (
               <p className="text-caption text-destructive" role="alert">
-                복사하지 못했어요. 위 값을 직접 눌러 선택해 복사해 주세요.
+                복사하지 못했어요. 값을 길게 눌러 직접 복사해 주세요.
               </p>
             ) : null}
+            {/* 버튼 글자가 '복사됨'으로 바뀌는 것만으로는 화면 읽기 사용자가 알기 어렵다. */}
+            <p role="status" className="sr-only">
+              {copyResult?.ok ? `${copyResult.name}, 복사했어요.` : ""}
+            </p>
 
             <div className="bg-muted/60 text-caption flex flex-col gap-1 rounded-control p-3">
               <span className="font-medium">문자를 구분하는 값</span>
@@ -386,7 +520,7 @@ export function CollectSetupWizard({
               </ul>
             ) : null}
 
-            {/* 연결 테스트 — 문자 수신과 분리해 '인증'만 먼저 확정한다. */}
+            {/* 연결 확인 — 문자 수신과 분리해 '인증'만 먼저 확정한다. */}
             <div className="flex flex-col gap-2">
               <Button
                 type="button"
@@ -400,12 +534,12 @@ export function CollectSetupWizard({
                     <LoaderCircle className="animate-spin" /> 확인하고 있어요…
                   </>
                 ) : (
-                  <>연결 테스트</>
+                  <>연결 확인하기</>
                 )}
               </Button>
               {!collectToken ? (
                 <p className="text-caption text-muted-foreground">
-                  연결 테스트는 연결 열쇠가 있어야 할 수 있어요.
+                  연결 확인은 연결 열쇠가 있어야 할 수 있어요.
                 </p>
               ) : pingState === "ok" ? (
                 <p className="text-caption text-success-strong font-medium">
@@ -441,7 +575,7 @@ export function CollectSetupWizard({
 
             {device.lastSeenAt ? (
               <p className="text-caption text-muted-foreground">
-                연결 확인 {formatDate(device.lastSeenAt)}
+                연결 확인 {formatMonthDayTime(device.lastSeenAt)}
               </p>
             ) : null}
 
@@ -469,23 +603,24 @@ export function CollectSetupWizard({
 
         <DialogFooter className="flex-col sm:flex-col">
           {received ? (
-            <Button className="h-11 w-full" onClick={() => onOpenChange(false)}>
+            <Button className="w-full" onClick={() => onOpenChange(false)}>
               다 했어요
             </Button>
           ) : (
             <>
               {step < 3 ? (
                 <Button
-                  className="h-11 w-full"
-                  onClick={() => setStep((s) => (s === 1 ? 2 : 3))}
+                  className="w-full"
+                  onClick={() => {
+                    // '옮겨 적었어요'는 열쇠를 자동화 앱에 넣었다는 사용자의 확인이다.
+                    if (step === 2) setKeyKept(true);
+                    setStep((s) => (s === 1 ? 2 : 3));
+                  }}
                 >
-                  {step === 1 ? "설치했어요" : "옮겨 적었어요"}
+                  {step === 1 ? "준비했어요" : "옮겨 적었어요"}
                 </Button>
               ) : (
-                <Button
-                  className="h-11 w-full"
-                  onClick={() => onOpenChange(false)}
-                >
+                <Button className="w-full" onClick={requestClose}>
                   나중에 확인할게요
                 </Button>
               )}
@@ -493,7 +628,7 @@ export function CollectSetupWizard({
                 <Button
                   type="button"
                   variant="ghost"
-                  className="h-11 w-full"
+                  className="w-full"
                   onClick={() => setStep((s) => (s === 3 ? 2 : 1))}
                 >
                   <ArrowLeft /> 이전 단계
@@ -502,15 +637,38 @@ export function CollectSetupWizard({
                 <Button
                   type="button"
                   variant="ghost"
-                  className="h-11 w-full"
-                  onClick={() => onOpenChange(false)}
+                  className="w-full"
+                  onClick={requestClose}
                 >
-                  나중에 할게요
+                  닫기
                 </Button>
               )}
             </>
           )}
         </DialogFooter>
+
+        {/* 열쇠를 챙기기 전에 닫으려 할 때 — 내가 누른 동작의 확인이라 액션 시트(sheet-layout.ts 표).
+            닫기를 묻는 확인이라 남는 쪽에 '닫기'를 쓰지 않는다. 남기는 '계속 설정하기'(버리기 확인의
+            '계속 입력하기'와 같은 꼴), 위험한 쪽은 결과를 말하는 '열쇠 없이 닫기'. */}
+        <AlertDialog open={confirmCloseOpen} onOpenChange={setConfirmCloseOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>닫으면 연결 열쇠를 다시 볼 수 없어요</AlertDialogTitle>
+              <AlertDialogDescription>
+                아직 열쇠를 복사하지 않았어요. 닫은 뒤에는 열쇠를 새로 발급해야 해요.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>계속 설정하기</AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                onClick={() => onOpenChange(false)}
+              >
+                열쇠 없이 닫기
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );

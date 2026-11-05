@@ -10,7 +10,11 @@
  *   연결 열쇠를 보여주는 것만으로는 설정이 끝나지 않는다 — 첫 문자가 들어와야 끝난 것이고,
  *   수집 설정 마법사(로드맵 C-2)가 그 지점까지 데려간다.
  * - 다시 발급·연결 해제는 ⋯ 메뉴 안에만 두고 확인 시트를 거친다(§3.3).
+ * - 등록 창의 기기 종류는 지금 휴대폰의 종류(앱) 또는 Android(웹)가 기본값이고, 세 가지를
+ *   한눈에 보이는 세그먼트로 고른다(./platform-segment.tsx). 종류에 따라 안내가 갈리고 등록 뒤에는
+ *   바꿀 수 없어서다.
  * ------------------------------------------------------------------------- */
+import { Capacitor } from "@capacitor/core";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Bot, Plus, Smartphone } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
@@ -24,6 +28,7 @@ import type {
 
 import {
   AlertDialog,
+  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -44,38 +49,26 @@ import { CollectSetupWizard } from "@/components/collect-setup-wizard";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   EmptyState,
+  ErrorState,
+  InlineNotice,
   ListLoading,
   ListRow,
   OverflowMenu,
   PageBackHeader,
+  SectionHeader,
   StatusChip,
 } from "@/components/widgets";
 import { ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
+import { defaultDevicePlatform } from "@/lib/collect-setup";
 import { canManageDevice, findMyMemberId } from "@/lib/device-permission";
 import { deviceSignalChip, isSetupComplete } from "@/lib/device-signal";
 import { useHousehold } from "@/lib/household-context";
 import { useDevices, useHouseholdMembers } from "@/lib/queries";
 import { formatRelativeTime } from "@/lib/format";
 
-/** 플랫폼 표시 라벨. */
-const PLATFORM_LABEL: Record<DevicePlatform, string> = {
-  ios: "iOS",
-  android: "Android",
-  other: "기타",
-};
-
-const PLATFORM_OPTIONS = (["ios", "android", "other"] as const).map(
-  (value) => ({ value, label: PLATFORM_LABEL[value] }),
-);
+import { PLATFORM_LABEL, PlatformSegment } from "./platform-segment";
 
 const ROTATE_FAILED = "연결 열쇠를 다시 발급하지 못했어요.";
 
@@ -106,10 +99,11 @@ export default function DevicesPage() {
   );
 
   const [name, setName] = useState("");
-  const [platform, setPlatform] = useState<DevicePlatform>("ios");
-  const [formError, setFormError] = useState<string | null>(null);
+  // 실제 기본값은 등록 창을 열 때 정한다(openRegister) — 정적 렌더에는 지금 기기 종류가 없다.
+  const [platform, setPlatform] = useState<DevicePlatform>("android");
+  const [nameError, setNameError] = useState<string | null>(null);
 
-  // "기기 등록" 주 CTA → 등록 Dialog.
+  // "기기 등록하기" 주 CTA → 등록 Dialog.
   const [registerOpen, setRegisterOpen] = useState(false);
 
   /**
@@ -138,8 +132,7 @@ export default function DevicesPage() {
     onSuccess: (result) => {
       void invalidateDevices();
       setName("");
-      setPlatform("ios");
-      setFormError(null);
+      setNameError(null);
       setRegisterOpen(false);
       // 등록은 시작이지 완료가 아니다 — 바로 설정 마법사로 이어 붙인다.
       setWizard({ deviceId: result.device.id, issued: result, initialStep: 1 });
@@ -163,12 +156,20 @@ export default function DevicesPage() {
     onSuccess: () => void invalidateDevices(),
   });
 
+  /** 등록 창 열기 — 기기 종류 기본값은 지금 이 휴대폰의 종류(앱), 웹이면 Android. */
+  function openRegister() {
+    setPlatform(defaultDevicePlatform(Capacitor.getPlatform()));
+    setNameError(null);
+    registerMutation.reset();
+    setRegisterOpen(true);
+  }
+
   function onRegister(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setFormError(null);
+    setNameError(null);
     if (!householdId) return;
     if (name.trim() === "") {
-      setFormError("기기 이름을 입력해 주세요.");
+      setNameError("기기 이름을 입력해 주세요.");
       return;
     }
     registerMutation.mutate({
@@ -228,9 +229,13 @@ export default function DevicesPage() {
       {devicesQuery.isLoading ? (
         <ListLoading rows={2} label="기기를 불러오는 중이에요." />
       ) : devicesQuery.isError ? (
-        <p className="text-caption text-destructive" role="alert">
-          {errorMessage(devicesQuery.error, "기기를 불러오지 못했어요.")}
-        </p>
+        <section className="finance-panel px-5">
+          <ErrorState
+            message={errorMessage(devicesQuery.error, "기기를 불러오지 못했어요.")}
+            onRetry={() => void devicesQuery.refetch()}
+            retrying={devicesQuery.isFetching}
+          />
+        </section>
       ) : devices.length === 0 ? (
         <section className="finance-panel px-5">
           <EmptyState
@@ -238,27 +243,19 @@ export default function DevicesPage() {
             title="아직 등록한 기기가 없어요"
             description="휴대폰의 카드 승인·취소 문자를 가계부로 가져와요."
             action={
-              <Button
-                type="button"
-                className="w-full"
-                onClick={() => setRegisterOpen(true)}
-              >
-                <Plus /> 기기 등록
+              <Button type="button" className="w-full" onClick={openRegister}>
+                <Plus /> 기기 등록하기
               </Button>
             }
           />
         </section>
       ) : (
         <section
-          className="finance-panel min-w-0 px-5 pt-4 pb-1"
-          aria-labelledby="devices-heading"
+          className="finance-panel min-w-0 px-5 pt-2 pb-1"
+          aria-label="등록한 기기"
         >
-          <h2
-            id="devices-heading"
-            className="text-caption text-muted-foreground font-semibold"
-          >
-            등록한 기기
-          </h2>
+          {/* 섹션 머리는 다른 메뉴 화면(결제 카드·가족)과 같은 SectionHeader — 예전엔 여기만 회색 caption이었다. */}
+          <SectionHeader title="등록한 기기" />
           <ul className="divide-y divide-border/60">
             {devices.map((d) => (
               <DeviceRow
@@ -280,26 +277,21 @@ export default function DevicesPage() {
         </section>
       )}
       {revokeMutation.isError ? (
-        <p className="text-caption text-destructive" role="alert">
+        <InlineNotice tone="error">
           {errorMessage(revokeMutation.error, "연결을 해제하지 못했어요.")}
-        </p>
+        </InlineNotice>
       ) : null}
       {/* 마법사가 열려 있으면 재발급 실패는 마법사 안에서 보인다 — 여기 두면 마법사에 가려진다. */}
       {rotateMutation.isError && !wizard ? (
-        <p className="text-caption text-destructive" role="alert">
+        <InlineNotice tone="error">
           {errorMessage(rotateMutation.error, ROTATE_FAILED)}
-        </p>
+        </InlineNotice>
       ) : null}
 
       {/* 주 CTA — 빈 상태에서는 빈 상태 안의 CTA 하나만 노출 */}
       {!isEmpty ? (
-        <Button
-          type="button"
-          size="lg"
-          className="w-full"
-          onClick={() => setRegisterOpen(true)}
-        >
-          <Plus /> 기기 등록
+        <Button type="button" size="lg" className="w-full" onClick={openRegister}>
+          <Plus /> 기기 등록하기
         </Button>
       ) : null}
 
@@ -318,48 +310,53 @@ export default function DevicesPage() {
               <Input
                 id="device-name"
                 type="text"
-                placeholder="예: 엄마 아이폰"
+                placeholder="예: 엄마 휴대폰"
                 maxLength={100}
                 required
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                aria-invalid={nameError ? true : undefined}
+                aria-describedby={nameError ? "device-name-error" : undefined}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  if (nameError) setNameError(null);
+                }}
               />
+              {nameError ? (
+                <p
+                  id="device-name-error"
+                  className="text-caption text-destructive"
+                  role="alert"
+                >
+                  {nameError}
+                </p>
+              ) : null}
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="device-platform">기기 종류</Label>
-              <Select
+              <span id="device-platform-label" className="text-body font-medium">
+                기기 종류
+              </span>
+              <PlatformSegment
                 value={platform}
-                onValueChange={(value) => setPlatform(value as DevicePlatform)}
-              >
-                <SelectTrigger id="device-platform" className="min-h-12 w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PLATFORM_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {formError ? (
-              <p className="text-caption text-destructive" role="alert">
-                {formError}
+                onChange={setPlatform}
+                labelledBy="device-platform-label"
+                disabled={registerMutation.isPending}
+              />
+              <p className="text-caption text-muted-foreground">
+                종류에 맞는 설정 방법을 안내해요. 등록한 뒤에는 바꿀 수 없어요.
               </p>
-            ) : null}
+            </div>
             {registerMutation.isError ? (
-              <p className="text-caption text-destructive" role="alert">
+              <InlineNotice tone="error">
                 {errorMessage(
                   registerMutation.error,
                   "기기를 등록하지 못했어요.",
                 )}
-              </p>
+              </InlineNotice>
             ) : null}
             <DialogFooter className="flex-col sm:flex-col">
               <Button
                 type="submit"
-                className="h-11 w-full"
+                className="w-full"
                 disabled={registerMutation.isPending}
               >
                 {registerMutation.isPending ? "등록 중…" : "등록하기"}
@@ -367,10 +364,10 @@ export default function DevicesPage() {
               <Button
                 type="button"
                 variant="ghost"
-                className="h-11 w-full"
+                className="w-full"
                 onClick={() => setRegisterOpen(false)}
               >
-                다음에 할게요
+                닫기
               </Button>
             </DialogFooter>
           </form>
@@ -400,8 +397,8 @@ export default function DevicesPage() {
         />
       ) : null}
 
-      {/* 되돌리기 어려운 행동 확인 */}
-      {/* 확인(예/아니오)은 화면 가운데 작은 창이다 — sheet-layout.ts 표. */}
+      {/* 되돌리기 어려운 행동 확인 — 내가 누른 동작의 확인이라 액션 시트다(sheet-layout.ts 표).
+          다시 발급도 지금 열쇠를 바로 못 쓰게 만들어 수집이 멈추므로 위험한 버튼으로 둔다. */}
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -420,13 +417,13 @@ export default function DevicesPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>닫기</AlertDialogCancel>
-            <Button
-              variant={confirm?.type === "revoke" ? "destructive" : "default"}
+            <AlertDialogAction
+              variant="destructive"
               disabled={actionPending}
               onClick={runConfirm}
             >
-              {confirm?.type === "revoke" ? "연결 해제" : "다시 발급"}
-            </Button>
+              {confirm?.type === "revoke" ? "연결 해제하기" : "다시 발급하기"}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -500,7 +497,7 @@ function DeviceRow({
             type="button"
             variant="weak"
             size="sm"
-            className="min-h-11 shrink-0"
+            className="shrink-0"
             onClick={onContinue}
           >
             설정 계속하기

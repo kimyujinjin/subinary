@@ -14,7 +14,7 @@ import type {
 } from "@family/contracts";
 
 const REASON_HINT: Partial<Record<CardSmsDeclineReason, string>> = {
-  lost_or_stolen: "분실 신고된 카드예요 · 결제수단을 바꿔주세요",
+  lost_or_stolen: "분실 신고된 카드예요 · 결제 수단을 바꿔 주세요",
   limit_exceeded: "한도를 넘었어요",
   insufficient_balance: "잔액이 부족해요",
   expired_card: "유효기간이 지났어요",

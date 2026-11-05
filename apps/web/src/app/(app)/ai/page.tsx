@@ -15,6 +15,10 @@
  * 3) **답의 근거를 함께 보여 준다.** 서버가 집계한 행(`data.items`)을 답 아래에 최대
  *    5줄 붙인다 — "어디에 얼마"를 직접 확인할 수 있어야 숫자를 믿는다.
  *
+ * 대화는 이 기기에 7일 남는다(lib/ai-chat-history.ts). 그래서 머리에 '새 대화'를 둔다 — 없으면
+ * 한 번 물어본 뒤로는 추천 질문으로 돌아갈 길이 없었다. 지우기는 되돌릴 수 없어 액션 시트로
+ * 확인한다. 실패는 말풍선 한 곳에서 말하고 그 아래 '다시 묻기'를 둔다(chat-turn.tsx).
+ *
  * 레이아웃: 문서 흐름(main pt/pb)에 의존하는 높이 calc 대신 fixed 패널로
  * 헤더 아래~탭바 위를 정확히 채운다(globals.css의 --app-header-h/--app-tabbar-h와
  * 단일 출처). 키보드가 열리면 네이티브/Android/Chrome은 뷰포트 자체가 줄고
@@ -33,13 +37,20 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { toast } from "sonner";
 
-import type { FinanceQueryItem } from "@family/contracts";
-
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Money, PageBackHeader } from "@/components/widgets";
+import { PageBackHeader } from "@/components/widgets";
 import {
   aiChatStorageKey,
   loadAiChat,
@@ -48,8 +59,8 @@ import {
 import { ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { useHousehold } from "@/lib/household-context";
-import { cn } from "@/lib/utils";
 
+import { ChatTurn } from "./chat-turn";
 import { financeTurn, type Turn } from "./finance-turn";
 
 /**
@@ -83,6 +94,7 @@ export default function AiPage() {
   const { authedFetch } = useAuth();
   const { householdId } = useHousehold();
   const [input, setInput] = useState("");
+  const [confirmClear, setConfirmClear] = useState(false);
 
   /* --- 대화 보존 -----------------------------------------------------------
    * 대화는 가족 단위로 로컬에 남는다(lib/ai-chat-history.ts). 상태에 **어느 키의
@@ -190,24 +202,40 @@ export default function AiPage() {
     }
   }, []);
 
-  async function ask(question: string) {
+  /**
+   * 질문을 보낸다. `retryOf`가 있으면 그 실패한 턴을 빼고 같은 질문을 맨 아래에 다시 묻는다 —
+   * 이때는 입력칸에 쓰던 글을 지우지 않는다.
+   */
+  async function ask(question: string, retryOf?: number) {
     const q = question.trim();
     if (!q || pending || !householdId) return;
 
     const id = nextId.current++;
-    setTurns((prev) => [...prev, { id, at: Date.now(), question: q }]);
-    setInput("");
+    setTurns((prev) => [
+      ...(retryOf === undefined ? prev : prev.filter((t) => t.id !== retryOf)),
+      { id, at: Date.now(), question: q },
+    ]);
+    if (retryOf === undefined) setInput("");
+    // 다시 묻기는 위쪽 말풍선에서 눌렀어도 새 턴이 맨 아래에 붙는다 — 건수가 그대로라 '추가'로
+    // 잡히지 않으므로 바닥을 따라가게 해 둔다.
+    else atBottomRef.current = true;
     try {
       const patch = financeTurn(await financeMutation.mutateAsync(q));
       setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
     } catch (err) {
+      // 토스트는 띄우지 않는다 — 같은 말을 말풍선이 이미 하고, 그 아래 '다시 묻기'가 있다.
       const msg =
-        err instanceof ApiError ? err.message : "답변을 가져오지 못했어요.";
-      toast.error(msg);
+        err instanceof ApiError ? err.message : "답을 가져오지 못했어요.";
       setTurns((prev) =>
         prev.map((t) => (t.id === id ? { ...t, answer: msg, error: true } : t)),
       );
     }
+  }
+
+  /** '새 대화' — 이 기기에 남은 문답을 지운다(빈 목록을 저장하면 저장 키가 지워진다). */
+  function clearChat() {
+    setTurns(() => []);
+    setConfirmClear(false);
   }
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
@@ -230,7 +258,23 @@ export default function AiPage() {
     >
       <div className="mx-auto flex h-full w-full max-w-2xl flex-col px-(--page-px)">
         <div className="shrink-0 pt-4 lg:pt-6">
-          <PageBackHeader title="AI 도우미" backHref="/more" />
+          <PageBackHeader
+            title="AI 도우미"
+            backHref="/more"
+            action={
+              empty ? undefined : (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="text-primary -mr-3 px-3"
+                  disabled={pending}
+                  onClick={() => setConfirmClear(true)}
+                >
+                  새 대화
+                </Button>
+              )
+            }
+          />
         </div>
 
         {/* 대화 영역(스크롤) — overscroll-contain: 끝 바운스가 바디로 번지지 않게 */}
@@ -270,52 +314,13 @@ export default function AiPage() {
           ) : (
             <div className="flex flex-col gap-4 py-4">
               {turns.map((t) => (
-                <div key={t.id} className="flex flex-col gap-2">
-                  {/* 질문 — 오른쪽 */}
-                  <div className="flex justify-end">
-                    <div className="bg-primary text-primary-foreground text-body max-w-[85%] rounded-card px-4 py-2.5">
-                      {t.question}
-                    </div>
-                  </div>
-                  {/* 답변 — 왼쪽 */}
-                  <div className="flex justify-start">
-                    {t.answer === undefined ? (
-                      <div
-                        role="status"
-                        className="bg-muted text-muted-foreground text-body flex items-center gap-2 rounded-card px-4 py-2.5"
-                      >
-                        <Loader2 className="size-4 animate-spin" /> 살펴보고
-                        있어요…
-                      </div>
-                    ) : (
-                      // 거부(refused)는 오류가 아니다 — 빨간 스타일을 쓰지 않는다.
-                      <div
-                        className={cn(
-                          "text-body max-w-[85%] rounded-card px-4 py-2.5 whitespace-pre-wrap",
-                          t.error
-                            ? "bg-destructive/10 text-destructive"
-                            : "bg-muted",
-                        )}
-                      >
-                        {t.answer}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 답의 근거 — 서버가 집계한 행 그대로(어디에 · 몇 건 · 얼마). */}
-                  {t.rows && t.rows.length > 0 ? (
-                    <GroundingRows rows={t.rows} />
-                  ) : null}
-
-                  {/* 거부 시 "대신 이런 건 물어보실 수 있어요" */}
-                  {t.refused && t.suggestions && t.suggestions.length > 0 ? (
-                    <div className="flex flex-wrap gap-2 pl-1">
-                      {t.suggestions.map((s) => (
-                        <SuggestionChip key={s} text={s} onPick={ask} />
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
+                <ChatTurn
+                  key={t.id}
+                  turn={t}
+                  busy={pending}
+                  onAsk={(q) => void ask(q)}
+                  onRetry={(failed) => void ask(failed.question, failed.id)}
+                />
               ))}
             </div>
           )}
@@ -357,6 +362,24 @@ export default function AiPage() {
           </Button>
         </form>
       </div>
+
+      {/* 새 대화 확인 — 지우면 되돌릴 수 없으므로 액션 시트로 한 번 묻는다. */}
+      <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>대화를 지우고 새로 시작할까요?</AlertDialogTitle>
+            <AlertDialogDescription>
+              이 기기에 남은 질문과 답이 모두 지워져요.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>닫기</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={clearChat}>
+              지우고 새로 시작하기
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -364,26 +387,6 @@ export default function AiPage() {
 /* -------------------------------------------------------------------------- */
 /* 작은 조각                                                                    */
 /* -------------------------------------------------------------------------- */
-
-/** 근거 행 목록 — 답 말풍선 아래의 작은 표(이름 · 건수 · 금액). */
-function GroundingRows({ rows }: { rows: FinanceQueryItem[] }) {
-  return (
-    <ul aria-label="답의 근거" className="flex max-w-[85%] flex-col gap-1.5 pl-1">
-      {rows.map((row, index) => (
-        <li
-          key={`${index}-${row.label}`}
-          className="text-caption flex min-w-0 items-center gap-2"
-        >
-          <span className="min-w-0 flex-1 truncate">{row.label}</span>
-          <span className="text-muted-foreground shrink-0 tabular-nums">
-            {row.count}건
-          </span>
-          <Money amount={row.net} className="shrink-0 font-semibold" />
-        </li>
-      ))}
-    </ul>
-  );
-}
 
 function SuggestionButton({
   text,
@@ -397,24 +400,6 @@ function SuggestionButton({
       type="button"
       onClick={() => onPick(text)}
       className="bg-muted hover:bg-muted/70 text-body rounded-control px-4 py-3 text-left transition-colors active:scale-[0.99]"
-    >
-      {text}
-    </button>
-  );
-}
-
-function SuggestionChip({
-  text,
-  onPick,
-}: {
-  text: string;
-  onPick: (q: string) => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => onPick(text)}
-      className="bg-muted hover:bg-muted/70 text-caption min-h-9 rounded-full px-3 transition-colors active:scale-[0.99]"
     >
       {text}
     </button>

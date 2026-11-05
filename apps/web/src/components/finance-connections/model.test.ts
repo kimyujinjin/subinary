@@ -9,7 +9,9 @@ describe("connection display and refresh decisions", () => {
   });
   it("distinguishes absent time from an actual Seoul lookup time", () => {
     expect(connectionTime(null)).toBe("아직 없음");
-    expect(connectionTime("2020-01-01T15:00:00Z")).toContain("02.");
+    // 서울 기준 날짜로 넘어가고, 앱 공통 표기('11월 5일 오후 9:17', 해가 다르면 연도)다 — '2026. 11. 05. 21:17' 아님.
+    expect(connectionTime("2020-01-01T15:00:00Z")).toBe("2020년 1월 2일 오전 12:00");
+    expect(connectionTime("2026-11-05T12:17:00Z", new Date("2026-11-06T00:00:00Z"))).toBe("11월 5일 오후 9:17");
   });
   it("requires consent, a selected verified account and server refresh eligibility", () => {
     expect(canRefreshOnOpen(item)).toBe(true);

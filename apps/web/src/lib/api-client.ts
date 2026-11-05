@@ -209,9 +209,10 @@ const SERVER_MESSAGE_KO: Readonly<Record<string, string>> = {
   // 거래
   "transaction not found": "거래를 찾을 수 없어요",
   "transaction is not pending review": "확인이 필요한 거래가 아니에요",
-  "source is not a cancellation transaction": "취소 거래가 아니에요",
-  "target is not an approval transaction": "승인 거래가 아니에요",
-  "cancellation is already linked": "이미 연결된 취소 거래예요",
+  // 취소로 생긴 기록은 화면에서 '환불', 승인은 '결제'라 부른다(transactions/list-status.ts).
+  "source is not a cancellation transaction": "환불 기록이 아니에요",
+  "target is not an approval transaction": "고른 거래는 결제가 아니에요",
+  "cancellation is already linked": "이미 원래 결제에 연결된 환불이에요",
   "transactions belong to different households":
     "서로 다른 가족의 거래는 연결할 수 없어요",
   "transactions have different currencies":
@@ -229,7 +230,7 @@ const SERVER_MESSAGE_KO: Readonly<Record<string, string>> = {
     "이미 거래로 등록된 문자예요",
   "amount is required for a non-declined review": "금액을 입력해 주세요",
   "occurredAt is required for a non-declined review":
-    "결제 일시를 입력해 주세요",
+    "날짜·시간을 입력해 주세요",
   "merchantRaw is required for a non-declined review":
     "가맹점명을 입력해 주세요",
   // 공통(전역 ZodValidationPipe · 필수 파라미터)

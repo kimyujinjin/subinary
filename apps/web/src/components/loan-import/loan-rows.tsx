@@ -1,64 +1,47 @@
-import Link from "next/link";
 import type { ImportedLoanRecord } from "@family/contracts";
-import { displayManualKrw, visibilityLabel } from "@/components/manual-finance/model";
-import { StatusChip } from "@/components/widgets/status-chip";
 
-export function loanInclusionLabel(item: ImportedLoanRecord): string {
+import { formatMonthDay } from "@/lib/format";
+
+type Inclusion = Pick<
+  ImportedLoanRecord,
+  "includedInTotals" | "totalMode" | "exclusionReason"
+>;
+
+/**
+ * 대출 기록 수정 창의 한 줄 설명 — 합계에 어떻게 들어가는지(빠졌으면 왜 빠졌는지).
+ * 목록 줄의 '합계 제외' 칩은 자산 탭과 같은 `importedLoanChip`(app/(app)/assets/asset-rows)을 쓴다 —
+ * 같은 대출이 화면마다 다른 말·색으로 보이지 않게, 사용자가 고르는 선택지 이름 '기록만 보관'으로 맞춘다.
+ */
+export function loanInclusionLabel(item: Inclusion): string {
   if (item.includedInTotals) {
     return item.totalMode === "replacement"
-      ? "기존 기록 대신 계산"
-      : "별도 대출로 합계 반영";
+      ? "직접 입력한 대출 대신 합계에 들어가요"
+      : "별도 대출로 합계에 들어가요";
   }
   const reasons: Record<NonNullable<ImportedLoanRecord["exclusionReason"]>, string> = {
-    reference: "기록만 보관 · 합계 제외",
-    replacement_changed: "기존 대출 변경 · 연결 확인 필요 · 합계 제외",
-    duplicate_visible_loan: "중복 확인 필요 · 합계 제외",
-    sharing_expired: "공유 상태 변경 · 가족 공유 확인 필요 · 합계 제외",
+    reference: "기록만 보관해서 합계에서 빠져요",
+    replacement_changed: "연결한 대출이 바뀌어 합계에서 빠졌어요 · 연결 확인 필요",
+    duplicate_visible_loan: "같은 대출이 겹쳐 합계에서 빠졌어요 · 중복 확인 필요",
+    sharing_expired: "공유 상태가 바뀌어 합계에서 빠졌어요 · 공유 확인 필요",
   };
   return item.exclusionReason
     ? reasons[item.exclusionReason]
-    : "합계 제외 · 반영 설정 확인 필요";
+    : "합계에서 빠졌어요 · 반영 방법 확인 필요";
 }
 
-export function LoanOverviewRow({ item, owner = null }: { item: ImportedLoanRecord; owner?: string | null }) {
-  const checkedAt = new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(item.capturedAt));
-  const included = item.includedInTotals;
-  return (
-    <article className="min-w-0 py-4" aria-label={`${item.label} 가져온 대출`}>
-      <div className="flex min-w-0 items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <h3 className="text-body break-words font-semibold">{item.label}</h3>
-          <p className="text-caption text-muted-foreground">
-            {owner ? `${owner} · ` : ""}{item.loanType === "jeonse" ? "전세 대출" : "중도금 대출"}
-          </p>
-        </div>
-        <div className="min-w-0 text-right">
-          <strong className="text-heading block break-all tabular-nums">{displayManualKrw(item.outstandingPrincipalKrw)}</strong>
-          <small className="text-caption text-muted-foreground">남은 원금</small>
-        </div>
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <StatusChip tone={included ? "neutral" : "attention"}>{loanInclusionLabel(item)}</StatusChip>
-      </div>
-      <details className="text-caption mt-1 min-w-0">
-        <summary className="text-muted-foreground min-h-11 cursor-pointer py-3">대출 정보</summary>
-        <dl className="text-muted-foreground grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2">
-          <dt>만기일</dt><dd className="min-w-0">{item.maturityDate ?? "미확인"}</dd>
-          <dt>출처</dt><dd className="min-w-0 break-words">신한은행 대출계좌조회 화면 · {visibilityLabel(item.visibility)}</dd>
-          <dt>화면 확인</dt><dd className="min-w-0 break-words"><time dateTime={item.capturedAt}>{checkedAt}</time> · 은행 잔액 기준일 미확인</dd>
-        </dl>
-        {item.canEdit ? (
-          <Link href="/assets/loan-import" className="text-primary mt-2 inline-flex min-h-11 items-center font-medium">가져온 기록 수정</Link>
-        ) : null}
-      </details>
-    </article>
-  );
+/**
+ * 가져온 대출 기록 줄의 부제: '나만 보기 · 전세 대출 · 만기 2027년 3월 2일'.
+ * 은행 잔액 기준일을 모른다는 안내는 줄마다 붙이지 않고 목록 아래에 한 번만 둔다.
+ */
+export function loanRowSubtitle(
+  item: Pick<ImportedLoanRecord, "visibility" | "loanType" | "maturityDate">,
+  now: Date = new Date()
+): string {
+  return [
+    item.visibility === "private" ? "나만 보기" : null,
+    item.loanType === "interim" ? "중도금 대출" : "전세 대출",
+    item.maturityDate ? `만기 ${formatMonthDay(item.maturityDate, now)}` : "만기 미확인",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }

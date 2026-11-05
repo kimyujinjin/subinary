@@ -124,4 +124,13 @@ describe("가입 화면 — 초대 전용 가입", () => {
     // 칸에는 오류 표시가 붙지 않는다(이메일이 틀린 것처럼 읽히지 않게).
     expect(html).not.toContain('aria-invalid="true"');
   });
+
+  it("앱 이름 글자 로고를 쓰고, 확인 칸 대신 비밀번호 보기 버튼으로 오타를 막는다", () => {
+    const html = renderToStaticMarkup(<RegisterPage />);
+    expect(html).toMatch(/<p class="text-primary text-display font-extrabold[^"]*">모아<\/p>/);
+    expect(html).not.toContain("lucide-credit-card");
+    expect(html).toContain('aria-label="비밀번호 보기"');
+    expect(html).toContain('placeholder="이메일 주소"');
+    expect(html).not.toContain("you@example.com");
+  });
 });

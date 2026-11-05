@@ -27,7 +27,44 @@ interface UsageBarProps {
   hrefLabel?: string;
 }
 
-/** 예산 사용률 막대. 80%↑ 경고, 100%↑ 초과 색조. */
+export type UsageTone = "over" | "warn" | "ok";
+
+/**
+ * 막대 아래 오른쪽 상태 글자. 넘으면 넘은 금액('12,000원 초과'), 아니면 쓴 비율('82.0% 사용').
+ *
+ * 80%와 초과를 막대 색으로만 구분하면 색을 구분하기 어려운 사람에게는 같은 막대로 보인다
+ * (2026-11-05 HIG 검수 — 색에만 기대지 않기). 색은 그대로 두고 같은 말을 글자로도 한다.
+ */
+export function usageStatus({
+  spent,
+  amount,
+  currency = "KRW",
+  usageRate,
+}: {
+  spent: number;
+  amount: number;
+  currency?: string;
+  usageRate: number;
+}): { text: string; tone: UsageTone } {
+  const pct = percent(usageRate);
+  const used = pct === "—" ? pct : `${pct} 사용`;
+  if (usageRate >= 1) {
+    const over = spent - amount;
+    return {
+      text: over > 0 ? `${formatMoney(over, currency)} 초과` : used,
+      tone: "over",
+    };
+  }
+  return { text: used, tone: usageRate >= 0.8 ? "warn" : "ok" };
+}
+
+const STATUS_TEXT: Record<UsageTone, string> = {
+  over: "text-destructive",
+  warn: "text-warning-strong",
+  ok: "text-muted-foreground",
+};
+
+/** 예산 사용률 막대. 80%↑ 경고, 100%↑ 초과 — 색과 함께 글자(`usageStatus`)로도 말한다. */
 export function UsageBar({
   label,
   spent,
@@ -45,27 +82,22 @@ export function UsageBar({
       : usageRate >= 0.8
         ? "bg-warning"
         : "bg-primary";
-  const pctText =
-    usageRate >= 1
-      ? "text-destructive"
-      : usageRate >= 0.8
-        ? "text-warning-strong"
-        : "text-muted-foreground";
+  const status = usageStatus({ spent, amount, currency, usageRate });
 
   const body = (
     <>
       <div className="flex items-baseline justify-between gap-2">
-        <span className="flex min-w-0 items-center gap-1 text-sm font-medium">
+        <span className="text-body flex min-w-0 items-center gap-1 font-medium">
           <span className="truncate">{label}</span>
           {href ? (
             <ChevronRight
-              className="text-muted-foreground/50 size-4 shrink-0 self-center"
+              className="text-muted-foreground/70 size-4 shrink-0 self-center"
               aria-hidden="true"
             />
           ) : null}
         </span>
         {meta ? (
-          <span className="text-muted-foreground shrink-0 text-xs">{meta}</span>
+          <span className="text-caption text-muted-foreground shrink-0">{meta}</span>
         ) : null}
       </div>
       <div className="bg-muted h-2 w-full overflow-hidden rounded-full">
@@ -74,12 +106,12 @@ export function UsageBar({
           style={{ width: `${width}%` }}
         />
       </div>
-      <div className="flex items-baseline justify-between text-sm">
-        <span className="text-muted-foreground tabular-nums">
+      <div className="text-caption flex items-baseline justify-between gap-2">
+        <span className="text-muted-foreground min-w-0 tabular-nums">
           {formatMoney(spent, currency)} / {formatMoney(amount, currency)}
         </span>
-        <span className={cn("tabular-nums font-medium", pctText)}>
-          {percent(usageRate)}
+        <span className={cn("shrink-0 tabular-nums font-medium", STATUS_TEXT[status.tone])}>
+          {status.text}
         </span>
       </div>
     </>
@@ -91,13 +123,15 @@ export function UsageBar({
 
   // 음수 마진 + 패딩: 카드 안에서 정렬을 유지한 채 hover 영역만 넓힌다.
   // 세 줄 구성이라 세로 크기는 이미 44px을 넘는다.
+  // 링크 이름은 aria-label로 덮지 않는다 — 덮으면 예산이 여럿일 때 모든 링크가 같은 이름('거래 보기')으로
+  // 읽혀 어느 예산인지 알 수 없다. 이름·금액을 그대로 읽히고 행동은 뒤에 붙인다.
   return (
     <Link
       href={href}
-      aria-label={hrefLabel}
-      className="hover:bg-muted/70 -mx-2 flex flex-col gap-1.5 rounded-lg px-2 py-2 transition-colors active:scale-[0.99]"
+      className="hover:bg-muted/70 active:bg-muted -mx-2 flex flex-col gap-1.5 rounded-control px-2 py-2 transition-colors"
     >
       {body}
+      <span className="sr-only">{hrefLabel}</span>
     </Link>
   );
 }

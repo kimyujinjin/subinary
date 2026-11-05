@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
   cards: [] as CardSummary[],
   members: [] as MemberSummary[],
   spend: null as CardBreakdown | null,
+  cardsError: false,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -40,10 +41,12 @@ vi.mock("@/lib/household-context", () => ({
 vi.mock("@/lib/queries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/queries")>()),
   useCardList: () => ({
-    data: state.cards,
+    data: state.cardsError ? undefined : state.cards,
     isLoading: false,
-    isError: false,
+    isError: state.cardsError,
+    error: state.cardsError ? new Error("network") : null,
     isFetching: false,
+    refetch: vi.fn(),
   }),
   useHouseholdMembers: () => ({
     data: state.members,
@@ -109,6 +112,7 @@ function rowOf(html: string, cardId: string): string {
 
 beforeEach(() => {
   state.role = "member";
+  state.cardsError = false;
   state.members = [
     member({}),
     member({
@@ -211,5 +215,25 @@ describe("결제 카드 행", () => {
 
   it("drops the stray title padding wrapper", () => {
     expect(render()).not.toContain("pl-2.5");
+  });
+});
+
+describe("결제 카드 화면 — HIG 검수 3·4단계", () => {
+  it("카드 줄은 그 카드의 사용 내역으로 가므로 폰에서도 ›를 보인다", () => {
+    const row = rowOf(render(), "c-1");
+    expect(row).toContain("lucide-chevron-right");
+  });
+
+  it("목록을 못 불러오면 원인과 '다시 불러오기'를 보인다(빨간 한 줄만 두지 않는다)", () => {
+    state.cardsError = true;
+    const html = render();
+    expect(html).toContain("카드를 불러오지 못했어요.");
+    expect(html).toContain("다시 불러오기");
+  });
+
+  it("주 버튼은 동사형이다", () => {
+    const html = render();
+    expect(html).toContain("카드 등록하기");
+    expect(html).not.toMatch(/> 카드 등록<\/button>/);
   });
 });

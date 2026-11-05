@@ -189,6 +189,8 @@ function HomeView() {
         monthly={monthly.data}
         loading={monthly.isLoading}
         error={monthly.isError}
+        onRetry={() => void monthly.refetch()}
+        retrying={monthly.isFetching}
         pace={paceLine}
         // 할 일 화면·가계부 배지와 같은 useTodoCounts 기준으로 센다(lib/home-finance-summary).
         todo={homeTodoSources(todo, {
@@ -208,9 +210,13 @@ function HomeView() {
         error={members.isError}
         colorOf={colorOf}
       />
-      {budgets.data ? (
-        <HomeBudgetSummary items={budgets.data.items} month={month} />
-      ) : null}
+      <HomeBudgetSummary
+        items={budgets.data?.items}
+        month={month}
+        error={budgets.isError}
+        onRetry={() => void budgets.refetch()}
+        retrying={budgets.isFetching}
+      />
       <HomeUpcoming rows={upcomingRows} />
       {isCurrentMonth ? (
         <HomeWeeklyRecap

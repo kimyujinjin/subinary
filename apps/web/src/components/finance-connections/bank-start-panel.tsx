@@ -9,6 +9,7 @@ import {
 } from "@family/contracts";
 import {
   AlertDialog,
+  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -18,9 +19,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { InlineNotice, type NoticeTone } from "@/components/widgets/inline-notice";
+import { ListLoading } from "@/components/widgets/list-loading";
 import { OverflowMenu, type OverflowAction } from "@/components/widgets/overflow-menu";
 import { StatusChip } from "@/components/widgets/status-chip";
 import { useAuth } from "@/lib/auth-context";
+import { formatMonthDay } from "@/lib/format";
 import { macBankRunnerApi } from "@/lib/mac-bank-runner-client";
 import { connectionDecimal, connectionTime } from "./model";
 import { BankCredentialForm } from "./bank-credential-form";
@@ -28,12 +32,19 @@ import { BankCredentialForm } from "./bank-credential-form";
 const READ_FAILED = "Mac 상태를 불러오지 못해 잠시 뒤 다시 확인해요.";
 /** 결과를 모르는 조회 요청. 같은 요청 번호로 다시 보내므로 다시 눌러도 된다(write의 start 참고). */
 const START_UNCERTAIN = "요청이 전달됐는지 확인하지 못했지만, 다시 눌러도 한 번만 조회해요.";
-const WRITE_FAILED: Record<"approve" | "continue" | "cancel" | "revoke", string> = {
-  approve: "Mac 연결을 승인하지 못했어요.",
+const WRITE_FAILED: Record<"approve" | "continue" | "cancel" | "revoke" | "forget", string> = {
+  approve: "이 Mac을 허용하지 못했어요. 잠시 뒤 다시 눌러 주세요.",
   continue: "계속 조회를 요청하지 못했어요.",
-  cancel: "요청을 취소하지 못했어요.",
+  cancel: "조회를 멈추지 못했어요.",
   revoke: "Mac 연결을 해제하지 못했어요.",
+  forget: "로그인 정보를 지우지 못했어요.",
 };
+/**
+ * 이 화면의 결과 안내. 실패는 error(role="alert"), 완료는 success(role="status")라 색·아이콘·글자가 함께 다르다.
+ * 예전에는 성공과 실패가 같은 회색 한 줄이었다(2026-11-05 HIG 검수). 자리는 하나다 — 승인 화면이면 승인 버튼
+ * 바로 위, 아니면 조회 버튼 바로 위.
+ */
+type PanelNotice = { tone: NoticeTone; text: string };
 /** Mac이 맡고 있는 작업 상태. 이 동안에는 새 조회를 보내지 않는다(서버도 한 사람당 하나만 받는다). */
 export const MAC_JOB_ACTIVE_STATES: ReadonlySet<MacBankJob["state"]> = new Set<MacBankJob["state"]>([
   "queued",
@@ -56,7 +67,7 @@ const labels: Record<string, string> = {
   succeeded: "모아에 저장 완료",
   failed: "조회 미완료",
   operation_unknown: "실행 결과 확인 필요",
-  cancelled: "요청 취소",
+  cancelled: "조회 멈춤",
   expired: "요청 만료",
 };
 
@@ -76,8 +87,24 @@ export interface FirstConnectionStep {
   label: string;
   /** 지금 할 단계일 때만 보이는 한 문장. */
   detail: string;
+  /** 이 화면에 누를 것이 없는 단계(이 화면 밖에서 할 일)는 할 일을 번호 목록으로 보인다. */
+  howTo?: readonly string[];
   done: boolean;
 }
+
+/** 승인 버튼 이름. 1단계 안내가 이 이름을 그대로 부른다. */
+export const APPROVE_LABEL = "이 Mac 허용하기";
+
+/**
+ * 1단계(Mac 연결)에서 할 일. 이 화면에는 누를 것이 없어 예전 한 문장('Mac에서 모아 연결을 시작한 뒤…')으로는
+ * 무엇을 할지 알 수 없었다(2026-11-05 HIG 검수). Mac은 연결을 시작하면 이 화면으로 오는 링크를 띄운다
+ * (tools/mac-bank-runner/install.py) — 그 링크를 열면 승인 화면이 나온다.
+ */
+const MAC_PAIRING_HOW_TO = [
+  "Mac에서 모아 연결을 시작해요.",
+  "Mac에 나온 링크를 모아에 로그인한 브라우저에서 열어요.",
+  `열린 화면에서 ‘${APPROVE_LABEL}’를 눌러요.`,
+] as const;
 
 /**
  * 처음 연결 3단계(§5 자동 연결: 1) Mac 연결 2) 로그인 정보 3) 첫 조회). 모두 끝났으면 null — 안내를 그리지 않는다.
@@ -87,7 +114,7 @@ export interface FirstConnectionStep {
  */
 export function firstConnectionSteps(state: MacBankRunnerState): FirstConnectionStep[] | null {
   const steps: FirstConnectionStep[] = [
-    { label: "Mac 연결", detail: "Mac에서 모아 연결을 시작한 뒤 나오는 링크를 열어 허용해 주세요.", done: state.runner !== null },
+    { label: "Mac 연결", detail: "아래 순서로 이 Mac을 허용해 주세요.", howTo: MAC_PAIRING_HOW_TO, done: state.runner !== null },
     { label: "로그인 정보", detail: "신한은행 아이디와 비밀번호를 암호화해 저장해요.", done: state.runner !== null && !!state.credentials?.stored },
     { label: "첫 조회", detail: "Mac이 켜져 있을 때 ‘지금 조회하기’를 누르면 잔액을 가져와요.", done: state.job?.state === "succeeded" || state.previousResult !== null },
   ];
@@ -105,16 +132,17 @@ export function BankMacJob({ job }: { job: MacBankJob }) {
       </p>
       {job.state === "authentication_required" ? (
         <p className="text-body mt-2">
-          은행이 추가 인증을 요구했어요. Mac에서 신한은행에 직접 로그인해 인증을 마친 뒤 ‘인증 완료, 계속 조회’를 눌러 주세요. 그 화면에서 이어서 조회하고 로그아웃해요.
+          은행이 추가 인증을 요구했어요. Mac에서 신한은행에 직접 로그인해 인증을 마친 뒤 ‘계속 조회하기’를 눌러 주세요. 그 화면에서 이어서 조회하고 로그아웃해요.
         </p>
       ) : null}
       {job.state === "cancelled" && !job.logoutConfirmed ? (
         <p className="text-caption text-muted-foreground mt-2">Mac의 은행 화면에서 로그아웃됐는지 확인해 주세요.</p>
       ) : null}
+      {/* 실패 이유는 완료·안내 줄(회색 caption)과 구분되게 오류 알림으로 둔다(2026-11-05 HIG 검수). */}
       {job.state === "failed" || job.state === "operation_unknown" ? (
-        <p className="text-caption text-muted-foreground mt-2">
+        <InlineNotice tone="error" className="mt-2">
           {(job.errorCode && failedReasons[job.errorCode]) ?? "은행 조회를 마치지 못했어요. Mac의 은행 화면과 인증 상태를 확인해 주세요."}
-        </p>
+        </InlineNotice>
       ) : null}
       {job.state === "succeeded" ? (
         <>
@@ -128,6 +156,33 @@ export function BankMacJob({ job }: { job: MacBankJob }) {
       ) : null}
     </section>
   );
+}
+
+/** 조회하면 동의하는 내용(접힘). 조회 버튼 바로 아래에 둔다. */
+export function BankConsentDetails() {
+  return (
+    <details className="text-caption text-muted-foreground">
+      <summary className="min-h-11 cursor-pointer py-3 text-center">조회하면 동의하는 내용</summary>
+      <p className="pb-2">{MAC_BANK_RUNNER_CONSENT_TEXT}</p>
+    </details>
+  );
+}
+
+/**
+ * ⋯ 메뉴. 위험한 행동(로그인 정보 삭제·Mac 연결 해제)은 이 안에만 둔다(§3.3).
+ * 로그인 정보 삭제는 예전에 로그인 정보 시트 안 저장 버튼 아래에 있어, 시트 위에 확인 창이 겹쳐 열렸다.
+ */
+export function bankMenuActions(
+  state: { stored: boolean; active: boolean; busy: boolean; storageAvailable: boolean },
+  open: { credentials: () => void; forget: () => void; revoke: () => void }
+): OverflowAction[] {
+  return [
+    { label: state.stored ? "로그인 정보 변경" : "로그인 정보 입력", onSelect: open.credentials, disabled: state.active },
+    ...(state.stored
+      ? [{ label: "로그인 정보 삭제", onSelect: open.forget, destructive: true, disabled: state.active || state.busy || !state.storageAvailable }]
+      : []),
+    { label: "Mac 연결 해제", onSelect: open.revoke, destructive: true, disabled: state.busy },
+  ];
 }
 
 /**
@@ -154,10 +209,11 @@ export function BankStartPanel({
     /^[a-f0-9]{32}$/.test(userCode);
   const [data, setData] = useState<MacBankRunnerState | null>(null),
     [busy, setBusy] = useState(false),
-    [notice, setNotice] = useState<string | null>(null);
+    [notice, setNotice] = useState<PanelNotice | null>(null);
   const [paired, setPaired] = useState(false);
   const [credentialOpen, setCredentialOpen] = useState(false),
-    [revokeOpen, setRevokeOpen] = useState(false);
+    [revokeOpen, setRevokeOpen] = useState(false),
+    [forgetOpen, setForgetOpen] = useState(false);
   const mounted = useRef(false),
     writing = useRef(false),
     readController = useRef<AbortController | null>(null),
@@ -186,12 +242,12 @@ export function BankStartPanel({
         setData(result);
         const confirmed = requestId.current !== null && result.job?.id === requestId.current;
         if (confirmed) requestId.current = null;
-        setNotice((value) => (value === READ_FAILED || (confirmed && value === START_UNCERTAIN) ? null : value));
+        setNotice((value) => (value?.text === READ_FAILED || (confirmed && value?.text === START_UNCERTAIN) ? null : value));
       }
     } catch {
       if (!controller.signal.aborted && mounted.current) {
         setData(null);
-        setNotice(READ_FAILED);
+        setNotice({ tone: "error", text: READ_FAILED });
       }
     }
   }, [authedFetch, householdId, userId]);
@@ -209,7 +265,7 @@ export function BankStartPanel({
     };
   }, [read]);
   async function write(
-    action: "start" | "approve" | "continue" | "cancel" | "revoke"
+    action: "start" | "approve" | "continue" | "cancel" | "revoke" | "forget"
   ): Promise<void> {
     if (writing.current) return;
     writing.current = true;
@@ -231,7 +287,7 @@ export function BankStartPanel({
         );
         if (mounted.current && !controller.signal.aborted) {
           setPaired(true);
-          setNotice("이 Mac을 연결했어요.");
+          setNotice({ tone: "success", text: "이 Mac을 연결했어요." });
         }
       } else if (action === "start") {
         // 결과를 모르는 요청은 같은 요청 번호로 다시 보낸다. 서버는 같은 번호를 다시 실행하지 않고 그 작업을
@@ -256,6 +312,16 @@ export function BankStartPanel({
         await authedFetch((token) =>
           macBankRunnerApi.revoke(token, householdId, id, controller.signal)
         );
+      } else if (action === "forget" && data?.runner) {
+        // 로그인 정보 시트에 있던 삭제를 ⋯ 메뉴로 옮겼다. 요청 본문은 그대로다.
+        const scope = { householdId, runnerId: data.runner.id, expectedVersion: data.credentials?.version ?? null };
+        await authedFetch((token) =>
+          macBankRunnerApi.deleteCredentials(token, scope, controller.signal)
+        );
+        // 메뉴에서 지우면 바뀐 곳(조회 버튼 이름)이 누른 자리와 멀어 완료를 한 줄로 알린다.
+        if (mounted.current && !controller.signal.aborted) {
+          setNotice({ tone: "success", text: "로그인 정보를 지웠어요." });
+        }
       } else if ((action === "continue" || action === "cancel") && data?.job) {
         const id = data.job.id;
         const job = await authedFetch((token) =>
@@ -273,7 +339,7 @@ export function BankStartPanel({
       }
     } catch {
       if (mounted.current && !controller.signal.aborted)
-        setNotice(action === "start" ? START_UNCERTAIN : WRITE_FAILED[action]);
+        setNotice({ tone: "error", text: action === "start" ? START_UNCERTAIN : WRITE_FAILED[action] });
     } finally {
       writing.current = false;
       if (mounted.current && !controller.signal.aborted) {
@@ -294,25 +360,32 @@ export function BankStartPanel({
   // 승인 직후 Mac 상태를 다시 읽는 동안(busy·Mac 없음)에도 안내를 그리지 않는다 — '1. Mac 연결'로 잠깐 되돌아가 보인다.
   const steps = data && !approving && !(busy && !runner) ? firstConnectionSteps(data) : null;
   const current = steps ? steps.findIndex((step) => !step.done) : -1;
+  const howTo = steps && current >= 0 ? steps[current].howTo : undefined;
   // 결과를 모르는 요청이 있어도 막지 않는다 — 같은 요청 번호로 다시 보낸다(write의 start).
   const startDisabled = busy || active || !runner?.online || !stored;
   const menu: OverflowAction[] = runner
-    ? [
-        { label: stored ? "로그인 정보 변경" : "로그인 정보 입력", onSelect: () => setCredentialOpen(true), disabled: active },
-        { label: "Mac 연결 해제", onSelect: () => setRevokeOpen(true), destructive: true, disabled: busy },
-      ]
+    ? bankMenuActions(
+        { stored, active, busy, storageAvailable: !!data?.credentialStorageAvailable },
+        { credentials: () => setCredentialOpen(true), forget: () => setForgetOpen(true), revoke: () => setRevokeOpen(true) }
+      )
     : [];
+  const noticeLine = notice ? <InlineNotice tone={notice.tone}>{notice.text}</InlineNotice> : null;
   return (
     <div className="min-w-0 space-y-5">
       {approving ? (
         <section className="finance-panel space-y-3 p-5" aria-label="Mac 연결 승인">
           <h3 className="text-heading">이 Mac 연결</h3>
           <p className="text-caption text-muted-foreground">
-            연결을 해제할 때까지 이 Mac에서 내가 요청한 신한은행 조회를 허용하며, 모아에서 언제든 연결을 해제할 수 있어요.
+            이 Mac에서 내가 요청한 신한은행 조회를 허용해요. 모아에서 언제든 연결을 해제할 수 있어요.
           </p>
-          <Button className="w-full" disabled={busy} onClick={() => { void write("approve"); }}>
-            연결 해제 전까지 허용
-          </Button>
+          {noticeLine}
+          {/* '연결 해제 전까지 허용'은 '해제'가 먼저 읽혀 무엇을 하는 버튼인지 헷갈렸다 — 동사를 앞에, 기한은 아래 한 줄로. */}
+          <div className="space-y-1.5">
+            <Button size="lg" className="w-full" disabled={busy} onClick={() => { void write("approve"); }}>
+              {APPROVE_LABEL}
+            </Button>
+            <p className="text-caption text-muted-foreground text-center">연결을 해제할 때까지 유지돼요</p>
+          </div>
         </section>
       ) : null}
       {steps && current >= 0 ? (
@@ -332,6 +405,11 @@ export function BankStartPanel({
             ))}
           </ol>
           <p className="text-body">{steps[current].detail}</p>
+          {howTo ? (
+            <ol className="text-body list-decimal space-y-1 pl-5" aria-label="Mac 연결 순서">
+              {howTo.map((line) => <li key={line}>{line}</li>)}
+            </ol>
+          ) : null}
         </section>
       ) : null}
       {runner ? (
@@ -352,16 +430,18 @@ export function BankStartPanel({
           ))}
         </section>
       ) : null}
-      {notice ? <p role="alert" className="text-caption text-muted-foreground">{notice}</p> : null}
-      {!approving && (!data || runner) ? (
+      {!approving ? noticeLine : null}
+      {/* 처음 불러오는 동안은 자리만 잡는다 — 예전에는 이유 없이 꺼진 '지금 조회하기'가 보였다가 Mac이 없으면 사라졌다. */}
+      {!approving && !data && !notice ? <ListLoading rows={1} label="신한 연결 상태를 불러오는 중이에요." /> : null}
+      {!approving && runner ? (
         <div className="space-y-2">
           {authRequired ? (
-            <Button size="lg" className="w-full" disabled={busy || !runner?.online} onClick={() => { void write("continue"); }}>
-              인증 완료, 계속 조회
+            <Button size="lg" className="w-full" disabled={busy || !runner.online} onClick={() => { void write("continue"); }}>
+              계속 조회하기
             </Button>
-          ) : runner && !stored ? (
+          ) : !stored ? (
             <Button size="lg" className="w-full" disabled={busy} onClick={() => setCredentialOpen(true)}>
-              로그인 정보 입력
+              로그인 정보 입력하기
             </Button>
           ) : (
             <Button
@@ -376,17 +456,14 @@ export function BankStartPanel({
             </Button>
           )}
           {active ? (
-            <Button variant="ghost" className="w-full" disabled={busy} onClick={() => { void write("cancel"); }}>
-              요청 취소
+            <Button variant="ghost" size="lg" className="w-full" disabled={busy} onClick={() => { void write("cancel"); }}>
+              조회 멈추기
             </Button>
           ) : null}
-          {runner && !runner.online && !active ? (
+          {!runner.online && !active ? (
             <p className="text-caption text-muted-foreground text-center">Mac을 켜면 조회할 수 있어요.</p>
           ) : null}
-          <details className="text-caption text-muted-foreground">
-            <summary className="min-h-11 cursor-pointer py-3 text-center">조회하면 동의하는 내용</summary>
-            <p className="pb-2">{MAC_BANK_RUNNER_CONSENT_TEXT}</p>
-          </details>
+          <BankConsentDetails />
         </div>
       ) : null}
       {runner ? (
@@ -403,6 +480,11 @@ export function BankStartPanel({
             storageAvailable={!!data?.credentialStorageAvailable}
             disabled={busy || active}
             onChanged={() => { void read(); }}
+            onSaved={() => {
+              // 시트를 닫고 조회 버튼 바로 위에 완료를 알린다 — 닫힌 시트 안의 결과는 보이지 않는다.
+              setCredentialOpen(false);
+              setNotice({ tone: "success", text: "로그인 정보를 저장했어요." });
+            }}
           />
           </DialogContent>
         </Dialog>
@@ -417,13 +499,24 @@ export function BankStartPanel({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>닫기</AlertDialogCancel>
-            <Button
-              variant="destructive"
-              disabled={busy}
-              onClick={() => { setRevokeOpen(false); void write("revoke"); }}
-            >
-              연결 해제
-            </Button>
+            <AlertDialogAction variant="destructive" disabled={busy} onClick={() => { void write("revoke"); }}>
+              연결 해제하기
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {/* 지우면 Mac이 자동 로그인을 못 해 조회가 멈춘다 — 한 번 더 묻는다(리뉴얼 §3.3 위험 행동). */}
+      <AlertDialog open={forgetOpen} onOpenChange={setForgetOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>저장한 로그인 정보를 지울까요?</AlertDialogTitle>
+            <AlertDialogDescription>지우면 다시 저장할 때까지 신한은행을 조회할 수 없어요.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>닫기</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" disabled={busy || active} onClick={() => { void write("forget"); }}>
+              삭제하기
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -441,7 +534,7 @@ function ObservationRow({ observation }: { observation: MacBankJob["observations
         </p>
         <p className="text-caption text-muted-foreground">
           끝 {observation.accountLast4}
-          {!deposit ? ` · 만기 ${observation.maturityDate ?? "미확인"}` : ""}
+          {!deposit ? ` · 만기 ${observation.maturityDate ? formatMonthDay(observation.maturityDate) : "미확인"}` : ""}
         </p>
       </div>
       <p className="text-heading min-w-0 break-all text-right tabular-nums">

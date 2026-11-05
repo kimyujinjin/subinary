@@ -223,7 +223,7 @@ export function planRequest(
   householdId: string
 ): Validation<ManualHousingPlanCreateRequest> {
   if (!draft.label.trim())
-    return { ok: false, message: "주택 계획 이름을 입력해 주세요." };
+    return { ok: false, message: "주택 이름을 입력해 주세요." };
   if (draft.occupancyYear && !/^[1-9]\d{0,3}$/.test(draft.occupancyYear))
     return {
       ok: false,

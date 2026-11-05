@@ -2,7 +2,11 @@
 /* ---------------------------------------------------------------------------
  * Family Memory AI — web · 로그인 (오늘의집 톤)
  * loginRequestSchema로 클라 검증 → useAuth().login → `returnTo`(기본 /dashboard).
- * 카드 없는 화이트 베이스 센터 컬럼: 브랜드 마크 + 큰 제목 + 필드 + 풀폭 CTA.
+ * 카드 없는 화이트 베이스 센터 컬럼: 글자 로고 '모아'(앱 안 헤더와 같은 모양) + 제목 + 필드 + 풀폭 CTA.
+ * 제목은 처음 온 사람에게도 맞는 '로그인'이다(예전 '다시 만나서 반가워요'는 재방문자에게만 맞았다).
+ *
+ * 오류 자리: 이메일·비밀번호가 틀린 경우(401)만 비밀번호 칸 아래에 둔다. 요청 과다(429)·서버·네트워크
+ * 오류는 비밀번호와 무관하므로 폼 위 한 줄로 알린다(`login-failure.ts`).
  *
  * `?returnTo=`는 초대 링크가 로그인에서 끊기지 않게 한다(C-1). 회원가입은 이미
  * invite를 보존했는데 **기존 계정 로그인만** 무조건 /dashboard로 가서, 초대받은
@@ -13,10 +17,11 @@
  *  - 생체인식 재시도: 잠금이 켜진 채 부트스트랩 게이트를 취소/실패해 여기로
  *    왔을 때, 비밀번호 없이 다시 시도하는 보조 버튼.
  *  - 옵트인 제안: 비밀번호 로그인 직후 아직 묻지 않은 기기에서 1회 제안.
- *    다이얼로그가 떠 있는 동안은 대시보드 리다이렉트를 보류한다.
+ *    선택지 둘의 안내라 바텀 시트로 띄우고(sheet-layout.ts), 떠 있는 동안은 대시보드 리다이렉트를 보류한다.
+ *  생체 인식 이름은 기기별로 부른다(안드로이드 '지문·얼굴 인식', 아이폰 'Face ID' — `biometric-copy.ts`).
  * ------------------------------------------------------------------------- */
 import { zodResolver } from "@hookform/resolvers/zod";
-import { CreditCard, Fingerprint, Loader2 } from "lucide-react";
+import { Fingerprint, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
@@ -27,14 +32,6 @@ import { loginRequestSchema, type LoginRequest } from "@family/contracts";
 
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Form,
   FormControl,
   FormField,
@@ -43,7 +40,9 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { ApiError } from "@/lib/api-client";
+import { BottomSheet } from "@/components/widgets/bottom-sheet";
+import { InlineNotice } from "@/components/widgets/inline-notice";
+import { PasswordInput } from "@/components/widgets/password-input";
 import { useAuth } from "@/lib/auth-context";
 import {
   authenticateBiometric,
@@ -54,7 +53,10 @@ import {
 import { getStoredRefreshToken, isNative } from "@/lib/native";
 import { safeInternalPath } from "@/lib/safe-redirect";
 
+import { BrandWordmark } from "../brand-wordmark";
 import { inviteTokenFromReturnTo, registerHrefFor } from "../invite-links";
+import { currentBiometricCopy } from "./biometric-copy";
+import { loginFailure } from "./login-failure";
 
 /** `useSearchParams`는 Suspense 경계를 요구한다(정적 export 포함). */
 export default function LoginPage() {
@@ -76,6 +78,9 @@ function LoginForm() {
   // 링크를 숨긴다 — 초대 없이 열면 다 입력한 뒤에야 서버가 거절한다.
   const registerHref = registerHrefFor(inviteTokenFromReturnTo(returnTo));
   const { login, status, biometricLogin } = useAuth();
+  // 비밀번호와 무관한 실패(요청 과다·서버·네트워크)는 칸 아래가 아니라 폼 위에 둔다.
+  const [formError, setFormError] = useState<string | null>(null);
+  const bio = currentBiometricCopy();
 
   const form = useForm<LoginRequest>({
     resolver: zodResolver(loginRequestSchema),
@@ -125,12 +130,9 @@ function LoginForm() {
       }
     } catch (err) {
       holdRedirect.current = false;
-      form.setError("password", {
-        message:
-          err instanceof ApiError
-            ? err.message
-            : "로그인하지 못했어요. 잠시 후 다시 시도해 주세요.",
-      });
+      const failure = loginFailure(err);
+      if (failure.field) form.setError("password", { message: failure.message });
+      else setFormError(failure.message);
     }
   }
 
@@ -148,7 +150,7 @@ function LoginForm() {
         await setBiometricPref("off");
       } else {
         // 취소/실패 — 설정을 남기지 않아 다음 로그인 때 다시 제안한다.
-        toast.error("생체인식을 확인하지 못했어요. 더보기에서 다시 켤 수 있어요.");
+        toast.error("생체인식을 확인하지 못했어요. 전체 탭에서 다시 켤 수 있어요.");
       }
     } else {
       await setBiometricPref("off");
@@ -178,23 +180,28 @@ function LoginForm() {
   return (
     <main className="bg-background flex min-h-dvh items-center justify-center p-6">
       <div className="flex w-full max-w-sm flex-col gap-8">
-        {/* 브랜드 마크 + 큰 제목 */}
-        <div className="flex flex-col items-center gap-3 text-center">
-          <span className="bg-primary text-primary-foreground rounded-card flex size-12 items-center justify-center">
-            <CreditCard className="size-6" />
-          </span>
-          <h1 className="text-title tracking-tight">다시 만나서 반가워요</h1>
+        {/* 글자 로고 + 제목 */}
+        <div className="flex flex-col items-center gap-2 text-center">
+          <BrandWordmark />
+          <h1 className="text-title tracking-tight">로그인</h1>
           <p className="text-muted-foreground text-body">
-            가족의 소비와 예산, 이어서 함께 관리해요.
+            가족의 소비와 예산을 함께 관리해요.
           </p>
         </div>
 
         <Form {...form}>
           <form
-            onSubmit={form.handleSubmit(onSubmit)}
+            onSubmit={(event) => {
+              // 다시 누르면 지난 실패 문구는 지운다(칸 검증에서 멈춰도 남지 않게).
+              setFormError(null);
+              void form.handleSubmit(onSubmit)(event);
+            }}
             className="flex flex-col gap-4"
             noValidate
           >
+            {formError ? (
+              <InlineNotice tone="error">{formError}</InlineNotice>
+            ) : null}
             <FormField
               control={form.control}
               name="email"
@@ -204,8 +211,8 @@ function LoginForm() {
                   <FormControl>
                     <Input
                       type="email"
-                      autoComplete="email"
-                      placeholder="you@example.com"
+                      autoComplete="username"
+                      placeholder="이메일 주소"
                       {...field}
                     />
                   </FormControl>
@@ -220,8 +227,7 @@ function LoginForm() {
                 <FormItem>
                   <FormLabel>비밀번호</FormLabel>
                   <FormControl>
-                    <Input
-                      type="password"
+                    <PasswordInput
                       autoComplete="current-password"
                       placeholder="비밀번호를 입력해 주세요"
                       {...field}
@@ -234,7 +240,7 @@ function LoginForm() {
             <Button
               type="submit"
               size="lg"
-              className="mt-2 h-12 w-full"
+              className="mt-2 w-full"
               disabled={form.formState.isSubmitting}
             >
               {form.formState.isSubmitting ? (
@@ -251,9 +257,9 @@ function LoginForm() {
         {bioRetry && (
           <Button
             type="button"
-            variant="outline"
+            variant="weak"
             size="lg"
-            className="h-12 w-full"
+            className="w-full"
             disabled={bioBusy}
             onClick={onBiometricRetry}
           >
@@ -263,7 +269,7 @@ function LoginForm() {
               </>
             ) : (
               <>
-                <Fingerprint className="size-4" /> 생체인식으로 로그인
+                <Fingerprint className="size-4" /> {bio.by} 로그인
               </>
             )}
           </Button>
@@ -274,7 +280,7 @@ function LoginForm() {
             아직 계정이 없나요?
             <Link
               href={registerHref}
-              className="text-accent-foreground inline-flex min-h-11 items-center px-1 font-medium hover:underline"
+              className="text-accent-foreground inline-flex min-h-11 items-center px-1 font-medium hover:underline active:opacity-60"
             >
               회원가입하기
             </Link>
@@ -286,48 +292,44 @@ function LoginForm() {
         )}
       </div>
 
-      {/* 로그인 직후 1회 생체인식 옵트인 제안(네이티브 전용). */}
-      <Dialog
+      {/* 로그인 직후 1회 생체 인식 제안(네이티브 전용). 선택지 둘의 안내라 입력 폼 창이 아니라 시트다. */}
+      <BottomSheet
         open={optInOpen}
         onOpenChange={(open) => {
-          // 바깥 탭/ESC로 닫으면 '나중에'와 동일하게 처리하되, 설정을 남기지
-          // 않아 다음 로그인 때 다시 제안한다.
+          // 바깥 탭·닫기로 닫으면 '사용하지 않기'와 달리 설정을 남기지 않아
+          // 다음 로그인 때 다시 제안한다.
           if (!open) {
             setOptInOpen(false);
             holdRedirect.current = false;
             router.replace(returnTo);
           }
         }}
+        title={`${bio.by} 잠금을 풀까요?`}
       >
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>생체인식으로 잠금 해제할까요?</DialogTitle>
-            <DialogDescription>
-              앱을 열 때 Face ID·지문으로 본인을 확인한 뒤 자동으로
-              로그인해요. 더보기에서 언제든 바꿀 수 있어요.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="flex-col gap-2">
-            <Button
-              type="button"
-              size="lg"
-              className="h-11 w-full"
-              onClick={() => void answerOptIn(true)}
-            >
-              <Fingerprint className="size-4" /> 생체인식 사용하기
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="lg"
-              className="h-11 w-full"
-              onClick={() => void answerOptIn(false)}
-            >
-              사용하지 않기
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <p className="text-body text-muted-foreground pb-4">
+          앱을 열 때 {bio.by} 본인을 확인한 뒤 자동으로 로그인해요. 전체 탭의
+          ‘생체인식 잠금’에서 언제든 바꿀 수 있어요.
+        </p>
+        <div className="flex flex-col gap-2">
+          <Button
+            type="button"
+            size="lg"
+            className="w-full"
+            onClick={() => void answerOptIn(true)}
+          >
+            <Fingerprint className="size-4" /> {bio.name} 사용하기
+          </Button>
+          <Button
+            type="button"
+            variant="weak"
+            size="lg"
+            className="w-full"
+            onClick={() => void answerOptIn(false)}
+          >
+            사용하지 않기
+          </Button>
+        </div>
+      </BottomSheet>
     </main>
   );
 }

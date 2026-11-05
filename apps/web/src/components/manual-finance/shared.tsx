@@ -9,9 +9,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { ManualFinanceVisibility } from "@family/contracts";
+import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { BottomSheet } from "@/components/widgets/bottom-sheet";
 import { ListLoading } from "@/components/widgets/list-loading";
 import {
   Dialog,
@@ -43,50 +44,46 @@ export function LegacyPrivateNotice({ href }: { href: "/assets" | "/plan" }) {
   return (
     <section
       aria-label="기존 비공개 기록"
-      className="rounded-xl border bg-muted/30 p-4"
+      className="rounded-card bg-muted/50 p-4"
     >
-      <h2 className="text-sm font-semibold">기존 비공개 기록</h2>
-      <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
-        예전에 비공개로 등록한 내용이에요. 수정해도 공개 범위는 유지돼요.
+      <h2 className="text-body font-semibold">기존 비공개 기록</h2>
+      <p className="text-caption text-muted-foreground mt-1">
+        예전에 나만 보기로 등록한 기록이에요. 고쳐도 가족에게 공개되지 않아요.
       </p>
       <Link
         href={href}
-        className="text-primary mt-1 inline-flex min-h-11 items-center text-sm font-medium"
+        className="text-body text-primary mt-1 inline-flex min-h-11 items-center gap-1 font-medium active:opacity-60"
       >
-        공유 목록으로 돌아가기 →
+        가족 기록으로 돌아가기
+        <ChevronRight className="size-5" aria-hidden="true" />
       </Link>
     </section>
   );
 }
 
-/** Display only: editing an existing private record never widens its visibility. */
-export function VisibilityField({
-  value,
-  creating = false,
-}: {
-  value: ManualFinanceVisibility;
-  creating?: boolean;
-}) {
+/*
+ * 공개 범위 상자(VisibilityField)는 2026-11-05 HIG 검수 4단계에서 지웠다 — 모든 기록이 가족 공개라(§8)
+ * 폼마다 같은 말을 되풀이했다. 예전에 나만 보기로 만든 기록은 목록 머리의 LegacyPrivateNotice가 알린다.
+ */
+
+/** 입력 칸 아래 한 줄 오류. 칸의 `aria-describedby`로 이어 읽힌다(제출 때 생기므로 바로 읽어 주는 alert). */
+export function FieldError({ id, children }: { id: string; children: ReactNode }) {
   return (
-    <section aria-label="공개 범위" className="rounded-lg bg-muted/50 p-3">
-      <p className="text-sm font-medium">
-        {value === "household" ? "가족과 공유" : "기존 비공개 기록"}
-      </p>
-      <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
-        {value === "household"
-          ? creating
-            ? "저장하면 현재 선택한 가족의 모든 구성원이 내용과 금액을 볼 수 있어요."
-            : "현재 선택한 가족의 모든 구성원이 내용과 금액을 볼 수 있어요."
-          : "나만 볼 수 있어요. 수정해도 가족에게 공유되지 않아요."}
-      </p>
-    </section>
+    <p id={id} role="alert" className="text-caption text-destructive font-normal break-words">
+      {children}
+    </p>
   );
 }
+
+/** 폼 안 기본 선택 칸(종류·항목·넣는 날) — Input과 같은 회색 채움·높이·모서리. */
+export const NATIVE_SELECT =
+  "bg-muted text-body h-12 w-full min-w-0 rounded-control border border-transparent px-4 font-normal outline-none focus-visible:border-primary disabled:cursor-not-allowed disabled:opacity-50";
+
 export function FinanceLoadError({ retry }: { retry: () => void }) {
   return (
     <section role="alert" className="finance-panel p-5">
-      <h2 className="font-semibold">기록을 불러오지 못했어요</h2>
-      <p className="text-muted-foreground mt-2 text-sm">
+      <h2 className="text-heading">기록을 불러오지 못했어요</h2>
+      <p className="text-body text-muted-foreground mt-2">
         잠시 후 다시 불러와 주세요.
       </p>
       <Button variant="outline" className="mt-4 min-h-11" onClick={retry}>
@@ -109,9 +106,13 @@ export function FinanceLoading() {
 /**
  * 누르면 액션 시트로 한 번 더 묻는 버튼.
  *
- * 확인 버튼 글자는 '확인'이 아니라 실제로 일어날 동작(기본은 `label` — '자산 삭제' 등)이다.
+ * 확인 버튼 글자는 '확인'이 아니라 실제로 일어날 동작(기본은 `label` — '삭제하기' 등)이다.
  * 지우기·제거처럼 되돌리기 어려운 동작(`destructive`)은 확인 버튼도 위험 색으로 그린다 —
  * 예전에는 무엇을 하든 채움 '확인'이라 삭제와 다시 불러오기가 같은 무게로 보였다.
+ * 닫는 버튼은 '취소'가 아니라 '닫기'다 — 이 앱에서 '취소'는 결제 취소를 뜻한다.
+ *
+ * `appearance="text"`는 폼 맨 아래의 위험 텍스트 버튼이다(HIG: 파괴 동작은 저장 버튼과 떨어뜨린다).
+ * 예전에는 접힌 '자산 삭제'를 펼친 뒤 빨간 채움 버튼을 눌러야 해서 한 화면에 채움 버튼이 둘이었다.
  */
 export function ConfirmAction({
   label,
@@ -121,6 +122,7 @@ export function ConfirmAction({
   onConfirm,
   disabled = false,
   destructive = false,
+  appearance = "button",
 }: {
   label: string;
   /** 확인 버튼 글자. 없으면 `label`을 그대로 쓴다. */
@@ -130,6 +132,8 @@ export function ConfirmAction({
   onConfirm: () => void;
   disabled?: boolean;
   destructive?: boolean;
+  /** button: 약한 버튼(위험이면 위험 색), text: 글자만 있는 버튼(위험이면 빨간 글자). */
+  appearance?: "button" | "text";
 }) {
   const [open, setOpen] = useState(false);
   const host = useContext(RecordDialogContext);
@@ -140,9 +144,15 @@ export function ConfirmAction({
     <>
       <Button
         type="button"
-        variant={destructive ? "destructive" : "outline"}
+        variant={
+          appearance === "text" ? "ghost" : destructive ? "destructive" : "weak"
+        }
         disabled={disabled}
-        className="min-h-11 h-auto w-full whitespace-normal"
+        className={
+          appearance === "text"
+            ? `min-h-11 h-auto w-full whitespace-normal ${destructive ? "text-destructive" : "text-primary"}`
+            : "min-h-11 h-auto w-full whitespace-normal"
+        }
         onClick={() => setOpen(true)}
       >
         {label}
@@ -154,7 +164,7 @@ export function ConfirmAction({
             <AlertDialogDescription>{description}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="min-h-11">취소</AlertDialogCancel>
+            <AlertDialogCancel className="min-h-11">닫기</AlertDialogCancel>
             <AlertDialogAction
               variant={destructive ? "destructive" : "default"}
               className="min-h-11 h-auto whitespace-normal"
@@ -169,6 +179,46 @@ export function ConfirmAction({
   );
 }
 
+/**
+ * 고칠 수 없는 기록(가족이 등록한 자산·주택 계획)의 읽기 전용 상세 — 창 모양 표의 '시트'(BottomSheet).
+ * 예전에는 칸이 모두 꺼진 입력 폼으로 열려 무엇을 할 수 있는지 읽기 어려웠다(2026-11-05 HIG 검수).
+ * 닫기만 있다. 폰의 뒤로 버튼도 시트를 닫는다.
+ */
+export function RecordSheet({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(
+    () =>
+      registerTransactionDetailBack(window, (source) => {
+        if (source === "native") closeRef.current();
+      }),
+    []
+  );
+  return (
+    <BottomSheet
+      open
+      onOpenChange={(open) => {
+        if (!open) closeRef.current();
+      }}
+      title={title}
+    >
+      <div className="flex min-w-0 flex-col gap-4 pb-1">{children}</div>
+    </BottomSheet>
+  );
+}
+
+/**
+ * 입력 폼(창 모양 표의 기본 Dialog). 닫기는 오른쪽 위 X 하나다 — 다른 입력 폼처럼 X + 주 버튼으로 맞췄다
+ * (예전에는 X와 아래 '닫기'가 둘 다 있었다). 저장하지 않은 입력이 있으면 액션 시트로 '버리기'를 묻는다.
+ */
 export function RecordDialog({
   title,
   description,
@@ -315,23 +365,16 @@ export function RecordDialog({
           {notice ? (
             <p
               role="status"
-              className="text-muted-foreground shrink-0 border-t px-4 py-2 text-sm sm:px-6"
+              className="text-body text-muted-foreground shrink-0 border-t px-4 py-2 sm:px-6"
             >
               {notice}
             </p>
           ) : null}
-          <DialogFooter className="bg-elevated shrink-0 flex-row flex-wrap gap-2 border-t px-4 py-3 sm:flex-row sm:px-6 [&>button]:w-auto [&>button]:min-w-0 [&>button]:flex-[1_1_7rem] [&>p]:w-full">
-            {footer}
-            <Button
-              type="button"
-              variant="ghost"
-              className="min-h-11 w-full"
-              disabled={busy}
-              onClick={() => close.current()}
-            >
-              닫기
-            </Button>
-          </DialogFooter>
+          {footer ? (
+            <DialogFooter className="bg-elevated shrink-0 flex-row flex-wrap gap-2 border-t px-4 py-3 sm:flex-row sm:px-6 [&>button]:w-auto [&>button]:min-w-0 [&>button]:flex-[1_1_7rem] [&>div]:w-full [&>p]:w-full">
+              {footer}
+            </DialogFooter>
+          ) : null}
           <AlertDialog open={discard} onOpenChange={setDiscard}>
             <AlertDialogContent>
               <AlertDialogHeader>
@@ -351,7 +394,7 @@ export function RecordDialog({
                   className="min-h-11"
                   onClick={finish}
                 >
-                  저장 안 함
+                  버리기
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

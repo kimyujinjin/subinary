@@ -1,3 +1,4 @@
+import { formatMonthDayTime } from "@/lib/format";
 import {
   shinhanLoanCaptureSchema,
   type ImportedLoanRecord,
@@ -72,18 +73,17 @@ export function loanReviewFields(draft: LoanReviewDraft, options: ManualAsset[],
   };
 }
 export const LOAN_TOTAL_LABELS: Record<LoanTotalMode, string> = {
-  reference: "참고만 하기 · 합계 제외", distinct: "별도 대출로 합산", replacement: "기존 수동 대출 대신 합산",
+  reference: "기록만 보관 · 합계 제외", distinct: "별도 대출로 합산", replacement: "직접 입력한 대출 대신 합산",
 };
 export const LOAN_EXCLUSION_LABELS: Record<NonNullable<ImportedLoanRecord["exclusionReason"]>, string> = {
-  reference: "참고 기록이라 합계에서 제외돼요.",
-  replacement_changed: "연결한 수동 대출이 바뀌어 합계에서 제외돼요. 연결을 다시 확인해 주세요.",
+  reference: "기록만 보관해서 합계에서 빠져요.",
+  replacement_changed: "연결한 직접 입력 대출이 바뀌어 합계에서 제외돼요. 연결을 다시 확인해 주세요.",
   duplicate_visible_loan: "같은 계좌의 기록이 겹쳐 합계에서 제외됐어요. 중복 기록을 확인해 주세요.",
   sharing_expired: "공유 상태가 바뀌어 합계에서 제외돼요.",
 };
-export function displayLoanCapturedAt(value: string): string {
-  return new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
-  }).format(new Date(value));
+/** 은행 화면을 확인한 시각 — 앱 공통 표기(서울 기준 '11월 5일 오후 2:31', 해가 다르면 연도). */
+export function displayLoanCapturedAt(value: string, now: Date = new Date()): string {
+  return formatMonthDayTime(value, now);
 }
 export function loanFailureStatus(error: unknown): number | undefined {
   return error && typeof error === "object" && "status" in error && typeof error.status === "number" ? error.status : undefined;

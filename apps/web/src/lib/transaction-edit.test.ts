@@ -15,7 +15,7 @@ function deferred<T>() {
 describe("transaction amount/date validation", () => {
   it.each(["", "0", "-1", "1.5", "1e3", "NaN", "abc", "9007199254740992"])("rejects invalid amount %j instead of dropping it", (amount) => {
     expect(validateTransactionEdit({ ...input, amount })).toEqual({
-      ok: false, errors: { amount: "금액은 1 이상의 정수로 입력해 주세요." },
+      ok: false, errors: { amount: "금액을 0보다 크게 입력해 주세요." },
     });
   });
 

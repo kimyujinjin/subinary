@@ -2,7 +2,8 @@
 /* ---------------------------------------------------------------------------
  * Family Memory AI — web · 회원가입 (오늘의집 톤)
  * registerRequestSchema로 클라 검증 → useAuth().register → /dashboard(→ 온보딩).
- * 카드 없는 화이트 베이스 센터 컬럼: 브랜드 마크 + 큰 제목 + 필드 + 풀폭 CTA.
+ * 카드 없는 화이트 베이스 센터 컬럼: 글자 로고 '모아' + 큰 제목 + 필드 + 풀폭 CTA.
+ * 확인 칸 대신 비밀번호 '보기' 토글로 오타를 막는다(PasswordInput).
  *
  * 운영은 초대받은 사람만 가입할 수 있다(P0-4). 웹은 서버 설정을 모르므로 폼은
  * 그대로 두고, 폼 위 한 줄로 초대 여부를 먼저 알린다(문구는 `../invite-links`).
@@ -10,7 +11,7 @@
  * 틀린 것처럼 읽힌다.
  * ------------------------------------------------------------------------- */
 import { zodResolver } from "@hookform/resolvers/zod";
-import { CreditCard, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -31,9 +32,11 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { InlineNotice } from "@/components/widgets/inline-notice";
+import { PasswordInput } from "@/components/widgets/password-input";
 import { ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 
+import { BrandWordmark } from "../brand-wordmark";
 import { joinPathFor, loginHrefFor, registerNoticeFor } from "../invite-links";
 
 /**
@@ -96,11 +99,9 @@ function RegisterForm() {
   return (
     <main className="bg-background flex min-h-dvh items-center justify-center p-6">
       <div className="flex w-full max-w-sm flex-col gap-8">
-        {/* 브랜드 마크 + 큰 제목 */}
-        <div className="flex flex-col items-center gap-3 text-center">
-          <span className="bg-primary text-primary-foreground rounded-card flex size-12 items-center justify-center">
-            <CreditCard className="size-6" />
-          </span>
+        {/* 글자 로고 + 큰 제목 */}
+        <div className="flex flex-col items-center gap-2 text-center">
+          <BrandWordmark />
           <h1 className="text-title tracking-tight">
             가족 소비 관리,
             <br />
@@ -148,7 +149,7 @@ function RegisterForm() {
                     <Input
                       type="email"
                       autoComplete="email"
-                      placeholder="you@example.com"
+                      placeholder="이메일 주소"
                       {...field}
                     />
                   </FormControl>
@@ -163,11 +164,7 @@ function RegisterForm() {
                 <FormItem>
                   <FormLabel>비밀번호</FormLabel>
                   <FormControl>
-                    <Input
-                      type="password"
-                      autoComplete="new-password"
-                      {...field}
-                    />
+                    <PasswordInput autoComplete="new-password" {...field} />
                   </FormControl>
                   <FormDescription>8자 이상 입력해 주세요</FormDescription>
                   <FormMessage />
@@ -177,7 +174,7 @@ function RegisterForm() {
             <Button
               type="submit"
               size="lg"
-              className="mt-2 h-12 w-full"
+              className="mt-2 w-full"
               disabled={form.formState.isSubmitting}
             >
               {form.formState.isSubmitting ? (
@@ -196,7 +193,7 @@ function RegisterForm() {
           {/* 초대로 왔으면 로그인 뒤 수락 화면으로 돌아오게 토큰을 실어 보낸다. */}
           <Link
             href={loginHrefFor(inviteToken)}
-            className="text-accent-foreground inline-flex min-h-11 items-center px-1 font-medium hover:underline"
+            className="text-accent-foreground inline-flex min-h-11 items-center px-1 font-medium hover:underline active:opacity-60"
           >
             로그인하기
           </Link>

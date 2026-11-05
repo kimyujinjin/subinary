@@ -31,9 +31,13 @@
  *
  * 브랜드별 합계를 보여 주던 "브랜드로 묶어 보기"는 2026-11-05에 뺐다(소유자 승인) —
  * 이름 정리라는 이 화면의 일과 무관한 부가 집계였다.
+ *
+ * 화면 글자에는 '잘린 이름' 같은 판정 이름을 쓰지 않는다 — 사용자가 보는 사실('앞부분이 같은
+ * 이름')로 말한다(2026-11-05 HIG 검수). 선택 바의 '같은 가게로 묶기'가 이 화면의 주 행동이라
+ * 기본 높이(44px) 채움 버튼이다.
  * ------------------------------------------------------------------------- */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, RotateCcw, Search, Store } from "lucide-react";
+import { Check, Search, Store, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -60,6 +64,7 @@ import { Input } from "@/components/ui/input";
 import {
   BottomSheet,
   EmptyState,
+  ErrorState,
   ListLoading,
   ListRow,
   OverflowMenu,
@@ -68,6 +73,7 @@ import {
   StatusChip,
   type OverflowAction,
 } from "@/components/widgets";
+import { FilterChip } from "@/components/widgets/filter-chip";
 import { ApiError } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { formatWon } from "@/lib/format";
@@ -93,7 +99,7 @@ import { findTruncationCandidates } from "@family/shared";
 /** 서버가 다른 구성원의 요약 공개 결제를 접어 보내는 이름(packages/database REDACTED_MERCHANT_LABEL). */
 const REDACTED_MERCHANT = "(비공개)";
 
-/** 제안 한 묶음 — 잘린 이름 제안이면 `identity`가 null이다. */
+/** 제안 한 묶음 — 잘린 이름(앞부분이 같은 이름) 제안이면 `identity`가 null이다. */
 interface Suggestion {
   key: string;
   canonical: string;
@@ -383,21 +389,11 @@ export default function MerchantsPage() {
       {isLoading ? (
         <ListLoading rows={5} label="가맹점을 불러오는 중이에요." />
       ) : isError ? (
-        <div role="alert">
-          <EmptyState
-            title="가맹점을 불러오지 못했어요"
-            action={
-              <Button
-                variant="weak"
-                className="w-full"
-                disabled={isFetching}
-                onClick={() => void refetch()}
-              >
-                <RotateCcw /> 다시 시도
-              </Button>
-            }
-          />
-        </div>
+        <ErrorState
+          message="가맹점을 불러오지 못했어요"
+          retrying={isFetching}
+          onRetry={() => void refetch()}
+        />
       ) : items.length === 0 ? (
         <EmptyState
           icon={<Store />}
@@ -428,7 +424,7 @@ export default function MerchantsPage() {
                       <ListRow
                         className="flex-1"
                         title={s.canonical}
-                        subtitle={`${s.identity ? `${s.identity.brand} · ` : "잘린 이름 · "}${s.aliases.join(" · ")} · 합치면 ${s.transactionCount}건 ${formatWon(s.netTotal)}`}
+                        subtitle={`${s.identity ? `${s.identity.brand} · ` : "앞부분이 같은 이름 · "}${s.aliases.join(" · ")} · 합치면 ${s.transactionCount}건 ${formatWon(s.netTotal)}`}
                         value={
                           <Button
                             size="sm"
@@ -586,18 +582,24 @@ export default function MerchantsPage() {
           data-fab
           className="fixed inset-x-0 bottom-[calc(var(--app-tabbar-h)+0.5rem)] z-30 px-4"
         >
-          <div className="bg-background/95 mx-auto flex w-full max-w-2xl items-center gap-2 rounded-card p-3 shadow-lg backdrop-blur">
-            <span className="text-body min-w-0 flex-1 truncate pl-1">
+          {/* 선택 모드 막대: [× 선택 해제] 상태 · 주 행동. 주 행동을 44px로 키운 만큼 해제는 아이콘으로
+              줄여 폰 폭(360px)에서도 상태 글자가 두 줄 안에 들어오게 한다(잘라 버리지 않는다). */}
+          <div className="bg-background/95 mx-auto flex w-full max-w-2xl items-center gap-2 rounded-card py-2 pr-2 pl-1 shadow-lg backdrop-blur">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="선택 해제"
+              onClick={() => setSelected(new Set())}
+            >
+              <X />
+            </Button>
+            <span className="text-body min-w-0 flex-1">
               {selected.size < 2
                 ? "하나 더 고르면 묶을 수 있어요"
                 : `${selected.size}개를 골랐어요`}
             </span>
-            <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
-              선택 해제
-            </Button>
-            {/* 이 화면의 주 행동 — 채움 버튼은 이것 하나다. */}
+            {/* 이 화면의 주 행동 — 채움 버튼은 이것 하나이고, 작은 버튼(36px)이 아니라 기본 높이 44px다. */}
             <Button
-              size="sm"
               disabled={selected.size < 2}
               onClick={() => openPicker([...selected], true)}
             >
@@ -659,25 +661,23 @@ export default function MerchantsPage() {
               <p className="text-caption text-muted-foreground">
                 고른 카테고리가 앞으로의 거래에 붙고, 지난 거래 분류는 그대로예요.
               </p>
-              <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="합칠 카테고리">
+              {/* 칩은 보이는 알약 36px·누르는 칸 44px(FilterChip). 고른 것은 색과 체크 아이콘이 함께 말한다. */}
+              <div className="flex flex-wrap gap-x-1.5" role="radiogroup" aria-label="합칠 카테고리">
                 {categoryChoices.map((c) => {
                   const active = chosenCategoryId === c.id;
                   return (
-                    <button
+                    <FilterChip
                       key={c.id}
-                      type="button"
                       role="radio"
                       aria-checked={active}
+                      active={active}
                       onClick={() => setResolveCategoryId(c.id)}
-                      className={cn(
-                        "text-caption min-h-9 rounded-full px-3 font-semibold transition-colors",
-                        active
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-muted-foreground hover:text-foreground active:text-foreground",
-                      )}
                     >
+                      {active ? (
+                        <Check aria-hidden="true" className="-ml-0.5 mr-0.5 inline size-3.5 align-[-2px]" />
+                      ) : null}
                       {c.name}
-                    </button>
+                    </FilterChip>
                   );
                 })}
               </div>
@@ -744,7 +744,7 @@ export default function MerchantsPage() {
             <p className="text-body">
               {evidenceFor.reason === "brand_notation"
                 ? "브랜드와 지점이 같고 표기만 달라요."
-                : "브랜드가 같고 지점 이름이 잘린 것으로 보여요."}
+                : "브랜드가 같고, 한쪽은 지점 이름이 줄여 적힌 것으로 보여요."}
             </p>
             <ul className="flex flex-col gap-1">
               {evidenceFor.evidence.map((e) => (

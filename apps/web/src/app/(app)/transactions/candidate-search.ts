@@ -25,7 +25,7 @@ export interface CandidateSearchFields {
   amount: number;
   /** 남은 잔액(minor units). */
   remaining: number;
-  /** 화면에 보이는 날짜 문자열(예: "2026. 8. 3."). */
+  /** 화면에 보이는 날짜 문자열(예: "8월 3일", 올해가 아니면 "2025년 8월 3일" — lib/format formatMonthDay). */
   dateLabel: string;
 }
 

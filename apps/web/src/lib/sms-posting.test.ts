@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pollAcceptedPosting, postingConfirmed, postingMessage, shouldKeepUnpostedSummary, shouldPollPosting, smsPostingDisposition, type PostingStatus } from "./sms-posting";
+import { pollAcceptedPosting, postingConfirmed, postingMessage, shouldKeepUnpostedSummary, shouldPollPosting, smsPostingDisposition, todoSmsTaskText, type PostingStatus } from "./sms-posting";
 
 const pending: PostingStatus = { parseStatus: "parsed", transactionType: "approval", posting: { status: "pending", transactionId: null, transactionStatus: null, reason: "processing" } };
 const posted: PostingStatus = { ...pending, posting: { status: "posted", transactionId: "synthetic-id", transactionStatus: "approved", reason: null } };
@@ -56,6 +56,13 @@ describe("SMS posting feedback", () => {
   it("treats a declined message as non-spend", () => {
     expect(postingMessage({ parseStatus: "parsed", transactionType: "declined" })).toContain("지출에는 포함하지 않아요");
   });
+  it("결제 실패 문자는 상태 이름 '결제 실패'로 말한다(문자 확인 창 토스트와 같은 말)", () => {
+    const viaReason: PostingStatus = { parseStatus: "parsed", transactionType: "approval", posting: { status: "not_applicable", transactionId: null, transactionStatus: null, reason: "declined" } };
+    for (const detail of [{ parseStatus: "parsed", transactionType: "declined" }, viaReason]) {
+      expect(postingMessage(detail)).toBe("결제 실패 문자로 정리했어요. 지출에는 포함하지 않아요.");
+      expect(postingMessage(detail)).not.toContain("거절");
+    }
+  });
   it("processing posting overrides a stale parsing review flag without asking for user approval", () => {
     const detail = { ...pending, parseStatus: "pending_review" };
     expect(smsPostingDisposition(detail)).toBe("processing");
@@ -88,5 +95,27 @@ describe("SMS posting feedback", () => {
     const result = await pollAcceptedPosting(async () => { throw Error("synthetic status timeout"); }, async () => {});
     expect(result).toEqual({ detail: null, statusUnavailable: true });
     expect(postingMessage(result.detail)).toContain("다시 등록하지 않아도");
+  });
+});
+
+describe("할 일 화면의 문자 줄 부제", () => {
+  it("이미 할 일 화면이라 '할 일에서 확인'으로 보내지 않고 할 동작을 말한다", () => {
+    const readFailed: PostingStatus = { parseStatus: "parse_failed", transactionType: null };
+    const prefilled: PostingStatus = { parseStatus: "quarantined", transactionType: "approval" };
+    expect(todoSmsTaskText(readFailed)).toBe("받은 문자를 보고 금액·가맹점을 입력해 주세요");
+    expect(todoSmsTaskText(prefilled)).toBe("금액·가맹점이 맞는지 확인해 주세요");
+    expect(todoSmsTaskText(readFailed)).not.toContain("할 일");
+    expect(todoSmsTaskText(prefilled)).not.toContain("할 일");
+  });
+  it("반영 상태가 '못 읽음'이면 옛 파싱 상태와 상관없이 직접 입력을 안내한다", () => {
+    const detail = { ...pending, posting: { ...pending.posting!, status: "needs_review" as const, reason: "parse_failed" as const } };
+    expect(todoSmsTaskText(detail)).toContain("입력해 주세요");
+  });
+  it("할 일 화면 밖(문자 붙여넣기)의 안내는 그대로 할 일 화면을 가리킨다", () => {
+    expect(postingMessage({ parseStatus: "parse_failed", transactionType: null })).toContain("할 일에서 확인해 주세요");
+    expect(postingMessage({ parseStatus: "quarantined", transactionType: "approval" })).toContain("할 일에서 확인해 주세요");
+  });
+  it("확인할 일이 아닌 상태는 반영 상태 문구를 그대로 쓴다", () => {
+    expect(todoSmsTaskText(pending)).toBe(postingMessage(pending));
   });
 });

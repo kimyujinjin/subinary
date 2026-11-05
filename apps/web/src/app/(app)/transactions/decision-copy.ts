@@ -2,7 +2,7 @@
  * 거래 상세의 '확인할 거래' 결정 블록 — 무엇을 묻고 어떤 답을 받을지(2026-11-05 HIG 검수 P0-1).
  *
  * 예전에는 상태 칩과 채움 버튼 '정상 거래로 확인하기'만 있었다. 무엇이 의심스러운지 말하지 않았고,
- * 반대 답('중복이라 빼기')은 ⋯ 메뉴 안에만 있어 진짜 중복을 '정상'으로 확정해 합계가 두 번 잡힐 수 있었다.
+ * 반대 답(합계에서 빼기)은 ⋯ 메뉴 안에만 있어 진짜 중복을 '정상'으로 확정해 합계가 두 번 잡힐 수 있었다.
  * 이제 상태마다 질문 한 줄과 같은 무게의 답을 나란히 둔다(채움 버튼 없음).
  *
  * 서버가 이 상태를 매기는 때(apps/worker 승격, packages/transaction-domain):
@@ -76,7 +76,7 @@ export function reviewDecision(
       };
     }
     return {
-      question: "이 취소가 맞는지 확인해 주세요",
+      question: "이 환불이 맞는지 확인해 주세요",
       hint: null,
       pairLabel: null,
       actions: [{ action: "markValid", label: "확인했어요" }],
@@ -94,7 +94,8 @@ export function reviewDecision(
       pairLabel: input.duplicatePairAt != null ? "그 결제 보기" : null,
       actions: [
         { action: "markValid", label: "정상 결제예요" },
-        { action: "exclude", label: "중복이라 빼기" },
+        // 행동 이름은 '합계에서 빼기' 하나다 — 왜 빼는지는 위 질문이 이미 말한다.
+        { action: "exclude", label: "합계에서 빼기" },
       ],
     };
   }
@@ -108,9 +109,9 @@ export function reviewDecision(
       actions: input.canPickCard
         ? [
             { action: "pickCard", label: "카드 고르기" },
-            { action: "markValid", label: "이대로 확인" },
+            { action: "markValid", label: "이대로 확인하기" },
           ]
-        : [{ action: "markValid", label: "이대로 확인" }],
+        : [{ action: "markValid", label: "이대로 확인하기" }],
     };
   }
   // 카드는 나중에 골랐지만 아직 확인하지 않은 결제.

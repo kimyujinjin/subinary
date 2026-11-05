@@ -7,7 +7,6 @@ import {
   homeProcessingText,
   homeTodoRows,
   homeTodoSources,
-  manualDateText,
   manualKrwText,
   visibleReviewCount,
   type HomeTodoCountsInput,
@@ -149,13 +148,5 @@ describe("home record summaries", () => {
   it("never loses decimal-string precision beyond the safe integer limit", () => {
     expect(manualKrwText("90071992547409931234")).toBe("90,071,992,547,409,931,234원");
     expect(manualKrwText("-90071992547409931234")).toBe("-90,071,992,547,409,931,234원");
-  });
-
-  it("does not invent today or shift the stored calendar day", () => {
-    expect(manualDateText(null)).toBe("미입력");
-    expect(manualDateText("2026-11-01")).toBe("2026-11-01");
-    expect(manualDateText("not-a-date")).toBe("미입력");
-    expect(manualDateText("2026-02-31")).toBe("미입력");
-    expect(manualDateText("2026-10-00")).toBe("미입력");
   });
 });
