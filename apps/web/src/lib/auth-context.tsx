@@ -40,7 +40,7 @@ import {
   restoreQueryCache,
   startQueryCachePersistence,
 } from "./query-persistence";
-import { isRetriableFailure } from "./session-failure";
+import { isRetriableFailure, retryWithRefresh } from "./session-failure";
 import {
   authenticateBiometricResilient,
   getBiometricPref,
@@ -203,29 +203,20 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
   }, [setAccessToken]);
 
   const authedFetch = useCallback(
-    async <T,>(fn: (token: AccessToken) => Promise<T>): Promise<T> => {
-      try {
-        return await fn(accessTokenRef.current);
-      } catch (error) {
-        if (!(error instanceof ApiError) || error.status !== 401) {
-          throw error;
-        }
-        // 401 → 단일화된 refresh 후 1회 재시도(동시 401은 같은 refresh를 공유).
-        try {
+    <T,>(fn: (token: AccessToken) => Promise<T>): Promise<T> =>
+      // 401 → 단일화된 refresh 후 1회 재시도(동시 401은 같은 refresh를 공유). 갱신 실패만
+      // 세션 종료로 본다 — 네트워크·5xx로 로그아웃하면 응답만 잃은 경우에도 튕기고(2026-11-04
+      // 실측: 하루 6회), 갱신 뒤 재시도 실패로 로그아웃하면 틀린 비밀번호 한 번에 튕긴다(2026-11-05).
+      retryWithRefresh(
+        fn,
+        accessTokenRef.current,
+        async () => {
           const refreshed = await refreshSession();
           setStatus("authenticated");
-          return await fn(refreshed.tokens.accessToken);
-        } catch (refreshError) {
-          // 부트스트랩과 같은 기준으로 세션이 정말 끝난 응답(401 등)만 로그아웃한다.
-          // 네트워크·5xx·시간 초과·보안 저장소 오류까지 로그아웃하면, 서버가 새 토큰을 이미
-          // 발급했는데 응답만 잃은 경우에도 로그인 화면으로 튕긴다(2026-11-04 실측: 앱에서
-          // 하루 6회, 서버엔 버려진 세션 48개). 저장 토큰은 보존되고 다음 갱신에서 회전
-          // 유예(24시간)로 복구되므로 이 요청만 실패시킨다.
-          if (!isRetriableFailure(refreshError)) clearSession();
-          throw refreshError;
-        }
-      }
-    },
+          return refreshed.tokens.accessToken;
+        },
+        clearSession,
+      ),
     [clearSession, refreshSession],
   );
 

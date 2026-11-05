@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Inject,
@@ -344,7 +345,9 @@ export class AuthService {
       currentPassword,
     );
     if (!valid) {
-      throw new UnauthorizedException('invalid credentials');
+      // 틀린 현재 비밀번호는 세션 문제가 아니다. 401이면 앱이 토큰 만료로 오인해 갱신·재시도를
+      // 하고 로그아웃까지 갔다(2026-11-05). 400 + 한국어 문구로 화면이 그대로 보여 준다.
+      throw new BadRequestException('지금 비밀번호가 맞지 않아요.');
     }
 
     const passwordHash = await this.passwordService.hash(newPassword);
@@ -354,6 +357,19 @@ export class AuthService {
       .where(eq(schema.users.id, userId));
 
     await this.revokeAllSessions(userId, 'password_change');
+    // 화면은 "모든 기기에서 로그아웃"이라고 말한다. 세션만 끊으면 잃어버린 폰도 결제 알림을
+    // 계속 받으므로 푸시 구독도 끊는다. 이 기기는 다시 로그인하면 앱이 토큰을 다시 등록한다
+    // (registerSubscription이 되살린다).
+    const now = new Date();
+    await this.db
+      .update(schema.pushSubscriptions)
+      .set({ revokedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(schema.pushSubscriptions.userId, userId),
+          isNull(schema.pushSubscriptions.revokedAt),
+        ),
+      );
   }
 
   /** Returns the current user plus their active household memberships. */
