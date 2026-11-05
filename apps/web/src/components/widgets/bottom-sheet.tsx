@@ -1,11 +1,12 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 
-import { SHEET_POSITION } from "@/components/ui/sheet-layout";
+import { SheetHandle } from "@/components/ui/sheet-handle";
+import { SHEET_MAX_HEIGHT, SHEET_POSITION } from "@/components/ui/sheet-layout";
 import { cn } from "@/lib/utils";
 
 /**
@@ -23,11 +24,14 @@ export function BottomSheet({
   title: string;
   children: ReactNode;
 }) {
+  const sheetRef = useRef<HTMLDivElement | null>(null);
+  const closeRef = useRef<HTMLButtonElement | null>(null);
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/40" />
         <DialogPrimitive.Content
+          ref={sheetRef}
           aria-describedby={undefined}
           // 첫 입력칸·접힘 요소에 포커스 테두리가 튀지 않게 시트 자체로 포커스를 옮긴다(스크린리더는 제목부터 읽는다).
           onOpenAutoFocus={(event) => {
@@ -38,18 +42,23 @@ export function BottomSheet({
             "bg-card text-card-foreground fixed z-50 flex flex-col gap-2 outline-none",
             "data-[state=open]:animate-in data-[state=closed]:animate-out duration-200",
             SHEET_POSITION,
-            "px-5 pt-3 pb-[calc(1.25rem+var(--safe-bottom))] sm:w-full sm:max-w-md sm:px-6"
+            SHEET_MAX_HEIGHT,
+            "overflow-y-auto overscroll-contain px-5 pt-3 pb-[calc(1.25rem+var(--safe-bottom))] sm:w-full sm:max-w-md sm:px-6"
           )}
         >
-          <span
-            aria-hidden="true"
-            className="bg-muted mx-auto mb-2 h-1 w-9 rounded-full"
+          <SheetHandle
+            sheetRef={sheetRef}
+            closeRef={closeRef}
+            className="-mt-3 self-center"
           />
           <DialogPrimitive.Title className="text-heading py-1">
             {title}
           </DialogPrimitive.Title>
           <div className="flex flex-col">{children}</div>
-          <DialogPrimitive.Close className="text-body text-muted-foreground mt-1 min-h-11 rounded-control font-medium">
+          <DialogPrimitive.Close
+            ref={closeRef}
+            className="text-body text-muted-foreground mt-1 min-h-11 rounded-control font-medium"
+          >
             닫기
           </DialogPrimitive.Close>
         </DialogPrimitive.Content>

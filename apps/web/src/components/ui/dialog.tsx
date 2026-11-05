@@ -5,6 +5,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { XIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { SheetHandle } from "./sheet-handle";
 import { DIALOG_SHEET } from "./sheet-layout";
 
 function Dialog(props: React.ComponentProps<typeof DialogPrimitive.Root>) {
@@ -47,7 +48,7 @@ function DialogOverlay({
 
 /**
  * 화면 폭과 상관없이 아래에서 올라오는 시트(`DIALOG_SHEET`). 넓은 화면에서는 가운데 정렬·최대 폭 lg.
- * 화면 하단 안전 영역을 비우고 시트 안만 스크롤한다.
+ * 화면 하단 안전 영역을 비우고 시트 안만 스크롤한다. 위쪽 손잡이를 끌어내리면 닫힌다.
  * 열 때는 시트 자체에 포커스를 둬 첫 버튼에 포커스 테두리가 뜨지 않게 한다.
  */
 function DialogContent({
@@ -55,12 +56,20 @@ function DialogContent({
   children,
   style,
   onOpenAutoFocus,
+  ref,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content>) {
+  const sheetRef = React.useRef<HTMLDivElement | null>(null);
+  const closeRef = React.useRef<HTMLButtonElement | null>(null);
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Content
+        ref={(node) => {
+          sheetRef.current = node;
+          if (typeof ref === "function") ref(node);
+          else if (ref) ref.current = node;
+        }}
         data-slot="dialog-content"
         onOpenAutoFocus={(event) => {
           onOpenAutoFocus?.(event);
@@ -80,8 +89,16 @@ function DialogContent({
         }}
         {...props}
       >
+        <SheetHandle
+          sheetRef={sheetRef}
+          closeRef={closeRef}
+          className="absolute top-0 left-1/2 z-10 -translate-x-1/2"
+        />
         {children}
-        <DialogPrimitive.Close className="ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-none disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4">
+        <DialogPrimitive.Close
+          ref={closeRef}
+          className="ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-none disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+        >
           <XIcon />
           <span className="sr-only">닫기</span>
         </DialogPrimitive.Close>
