@@ -13,12 +13,12 @@
  * (`filter-summary.ts`). '초기화'는 기간과 검색어를 남기고 조건만 지운다.
  * 값 고르기는 시트가 아니라 드롭다운이다(`components/ui/sheet-layout.ts` 표).
  */
-import { ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
-import type { ComponentProps, ReactNode } from "react";
+import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { PickerMenu } from "@/components/ui/picker-menu";
-import { cn } from "@/lib/utils";
+import { FilterChip, FilterClearChip } from "@/components/widgets/filter-chip";
 import {
   CANCELLATION_FILTER_OPTIONS,
   TRANSACTION_FILTER_LABELS,
@@ -144,24 +144,24 @@ export function TransactionFilters({
           className="-ml-1 flex min-w-0 flex-1 items-center gap-2 overflow-x-auto pl-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {values.excludedOnly ? (
-            <ClearChip
+            <FilterClearChip
               label="합계에서 뺀 거래"
               onClear={() => onClear("excludedOnly")}
             />
           ) : null}
           {values.sharedOnly ? (
-            <ClearChip
+            <FilterClearChip
               label="공용 카드 거래"
               onClear={() => onClear("sharedOnly")}
             />
           ) : null}
-          <Chip
+          <FilterChip
             active={values.reviewOnly}
             aria-pressed={values.reviewOnly}
             onClick={onToggleReview}
           >
             확인할 거래
-          </Chip>
+          </FilterChip>
           {PICKER_CHIPS.map((key) => {
             const name = TRANSACTION_FILTER_LABELS[key];
             const valueLabel = filterValueLabel(key, values, choices);
@@ -176,7 +176,7 @@ export function TransactionFilters({
                 value={values[key] || ALL}
                 onSelect={(value) => onChange(key, value === ALL ? "" : value)}
                 trigger={
-                  <Chip
+                  <FilterChip
                     menu
                     active={valueLabel != null}
                     aria-label={
@@ -184,7 +184,7 @@ export function TransactionFilters({
                     }
                   >
                     {valueLabel ?? name}
-                  </Chip>
+                  </FilterChip>
                 }
               />
             );
@@ -204,7 +204,7 @@ export function TransactionFilters({
               onChange("status", change.status);
             }}
             trigger={
-              <Chip
+              <FilterChip
                 menu
                 active={cancellationLabel != null}
                 aria-label={
@@ -214,7 +214,7 @@ export function TransactionFilters({
                 }
               >
                 {cancellationLabel ?? "취소·환불"}
-              </Chip>
+              </FilterChip>
             }
           />
         </div>
@@ -234,62 +234,5 @@ export function TransactionFilters({
         </p>
       ) : null}
     </section>
-  );
-}
-
-/**
- * 조건 칩. 손가락 영역은 44px(min-h-11), 보이는 알약은 36px다.
- * 고르는 칩(`menu`)은 ▾와 함께 드롭다운의 버튼이 된다(Radix가 ref·aria·열림 상태를 넘긴다).
- */
-function Chip({
-  active,
-  menu,
-  children,
-  className,
-  ...props
-}: ComponentProps<"button"> & { active: boolean; menu?: boolean }) {
-  return (
-    <button
-      type="button"
-      {...props}
-      className={cn(
-        "group flex min-h-11 shrink-0 items-center focus-visible:outline-none",
-        className
-      )}
-    >
-      <span
-        className={cn(
-          "text-caption flex h-9 max-w-48 items-center gap-1 rounded-full border px-3 font-medium whitespace-nowrap transition-colors group-focus-visible:ring-2 group-focus-visible:ring-ring",
-          active
-            ? "border-primary/30 bg-primary/10 text-primary"
-            : "border-border bg-background text-foreground group-hover:bg-muted/60 group-data-[state=open]:bg-muted/60"
-        )}
-      >
-        <span className="min-w-0 truncate">{children}</span>
-        {menu ? (
-          <ChevronDown
-            aria-hidden="true"
-            className="size-4 shrink-0 opacity-70"
-          />
-        ) : null}
-      </span>
-    </button>
-  );
-}
-
-/** 다른 화면에서 링크로만 켜지는 조건(합계에서 뺀 거래·공용 카드). 칩의 ×로 끈다. */
-function ClearChip({ label, onClear }: { label: string; onClear: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClear}
-      aria-label={`${label} 조건 해제`}
-      className="group flex min-h-11 shrink-0 items-center focus-visible:outline-none"
-    >
-      <span className="text-caption border-primary/30 bg-primary/10 text-primary flex h-9 items-center gap-1 rounded-full border px-3 font-medium whitespace-nowrap group-focus-visible:ring-2 group-focus-visible:ring-ring">
-        {label}
-        <X aria-hidden="true" className="size-3.5 shrink-0" />
-      </span>
-    </button>
   );
 }

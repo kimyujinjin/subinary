@@ -129,3 +129,87 @@ export function formatSender(sender: string): string {
   return sender;
 }
 
+/*
+ * 날짜·시각 짧은 표기 — 화면마다 'M월 D일'·'2026-11-20'·'2026. 11. 05. 14:31'로 섞여 있던 것을 하나로 모은다
+ * (2026-11-05 HIG 검수). 위 formatDate 등은 바꾸지 않는다.
+ */
+
+/** 날짜 표기에 받는 값 — ISO 문자열 또는 Date. 비었거나 무효면 대시(`—`). */
+type DateValue = string | Date | null | undefined;
+
+/**
+ * Asia/Seoul 기준 연·월·일·시·분 조각. 'ko-KR' 출력 대신 숫자만 받아 직접 조립한다 —
+ * 엔진·ICU 데이터에 따라 '오후 2:31'·'11. 5.' 같은 모양이 달라지지 않게 하려고.
+ * hourCycle h23: hour12:false는 일부 엔진에서 자정을 '24'로 낸다.
+ */
+const seoulPartsFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: DEFAULT_TIMEZONE,
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "numeric",
+  hourCycle: "h23",
+});
+
+type SeoulParts = Readonly<{
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+}>;
+
+function seoulParts(value: DateValue): SeoulParts | null {
+  if (value == null || value === "") return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = seoulPartsFormatter.formatToParts(date);
+  const pick = (type: Intl.DateTimeFormatPartTypes): number =>
+    Number(parts.find((p) => p.type === type)?.value);
+  return {
+    year: pick("year"),
+    month: pick("month"),
+    day: pick("day"),
+    hour: pick("hour") % 24,
+    minute: pick("minute"),
+  };
+}
+
+function monthDayOf(parts: SeoulParts, now: Date): string {
+  const sameYear = parts.year === seoulParts(now)?.year;
+  return sameYear
+    ? `${parts.month}월 ${parts.day}일`
+    : `${parts.year}년 ${parts.month}월 ${parts.day}일`;
+}
+
+function timeOf(parts: SeoulParts): string {
+  const period = parts.hour < 12 ? "오전" : "오후";
+  const hour12 = parts.hour % 12 === 0 ? 12 : parts.hour % 12;
+  return `${period} ${hour12}:${String(parts.minute).padStart(2, "0")}`;
+}
+
+/**
+ * 서울 기준 `11월 5일`. 올해(서울 기준 `now`의 해)가 아니면 `2025년 11월 5일`.
+ * 날짜만 있는 'YYYY-MM-DD'도 그 날짜로 나온다(UTC 자정 = 서울 오전 9시라 날이 바뀌지 않는다).
+ */
+export function formatMonthDay(value: DateValue, now: Date = new Date()): string {
+  const parts = seoulParts(value);
+  return parts ? monthDayOf(parts, now) : "—";
+}
+
+/** 서울 기준 `오후 2:31`(12시간제, 자정은 `오전 12:05`, 정오는 `오후 12:00`). */
+export function formatTimeShort(value: DateValue): string {
+  const parts = seoulParts(value);
+  return parts ? timeOf(parts) : "—";
+}
+
+/** 서울 기준 `11월 5일 오후 2:31`. 올해가 아니면 `2025년 11월 5일 오후 2:31`. */
+export function formatMonthDayTime(
+  value: DateValue,
+  now: Date = new Date(),
+): string {
+  const parts = seoulParts(value);
+  return parts ? `${monthDayOf(parts, now)} ${timeOf(parts)}` : "—";
+}
+

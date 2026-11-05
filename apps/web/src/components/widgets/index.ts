@@ -31,3 +31,6 @@ export { Fab } from "./fab";
 // 알림 줄·불러오기 실패(2026-11-05 HIG 검수) — 화면마다 따로 짜던 오류·안내 마크업을 모은다.
 export { InlineNotice, type NoticeTone } from "./inline-notice";
 export { ErrorState } from "./error-state";
+// 달 이동·설정 줄(2026-11-05 HIG 검수 3·4단계) — 가계부 세 탭의 달 이동, 거래 상세·카드 수정 창의 '이름 · 값' 줄.
+export { MonthNav, type MonthNavProps } from "./month-nav";
+export { FieldList, FieldRow, type FieldRowProps } from "./field-row";

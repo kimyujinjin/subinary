@@ -52,7 +52,7 @@ describe("거래 상세 정보·설정 줄", () => {
     expect(html).not.toContain("<select");
   });
 
-  it("값이 비었으면 흐리게, 덧붙인 안내는 줄 아래에 작게 보인다", () => {
+  it("값이 비어도 다른 값과 같은 회색(4.5:1)이고, 덧붙인 안내는 줄 아래에 작게 보인다", () => {
     const html = renderToStaticMarkup(
       <FieldRow
         label="카드"
@@ -69,6 +69,8 @@ describe("거래 상세 정보·설정 줄", () => {
       </FieldRow>
     );
     expect(html).toMatch(/text-muted-foreground"?[^>]*>카드 미연결/);
+    // 흐린 회색(/60)은 흰 바탕 대비가 약 2.5:1이라 쓰지 않는다.
+    expect(html).not.toMatch(/text-muted-foreground\/\d+[^>]*>카드 미연결/);
     expect(html).toContain("text-caption");
     expect(html).toContain("카드에 연결하면");
   });
