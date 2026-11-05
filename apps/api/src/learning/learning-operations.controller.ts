@@ -16,7 +16,10 @@ class LearningOperationsMetricsQueryDto extends createZodDto(
   learningOperationsMetricsQuerySchema,
 ) {}
 
-/** household owner/admin 전용 AI 파이프라인 운영 지표 API. */
+/**
+ * 운영자 전용 AI 파이프라인 운영 지표 API — `AI_OPERATIONS_OPERATOR_USER_IDS`에 있고 그 가족의
+ * owner/admin이어야 한다(서버 전체 큐·경보가 들어 있다). 아니면 403.
+ */
 @Controller('learning/operations')
 export class LearningOperationsController {
   constructor(private readonly operationsService: LearningOperationsService) {}

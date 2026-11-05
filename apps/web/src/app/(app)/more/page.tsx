@@ -1,18 +1,18 @@
 "use client";
 /**
- * 전체 탭(ADR-0037): 가계부 관리·가족·연결·계정.
- * 기존 메뉴, 네이티브 생체인식 설정과 owner/admin 운영 도구의 조건을 보존한다.
+ * 전체 탭(ADR-0037): 가계부 · 가족·연결 · 알림·화면 · 계정(docs/ux-renewal-2026-11.md §5 설정).
+ *
+ * 다른 탭에 이미 있는 행은 두지 않는다 — 결제 카드는 자산 탭, 정기 지출은 가계부에 있다.
+ * 운영자 화면(`/ai-operations`)은 메뉴에서 뺐다: 서버가 운영자 허용 목록으로만 열어 주므로
+ * 메뉴에 두면 거의 모든 사람에게 "접근할 수 없어요"로 끝나는 행이 된다(주소로는 그대로 열린다).
  */
 import {
-  Activity,
   Bell,
   ChevronRight,
-  CreditCard,
   Fingerprint,
   KeyRound,
   Link2,
   LogOut,
-  Repeat,
   ShieldCheck,
   Smartphone,
   Store,
@@ -28,6 +28,16 @@ import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { ThemeSettingRow } from "@/components/theme-toggle";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -36,7 +46,6 @@ import {
   isBiometryAvailable,
   setBiometricPref,
 } from "@/lib/biometric";
-import { useHousehold } from "@/lib/household-context";
 
 interface MoreItem {
   href: string;
@@ -53,6 +62,7 @@ interface MoreGroup {
 /**
  * 전체 탭(ADR-0037). 행은 아이콘 · 제목 · 화살표 한 줄이다 — 설명 문구를 붙이지 않는다
  * (docs/ux-renewal-2026-11.md §5 설정). 할 일·실패한 결제는 가계부 '할 일'에 있으므로 여기서 뺐다.
+ * 화면 모드·생체인식·로그아웃처럼 링크가 아닌 행은 아래 `MorePage`가 그룹 끝에 붙인다.
  */
 const GROUPS: ReadonlyArray<MoreGroup> = [
   {
@@ -60,7 +70,6 @@ const GROUPS: ReadonlyArray<MoreGroup> = [
     title: "가계부",
     items: [
       { href: "/ai", icon: Sparkles, title: "AI 도우미" },
-      { href: "/more/recurring", icon: Repeat, title: "정기 지출" },
       { href: "/categories", icon: Tags, title: "카테고리" },
       { href: "/more/category-rules", icon: Wand2, title: "자동 분류 규칙" },
       { href: "/more/merchants", icon: Store, title: "가맹점 정리" },
@@ -71,28 +80,28 @@ const GROUPS: ReadonlyArray<MoreGroup> = [
     title: "가족 · 연결",
     items: [
       { href: "/household", icon: Users, title: "가족 관리" },
-      { href: "/cards", icon: CreditCard, title: "결제 카드" },
       { href: "/devices", icon: Smartphone, title: "문자 연동" },
       { href: "/more/connections", icon: Link2, title: "은행·증권 연결" },
     ],
   },
   {
+    key: "display",
+    title: "알림 · 화면",
+    items: [{ href: "/more/notifications", icon: Bell, title: "알림 설정" }],
+  },
+  {
     key: "account",
-    title: "내 계정",
+    title: "계정",
     items: [
-      { href: "/more/notifications", icon: Bell, title: "알림" },
       { href: "/more/privacy", icon: ShieldCheck, title: "개인정보" },
       { href: "/more/password", icon: KeyRound, title: "비밀번호 변경" },
     ],
   },
 ];
 
-/** owner·admin에게만 보이는 운영 화면. 일반 목록과 섞지 않는다. */
-const OPERATIONS_GROUP: MoreGroup = {
-  key: "operations",
-  title: "운영자 도구",
-  items: [{ href: "/ai-operations", icon: Activity, title: "AI 처리 현황" }],
-};
+/** 확인 시트의 '닫기' — 채움 버튼 아래의 글자 버튼(§3.3). */
+const SHEET_CLOSE_CLASS =
+  "h-11 w-full bg-transparent text-muted-foreground hover:bg-muted dark:bg-transparent dark:hover:bg-muted";
 
 const ROW_CLASS =
   "hover:bg-muted/60 active:bg-muted focus-visible:ring-ring flex min-h-14 w-full items-center gap-4 px-5 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset";
@@ -102,7 +111,7 @@ function MoreRow({ item }: Readonly<{ item: MoreItem }>) {
   const Icon = item.icon;
   return (
     <Link href={item.href} className={ROW_CLASS}>
-      <Icon className="text-muted-foreground size-[22px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
+      <Icon className="text-muted-foreground size-6 shrink-0" strokeWidth={1.7} aria-hidden="true" />
       <span className="text-body min-w-0 flex-1">{item.title}</span>
       <ChevronRight className="text-muted-foreground/40 size-5 shrink-0" aria-hidden="true" />
     </Link>
@@ -128,7 +137,7 @@ function MoreSection({
 /**
  * 생체인식 잠금 토글 행(네이티브 전용).
  * 켜기는 본인 확인을 통과해야 하고, 끄기는 즉시 반영한다.
- * '내 계정' 묶음 안에 든다 — 이 기기의 내 잠금이지 가족 설정이 아니다.
+ * '계정' 묶음 안에 든다 — 이 기기의 내 잠금이지 가족 설정이 아니다.
  */
 function BiometricToggleRow() {
   // null = 로딩/미지원(행 숨김), 그 외 = 토글 상태.
@@ -178,7 +187,7 @@ function BiometricToggleRow() {
 
   return (
     <div className="flex min-h-14 items-center gap-4 px-5 py-3">
-      <Fingerprint className="text-muted-foreground size-[22px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
+      <Fingerprint className="text-muted-foreground size-6 shrink-0" strokeWidth={1.7} aria-hidden="true" />
       <span className="text-body min-w-0 flex-1">생체인식 잠금</span>
       <span className="flex min-h-11 min-w-11 shrink-0 items-center justify-center">
         <Switch
@@ -196,10 +205,14 @@ function BiometricToggleRow() {
 /**
  * 로그아웃 — 예전에는 헤더 아바타 드롭다운에 있었다. 아바타가 `/more`로 가는 링크가
  * 되면서 이리로 내려왔고, 계정 묶음의 마지막 행이 자연스러운 자리다.
+ *
+ * 한 번 더 묻는다: 로그인은 1년 동안 유지되므로, 잘못 누르면 이메일·비밀번호를 다시
+ * 찾아 입력해야 한다(목록 끝 행이라 스크롤하다 누르기 쉽다).
  */
 function LogoutRow() {
   const router = useRouter();
   const { logout } = useAuth();
+  const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function onLogout() {
@@ -213,25 +226,52 @@ function LogoutRow() {
   }
 
   return (
-    <button
-      type="button"
-      disabled={busy}
-      onClick={() => void onLogout()}
-      className={`${ROW_CLASS} disabled:opacity-60`}
-    >
-      <LogOut className="text-muted-foreground size-[22px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
-      <span className="text-body text-muted-foreground">
-        {busy ? "로그아웃하는 중…" : "로그아웃"}
-      </span>
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        className={ROW_CLASS}
+      >
+        <LogOut className="text-muted-foreground size-6 shrink-0" strokeWidth={1.7} aria-hidden="true" />
+        <span className="text-body text-muted-foreground">로그아웃</span>
+      </button>
+      <AlertDialog
+        open={confirming}
+        onOpenChange={(open) => {
+          if (!busy) setConfirming(open);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>로그아웃할까요?</AlertDialogTitle>
+            <AlertDialogDescription>
+              다시 들어오려면 이메일과 비밀번호를 입력해야 해요.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-col">
+            <AlertDialogAction
+              disabled={busy}
+              className="h-11 w-full"
+              onClick={(event) => {
+                // 시트가 먼저 닫히면 진행 표시를 보여 줄 자리가 없다.
+                event.preventDefault();
+                void onLogout();
+              }}
+            >
+              {busy ? "로그아웃하는 중…" : "로그아웃"}
+            </AlertDialogAction>
+            <AlertDialogCancel disabled={busy} className={SHEET_CLOSE_CLASS}>
+              닫기
+            </AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
 export default function MorePage() {
-  const { activeMembership } = useHousehold();
   const { user } = useAuth();
-  const canViewOperations =
-    activeMembership?.role === "owner" || activeMembership?.role === "admin";
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
@@ -243,18 +283,17 @@ export default function MorePage() {
         </p>
       </header>
 
-      {GROUPS.map((group) =>
-        group.key === "account" ? (
-          <MoreSection key={group.key} group={group}>
-            <ThemeSettingRow />
-            <BiometricToggleRow />
-            <LogoutRow />
-          </MoreSection>
-        ) : (
-          <MoreSection key={group.key} group={group} />
-        )
-      )}
-      {canViewOperations ? <MoreSection group={OPERATIONS_GROUP} /> : null}
+      {GROUPS.map((group) => (
+        <MoreSection key={group.key} group={group}>
+          {group.key === "display" ? <ThemeSettingRow /> : null}
+          {group.key === "account" ? (
+            <>
+              <BiometricToggleRow />
+              <LogoutRow />
+            </>
+          ) : null}
+        </MoreSection>
+      ))}
     </div>
   );
 }

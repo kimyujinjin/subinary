@@ -25,7 +25,8 @@ import {
 
 import { DB } from '../database/database.constants';
 
-const OPERATIONAL_QUEUE_NAMES = [
+/** 지표를 읽는 큐. 푸시 발송(`notification-dispatch`)이 밀리면 알림이 늦게 가므로 함께 본다. */
+export const OPERATIONAL_QUEUE_NAMES = [
   QUEUE_NAMES.CARD_SMS_PARSE,
   QUEUE_NAMES.SLACK_IMPORT,
   QUEUE_NAMES.RAG_INDEX,
@@ -33,13 +34,22 @@ const OPERATIONAL_QUEUE_NAMES = [
   QUEUE_NAMES.MEMORY_EXTRACT,
   QUEUE_NAMES.GRAPH_EXTRACT,
   QUEUE_NAMES.CATEGORY_SUGGEST,
+  QUEUE_NAMES.NOTIFICATION_DISPATCH,
 ] as const;
 
-/** owner/admin에게 원문 없는 파이프라인 운영 집계를 제공한다. */
+/**
+ * 운영자에게 원문 없는 파이프라인 운영 집계를 제공한다.
+ *
+ * 응답에는 **서버 전체** 큐·경보 지표가 들어 있어 가족 소유자·관리자라는 것만으로는
+ * 보여 주지 않는다. 호출자가 `AI_OPERATIONS_OPERATOR_USER_IDS` 허용 목록에 있고, 그 가족의
+ * owner/admin이어야 한다. 허용 목록이 비어 있으면 모두 거절한다(fail closed).
+ */
 @Injectable()
 export class LearningOperationsService implements OnModuleDestroy {
   private readonly logger = new Logger(LearningOperationsService.name);
   private readonly queues: ReadonlyArray<Queue>;
+  /** 소문자 uuid 집합(설정 로더가 정규화한다). */
+  private readonly operatorUserIds: ReadonlySet<string>;
 
   constructor(
     @Inject(DB) private readonly db: Db,
@@ -50,6 +60,13 @@ export class LearningOperationsService implements OnModuleDestroy {
     if (!redis || !queue) {
       throw new Error('Redis/queue configuration is missing');
     }
+    const observability =
+      configService.get<AppConfig['observability']>('observability');
+    this.operatorUserIds = new Set(
+      (observability?.aiOperationsOperatorUserIds ?? []).map((id) =>
+        id.toLowerCase(),
+      ),
+    );
     this.queues = OPERATIONAL_QUEUE_NAMES.map(
       (name) =>
         new Queue(name, {
@@ -69,7 +86,7 @@ export class LearningOperationsService implements OnModuleDestroy {
     userId: string,
     query: LearningOperationsMetricsQuery,
   ): Promise<LearningOperationsMetricsResponse> {
-    await this.assertHouseholdOperator(userId, query.householdId);
+    await this.assertOperator(userId, query.householdId);
 
     const generatedAt = new Date();
     const windowStartedAt = new Date(
@@ -319,10 +336,17 @@ export class LearningOperationsService implements OnModuleDestroy {
     );
   }
 
-  private async assertHouseholdOperator(
+  /**
+   * 운영자 허용 목록 → 가족 역할 순서로 본다. 허용 목록을 먼저 보는 이유: 목록 밖의 사용자는
+   * DB를 읽을 필요도 없고, 그 가족의 owner인지 여부를 응답 차이로 흘리지 않는다(둘 다 403).
+   */
+  private async assertOperator(
     userId: string,
     householdId: string,
   ): Promise<void> {
+    if (!this.operatorUserIds.has(userId.toLowerCase())) {
+      throw new ForbiddenException('operator access required');
+    }
     const [member] = await this.db
       .select({ role: schema.householdMembers.role })
       .from(schema.householdMembers)

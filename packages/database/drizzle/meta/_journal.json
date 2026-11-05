@@ -519,6 +519,13 @@
       "when": 1793750400003,
       "tag": "0073_manual_saving_contributions",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1793750400004,
+      "tag": "0074_notification_disabled_kinds",
+      "breakpoints": true
     }
   ]
 }

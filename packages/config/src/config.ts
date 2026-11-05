@@ -39,6 +39,27 @@ function optionalEnvValue(value: string | undefined): string | undefined {
   return value === undefined || value.trim().length === 0 ? undefined : value;
 }
 
+/**
+ * 쉼표로 구분한 사용자 id 목록(`a, b,c`). 미설정·빈 값은 **빈 목록**이다.
+ *
+ * 공백을 걷고 소문자로 맞춘 뒤 중복을 없앤다 — 비교 상대는 DB가 돌려주는 소문자 uuid다.
+ * 형식이 틀린 항목이 하나라도 있으면 부팅을 막는다: 오타를 조용히 버리면 "넣었는데 왜
+ * 안 보이지"가 되고, 그 원인은 설정 파일을 열어 보기 전까지 드러나지 않는다.
+ * `z.guid()`인 이유: RFC 버전 비트까지 보는 `z.uuid()`는 시드·개발용 id를 거절한다.
+ */
+const userIdListFromEnv = z.preprocess(
+  (value) => {
+    if (value === undefined || value === null) return [];
+    if (typeof value !== 'string') return value;
+    const ids = value
+      .split(',')
+      .map((part) => part.trim().toLowerCase())
+      .filter((part) => part.length > 0);
+    return [...new Set(ids)];
+  },
+  z.array(z.guid()).max(64),
+);
+
 /** Dedicated finance keys only. A malformed JSON value must never reach an error message. */
 const financeVaultKeyring = z.preprocess((value) => {
   if (typeof value !== 'string') return value;
@@ -204,6 +225,12 @@ export const configSchema = z.object({
       .max(30_000)
       .default(5_000),
     alertMaxAttempts: z.coerce.number().int().min(1).max(20).default(8),
+    /**
+     * `/ai-operations`(서버 전체 큐·경보 지표)를 볼 수 있는 사용자 id 허용 목록.
+     * **비어 있으면 아무도 못 본다**(fail closed) — 가족 소유자·관리자라는 것만으로는
+     * 서버 전체 지표를 보여 주지 않는다. 가족 역할 검사(owner/admin)도 함께 통과해야 한다.
+     */
+    aiOperationsOperatorUserIds: userIdListFromEnv,
   }),
   auth: z.object({
     accessSecret: z.string().min(16),
@@ -350,6 +377,9 @@ export function validateEnv(env: NodeJS.ProcessEnv): AppConfig {
       alertBatchSize: env.PIPELINE_ALERT_BATCH_SIZE,
       alertRequestTimeoutMs: env.PIPELINE_ALERT_REQUEST_TIMEOUT_MS,
       alertMaxAttempts: env.PIPELINE_ALERT_MAX_ATTEMPTS,
+      aiOperationsOperatorUserIds: optionalEnvValue(
+        env.AI_OPERATIONS_OPERATOR_USER_IDS,
+      ),
     },
     auth: {
       accessSecret: env.JWT_ACCESS_SECRET,

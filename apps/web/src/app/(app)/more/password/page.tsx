@@ -10,9 +10,14 @@
  * 로그아웃 상태로 만들고 로그인 화면으로 보낸다 — 그러지 않으면 다음 요청이 401로
  * 떨어져 사용자가 "바꿨는데 왜 튕기지"를 겪는다. 다른 기기도 함께 로그아웃된다는 것을
  * 미리 알린다.
+ *
+ * 지금 비밀번호가 틀리면 서버가 한국어 400을 돌려주고 세션은 그대로다 — 그 문구를
+ * 폼 아래에 그대로 보여 주고 화면에 머문다(로그아웃하지 않는다).
+ * 입력칸마다 보기/숨기기 버튼이 있다 — 휴대폰에서 긴 비밀번호를 가린 채 두 번 맞추기 어렵다.
  * ------------------------------------------------------------------------- */
+import { Eye, EyeOff } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useState, type ComponentProps, type FormEvent } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -25,6 +30,28 @@ import { useAuth } from "@/lib/auth-context";
 
 /** 계약(newPasswordSchema)과 같은 하한. 서버가 최종 판정하지만 미리 막아준다. */
 const MIN_LENGTH = 8;
+
+/** 비밀번호 입력 + 오른쪽 보기/숨기기 아이콘 버튼(배경 없음, 터치 44). */
+function PasswordInput(props: Readonly<Omit<ComponentProps<typeof Input>, "type">>) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="relative">
+      <Input {...props} type={visible ? "text" : "password"} className="pr-12" />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        aria-label={visible ? "비밀번호 숨기기" : "비밀번호 보기"}
+        aria-pressed={visible}
+        aria-controls={props.id}
+        onClick={() => setVisible((v) => !v)}
+        className="text-muted-foreground hover:text-foreground absolute inset-y-0 right-0.5 my-auto hover:bg-transparent [&_svg:not([class*='size-'])]:size-5"
+      >
+        {visible ? <EyeOff /> : <Eye />}
+      </Button>
+    </div>
+  );
+}
 
 export default function ChangePasswordPage() {
   const router = useRouter();
@@ -86,10 +113,9 @@ export default function ChangePasswordPage() {
           <form className="flex flex-col gap-4" onSubmit={onSubmit} noValidate>
             <div className="flex flex-col gap-2">
               <Label htmlFor="current-password">지금 비밀번호</Label>
-              <Input
+              <PasswordInput
                 id="current-password"
                 name="current-password"
-                type="password"
                 autoComplete="current-password"
                 required
                 value={currentPassword}
@@ -99,27 +125,25 @@ export default function ChangePasswordPage() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="new-password">새 비밀번호</Label>
-              <Input
+              <PasswordInput
                 id="new-password"
                 name="new-password"
-                type="password"
                 autoComplete="new-password"
                 minLength={MIN_LENGTH}
                 required
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
               />
-              <p className="text-muted-foreground text-[13px]">
+              <p className="text-muted-foreground text-caption">
                 {MIN_LENGTH}자 이상으로 정해주세요
               </p>
             </div>
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="confirm-password">새 비밀번호 확인</Label>
-              <Input
+              <PasswordInput
                 id="confirm-password"
                 name="confirm-password"
-                type="password"
                 autoComplete="new-password"
                 required
                 value={confirm}
@@ -128,7 +152,7 @@ export default function ChangePasswordPage() {
             </div>
 
             {error ? (
-              <p className="text-destructive text-sm" role="alert">
+              <p className="text-destructive text-body" role="alert">
                 {error}
               </p>
             ) : null}

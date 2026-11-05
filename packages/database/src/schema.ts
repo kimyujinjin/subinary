@@ -366,13 +366,27 @@ export const notificationPreferences = pgTable('notification_preferences', {
    * 가족 구성원의 결제는 이 설정과 무관하게 알린다.
    */
   notifyOwnCollected: boolean('notify_own_collected').notNull().default(false),
+  /**
+   * 푸시를 보내지 않을 알림 종류(`@family/shared` NotificationKind). **알림함 기록은 그대로
+   * 남는다** — 끄는 것은 기기로 가는 푸시뿐이다(0074). 빈 배열 = 모든 종류를 받는다.
+   * 값은 API가 검증하고, DB는 NULL 원소와 길이만 막는다(종류를 늘릴 때 마이그레이션 불필요).
+   */
+  disabledKinds: text('disabled_kinds')
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
   createdAt: timestamp('created_at', { withTimezone: true })
     .defaultNow()
     .notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true })
     .defaultNow()
     .notNull(),
-});
+}, (table) => [
+  check(
+    'notification_preferences_disabled_kinds_check',
+    sql`${table.disabledKinds} IS NOT NULL AND array_position(${table.disabledKinds}, NULL) IS NULL AND cardinality(${table.disabledKinds}) <= 32`,
+  ),
+]);
 
 /* -------------------------------------------------------------------------- */
 /* 추론 타입 (select / insert)                                                */

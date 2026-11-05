@@ -72,7 +72,10 @@ export class NotificationController {
     return this.notificationService.getPreferences(user.userId);
   }
 
-  /** PUT /v1/notifications/preferences — 알림 선호 전체 대체. */
+  /**
+   * PUT /v1/notifications/preferences — 알림 선호 전체 대체. `disabledKinds`만 생략할 수
+   * 있고, 생략하면 저장된 값을 유지한다(그 필드를 모르는 옛 앱 번들 호환).
+   */
   @Put('preferences')
   updatePreferences(
     @CurrentUser() user: AuthenticatedUser,

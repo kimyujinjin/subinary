@@ -5,19 +5,24 @@
  * revoke를 해제한다(기기 양도·복구). 해지는 revokedAt를 세팅(로그아웃). 선호는
  * 행이 없으면 기본값(전부 켬)으로 응답하고, 갱신은 upsert 한다.
  *
+ * 알림함은 최근 {@link NOTIFICATION_INBOX_WINDOW_DAYS}일만 보여 주고, 헤더 벨의 안읽음
+ * 개수도 **같은 창**으로 센다. 예전에는 개수만 기간 제한이 없어서, 30일보다 오래된 안읽음
+ * 알림이 목록에는 없는데 벨 숫자로만 남아 알림함을 열어도 지워지지 않았다.
+ *
  * 인증만 요구하고 가족 스코프는 없다 — 구독/선호는 사용자 단위 자원이다.
  */
 import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, gte, isNull, lt, or, sql } from 'drizzle-orm';
 
-import type {
-  NotificationItem,
-  NotificationKind,
-  NotificationListResponse,
-  NotificationPreferences,
-  NotificationPreferencesUpdateRequest,
-  NotificationUnreadCount,
-  PushSubscriptionRegisterRequest,
+import {
+  notificationKindSchema,
+  type NotificationItem,
+  type NotificationKind,
+  type NotificationListResponse,
+  type NotificationPreferences,
+  type NotificationPreferencesUpdateRequest,
+  type NotificationUnreadCount,
+  type PushSubscriptionRegisterRequest,
 } from '@family/contracts';
 import { schema, type Db } from '@family/database';
 
@@ -27,17 +32,44 @@ import { DB } from '../database/database.constants';
 const NOTIFICATIONS_DEFAULT_LIMIT = 30;
 const NOTIFICATIONS_MAX_LIMIT = 100;
 
+/** 알림함이 보여 주는 기간(일). 목록과 안읽음 개수가 이 창 하나를 같이 쓴다. */
+export const NOTIFICATION_INBOX_WINDOW_DAYS = 30;
+
+/** 알림함 창의 시작 시각(이 시각 이후에 만들어진 알림만 목록·개수에 든다). */
+export function notificationInboxWindowStart(now: Date = new Date()): Date {
+  return new Date(
+    now.getTime() - NOTIFICATION_INBOX_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  );
+}
+
+/**
+ * 종류별 끄기 목록 정규화 — 아는 종류만, 유형 선언 순서로, 중복 없이.
+ * DB에는 모양만 막혀 있어(0074) 읽을 때도 거른다: 나중에 없앤 종류가 남아 있어도
+ * 응답 계약(`notificationKindSchema`)을 깨지 않는다.
+ */
+export function normalizeDisabledKinds(
+  kinds: readonly string[] | null | undefined,
+): NotificationKind[] {
+  if (!kinds || kinds.length === 0) return [];
+  const selected = new Set(kinds);
+  return notificationKindSchema.options.filter((kind) => selected.has(kind));
+}
+
 /**
  * 선호 행이 없을 때 응답할 기본값. `notifyOwnCollected`만 꺼짐 — 본인 결제는
  * 카드사 문자로 이미 통지되므로 앱 알림이 같은 사건의 두 번째 통지가 된다.
+ * 배열을 공유하지 않도록 매번 새로 만든다.
  */
-const DEFAULT_PREFERENCES: NotificationPreferences = {
-  pushEnabled: true,
-  minAmount: null,
-  quietStartMinute: null,
-  quietEndMinute: null,
-  notifyOwnCollected: false,
-};
+function defaultPreferences(): NotificationPreferences {
+  return {
+    pushEnabled: true,
+    minAmount: null,
+    quietStartMinute: null,
+    quietEndMinute: null,
+    notifyOwnCollected: false,
+    disabledKinds: [],
+  };
+}
 
 @Injectable()
 export class NotificationService {
@@ -93,23 +125,35 @@ export class NotificationService {
       .from(schema.notificationPreferences)
       .where(eq(schema.notificationPreferences.userId, userId))
       .limit(1);
-    if (!row) return DEFAULT_PREFERENCES;
+    if (!row) return defaultPreferences();
     return {
       pushEnabled: row.pushEnabled,
       minAmount: row.minAmount,
       quietStartMinute: row.quietStartMinute,
       quietEndMinute: row.quietEndMinute,
       notifyOwnCollected: row.notifyOwnCollected,
+      disabledKinds: normalizeDisabledKinds(row.disabledKinds),
     };
   }
 
-  /** 알림 선호를 전체 대체 저장한다(upsert). */
+  /**
+   * 알림 선호를 전체 대체 저장한다(upsert).
+   *
+   * 예외 하나: `disabledKinds`를 **생략하면 저장된 값을 그대로 둔다.** 이 필드를 모르는
+   * 옛 앱 번들도 같은 PUT을 보내는데, 빈 배열로 덮으면 그 번들에서 스위치 하나만 바꿔도
+   * 사용자가 끈 종류가 전부 되살아난다. 그래서 응답의 `disabledKinds`는 입력이 아니라
+   * 저장된 행에서 읽는다.
+   */
   async updatePreferences(
     userId: string,
     input: NotificationPreferencesUpdateRequest,
   ): Promise<NotificationPreferences> {
     const now = new Date();
-    await this.db
+    const disabledKinds =
+      input.disabledKinds === undefined
+        ? undefined
+        : normalizeDisabledKinds(input.disabledKinds);
+    const [saved] = await this.db
       .insert(schema.notificationPreferences)
       .values({
         userId,
@@ -118,6 +162,7 @@ export class NotificationService {
         quietStartMinute: input.quietStartMinute,
         quietEndMinute: input.quietEndMinute,
         notifyOwnCollected: input.notifyOwnCollected,
+        disabledKinds: disabledKinds ?? [],
       })
       .onConflictDoUpdate({
         target: schema.notificationPreferences.userId,
@@ -127,8 +172,12 @@ export class NotificationService {
           quietStartMinute: input.quietStartMinute,
           quietEndMinute: input.quietEndMinute,
           notifyOwnCollected: input.notifyOwnCollected,
+          ...(disabledKinds === undefined ? {} : { disabledKinds }),
           updatedAt: now,
         },
+      })
+      .returning({
+        disabledKinds: schema.notificationPreferences.disabledKinds,
       });
     return {
       pushEnabled: input.pushEnabled,
@@ -136,6 +185,9 @@ export class NotificationService {
       quietStartMinute: input.quietStartMinute,
       quietEndMinute: input.quietEndMinute,
       notifyOwnCollected: input.notifyOwnCollected,
+      disabledKinds: normalizeDisabledKinds(
+        saved?.disabledKinds ?? disabledKinds,
+      ),
     };
   }
 
@@ -151,8 +203,8 @@ export class NotificationService {
       Math.max(limit ?? NOTIFICATIONS_DEFAULT_LIMIT, 1),
       NOTIFICATIONS_MAX_LIMIT,
     );
-    // 최근 30일 내역만 노출(그 이전은 목록에서 제외).
-    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    // 최근 30일 내역만 노출(그 이전은 목록에서 제외). 안읽음 개수와 같은 창이다.
+    const since = notificationInboxWindowStart();
     const conditions = [
       eq(schema.notifications.userId, userId),
       gte(schema.notifications.createdAt, since),
@@ -186,7 +238,10 @@ export class NotificationService {
     return { items: page.map(toItem), nextCursor };
   }
 
-  /** 안읽음 개수. */
+  /**
+   * 안읽음 개수(헤더 벨). 목록과 **같은 30일 창**만 센다 — 목록에 없는 알림을 세면
+   * 알림함을 열어도 사라지지 않는 숫자가 된다.
+   */
   async unreadCount(userId: string): Promise<NotificationUnreadCount> {
     const [agg] = await this.db
       .select({ count: sql<string>`count(*)` })
@@ -195,6 +250,10 @@ export class NotificationService {
         and(
           eq(schema.notifications.userId, userId),
           isNull(schema.notifications.readAt),
+          gte(
+            schema.notifications.createdAt,
+            notificationInboxWindowStart(),
+          ),
         ),
       );
     return { count: Number(agg?.count ?? 0) || 0 };
@@ -214,7 +273,10 @@ export class NotificationService {
       );
   }
 
-  /** 전체 읽음 처리(본인 안읽음 전부). */
+  /**
+   * 전체 읽음 처리(본인 안읽음 전부 — 창 밖의 오래된 것까지). 알림함이 아직 불러오지
+   * 않은 페이지의 안읽음도 함께 지워야 벨 숫자가 0이 된다.
+   */
   async markAllRead(userId: string): Promise<void> {
     await this.db
       .update(schema.notifications)

@@ -22,11 +22,9 @@ export const NOTIFICATION_CHANNELS = {
    * "아직 일어나지 않은 일"이다. 성격이 달라 따로 끌 수 있어야 한다
    * (`docs/concept-upcoming-spend-2026-08.md` §5 "알림 피로").
    *
-   * ⚠️ **끌 수 있는 범위는 Android뿐이다.** 채널 생성은 `native.ts`의
-   * `platform === 'android'` 분기 안에 있고, 앱 내 알림 선호는 kind별이 아니다
-   * (`pushEnabled`·`minAmount`·무음시간만). iOS에서는 앱 전체를 끄는 것뿐이므로,
-   * 이 분리의 실효는 Android 시스템 설정과 **알림함에서의 구분**이다. kind별 선호를
-   * 만들 때 이 kind가 그 기반이 된다.
+   * 끄는 방법은 둘이다: 앱의 알림 설정(종류별 끄기, `notification_preferences.
+   * disabled_kinds` — iOS 포함 모든 기기에 적용되고 알림함 기록은 남는다)과 Android
+   * 시스템 설정의 이 채널. 채널 생성은 `native.ts`의 `platform === 'android'` 분기 안에 있다.
    */
   upcoming: 'upcoming',
   /**

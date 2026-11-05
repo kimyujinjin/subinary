@@ -87,8 +87,13 @@ const datasetService = new LearningDatasetService(db, storage);
 const merchantDatasetService = new LearningMerchantDatasetService(db, storage);
 const ragDatasetService = new LearningRagDatasetService(db, storage);
 const dataControlService = new LearningDataControlService(db);
+const userId = randomUUID();
 const operationsService = new LearningOperationsService(db, {
   get(key) {
+    // 운영 지표는 운영자 허용 목록(AI_OPERATIONS_OPERATOR_USER_IDS)에 있는 사람만 본다.
+    if (key === 'observability') {
+      return { aiOperationsOperatorUserIds: [userId] };
+    }
     if (key === 'redis') {
       return {
         host: process.env.REDIS_HOST ?? 'redis',
@@ -102,7 +107,6 @@ const operationsService = new LearningOperationsService(db, {
   },
 });
 
-const userId = randomUUID();
 const workspaceId = randomUUID();
 const datasetSnapshotId = randomUUID();
 const householdId = randomUUID();

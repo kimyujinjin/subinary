@@ -11,8 +11,9 @@
  *     · private    → 소유자(memberId→userId)에게만
  *     · summary_only → 전원, 단 소유자 외에는 가맹점 마스킹
  *   pending_review/duplicate_suspected(불확정)는 가족 방송 대신 소유자에게만.
- * - **선호 필터**: pushEnabled·minAmount·무음시간대·notifyOwnCollected(본인 결제
- *   알림 여부, 기본 꺼짐 — 카드사 문자와 중복이므로). 행이 없으면 기본값으로 간주.
+ * - **선호 필터**: pushEnabled·disabledKinds(종류별 끄기)·minAmount·무음시간대·
+ *   notifyOwnCollected(본인 결제 알림 여부, 기본 꺼짐 — 카드사 문자와 중복이므로).
+ *   행이 없으면 기본값으로 간주. 선호는 **푸시만** 거른다 — 알림함 이력은 그 전에 전원 저장.
  * - **토큰 위생**: FCM이 UNREGISTERED/INVALID면 즉시 revoke. 5xx/429는 잡 재시도.
  *   토큰별 발송을 격리(allSettled)해 한 기기 실패가 전체를 실패시키지 않는다.
  * - FCM 미설정(dev/mock)이면 조기 종료(no-op).
@@ -115,6 +116,7 @@ export class NotificationDispatchProcessor extends WorkerHost {
 
     // 4. 선호 필터 + 구독 토큰 로드 → 발송 대상 구성(모든 kind 공통).
     const recipients = await this.resolveRecipients(ctx.candidateUserIds, {
+      kind,
       ownerUserId: ctx.ownerUserId,
       amount: ctx.amount,
       currency: ctx.currency,
@@ -383,11 +385,16 @@ export class NotificationDispatchProcessor extends WorkerHost {
 
   /**
    * 후보 userId를 선호로 필터링하고 활성 구독 토큰을 붙인다. 선호 행이 없으면
-   * 기본값(켬)으로 간주. minAmount·무음시간대·pushEnabled 적용.
+   * 기본값(켬)으로 간주. pushEnabled·disabledKinds·minAmount·무음시간대 적용.
    */
   private async resolveRecipients(
     candidateUserIds: string[],
-    opts: { ownerUserId?: string; amount?: number; currency?: string },
+    opts: {
+      kind: NotificationKind;
+      ownerUserId?: string;
+      amount?: number;
+      currency?: string;
+    },
   ): Promise<Recipient[]> {
     if (candidateUserIds.length === 0) return [];
 
@@ -428,6 +435,9 @@ export class NotificationDispatchProcessor extends WorkerHost {
       // 선호 필터(행 없으면 기본 통과).
       if (pref) {
         if (!pref.pushEnabled) continue;
+        // 이 종류를 끈 사람에게는 푸시만 보내지 않는다. 알림함 이력은 saveHistory가 이미
+        // 남겼으므로 앱 안에서는 그대로 보인다(0074 disabled_kinds).
+        if (pref.disabledKinds.includes(opts.kind)) continue;
         // minAmount는 금액이 있는 알림(거래)에만 적용. 예산/리마인더/요약은 미적용.
         // minAmount는 KRW(원) 임계이고 amount는 minor units라, 외화 거래는 통화가
         // 달라 KRW 임계와 직접 비교할 수 없으므로 필터를 건너뛴다(외화는 항상 발송).
