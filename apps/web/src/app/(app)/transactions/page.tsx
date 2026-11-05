@@ -1511,11 +1511,7 @@ function TransactionDetailDialog({
 
   return (
     <Dialog open onOpenChange={(v) => !v && requestClose()}>
-      {/* 거래 상세는 화면 폭과 상관없이 하단 시트다(사용자 결정 2026-11-05). */}
-      <DialogContent
-        layout="sheet"
-        className="grid-cols-[minmax(0,1fr)] gap-5 [&>*]:min-w-0"
-      >
+      <DialogContent className="grid-cols-[minmax(0,1fr)] gap-5 [&>*]:min-w-0">
         <DialogHeader className="gap-1 text-left">
           <div className="flex min-w-0 items-start gap-1 pr-8">
             <DialogTitle className="text-heading min-w-0 flex-1 break-words">
