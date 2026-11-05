@@ -40,11 +40,17 @@ jobs:
       # Android 네이티브 빌드가 이 job에 붙으면 시크릿으로 파일을 풀어 쓴다.
       # 시크릿 미등록(빈 값)이면 스킵. 로컬·전용 모바일 CI도 동일 스크립트 사용:
       #   apps/mobile/scripts/write-google-services.sh
+      # ⚠️ 빈 값 검사는 셸에서 한다. step `if:`에서는 secrets 컨텍스트를 쓸 수 없고, 쓰면
+      # 워크플로 파일 전체가 무효가 돼 job이 하나도 돌지 않은 채 실패한다(5439284에서 실제로 났다).
       - name: Materialize google-services.json (optional)
-        if: ${{ secrets.GOOGLE_SERVICES_JSON != '' }}
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
-        run: sh apps/mobile/scripts/write-google-services.sh
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "GOOGLE_SERVICES_JSON 시크릿이 없어 건너뜁니다."
+            exit 0
+          fi
+          sh apps/mobile/scripts/write-google-services.sh
 
       # packageManager 필드(pnpm@9.15.4)에서 버전 자동 감지
       - uses: pnpm/action-setup@v4
