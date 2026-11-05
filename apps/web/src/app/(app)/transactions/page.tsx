@@ -83,7 +83,6 @@ import {
   transactionOccurredAt as occurredAt,
 } from "@/lib/transaction-display";
 import { FieldList, FieldRow } from "./detail-fields";
-import { PickerSheet } from "./picker-sheet";
 import { MerchantHistory } from "./merchant-history";
 import { LedgerHeader } from "@/components/ledger-header";
 import { ApiError, api } from "@/lib/api-client";
@@ -1456,10 +1455,19 @@ function TransactionDetailDialog({
 
   // 인라인 '새 카테고리 만들기' 상태.
   const [creatingCategory, setCreatingCategory] = useState(false);
-  /** 열려 있는 선택 시트(카테고리·카드·공개 범위). 한 번에 하나만 연다. */
-  const [picker, setPicker] = useState<
-    "category" | "card" | "visibility" | null
-  >(null);
+  /** 카테고리를 바꾸면 바로 저장하고, 가맹점 검색어가 있으면 '앞으로도 이렇게 분류'를 묻는다. */
+  const selectCategory = (value: string) => {
+    onChangeCategory(value);
+    if (searchTerm) {
+      setRuleFor({
+        id: value,
+        name:
+          categoryOptions.find((o) => o.value === value)?.label ??
+          "선택한 분류",
+      });
+      setRuleState("offered");
+    }
+  };
   const categoryLabel = categoryOptions.find(
     (o) => o.value === txn.categoryId
   )?.label;
@@ -1522,7 +1530,11 @@ function TransactionDetailDialog({
 
   return (
     <Dialog open onOpenChange={(v) => !v && requestClose()}>
-      <DialogContent className="grid-cols-[minmax(0,1fr)] gap-5 [&>*]:min-w-0">
+      {/* 상세 보기라 바텀 시트다(사용자 결정 2026-11-05). 다른 창은 기본 모양 — sheet-layout.ts 표. */}
+      <DialogContent
+        layout="sheet"
+        className="grid-cols-[minmax(0,1fr)] gap-5 [&>*]:min-w-0"
+      >
         <DialogHeader className="gap-1 text-left">
           <div className="flex min-w-0 items-start gap-1 pr-8">
             <DialogTitle className="text-heading min-w-0 flex-1 break-words">
@@ -1735,7 +1747,7 @@ function TransactionDetailDialog({
         {/* 결제 정보 — 문장 대신 훑어보는 키-값 */}
         {/*
           정보·설정 한 목록(2026-11-05 사용자 지적으로 '분류' 칸 묶음을 합쳤다). 바꾸는 줄은 눌러서
-          선택 시트를 열고, 고르면 바로 저장된다. 가장 자주 바꾸는 카테고리를 결제자 바로 아래에 둔다.
+          드롭다운을 열고, 고르면 바로 저장된다. 가장 자주 바꾸는 카테고리를 결제자 바로 아래에 둔다.
         */}
         <FieldList>
           <FieldRow label="결제자" value={memberName} />
@@ -1744,14 +1756,28 @@ function TransactionDetailDialog({
             value={categoryLabel ?? "미분류"}
             muted={categoryLabel == null}
             disabled={busy}
-            onClick={() => setPicker("category")}
+            menu={{
+              label: "카테고리",
+              options: categoryOptions,
+              value: txn.categoryId,
+              onSelect: selectCategory,
+              footer: {
+                label: "+ 새 카테고리 만들기",
+                onSelect: () => setCreatingCategory(true),
+              },
+            }}
           />
           <FieldRow
             label="카드"
             value={cardLabel}
             muted={txn.cardId == null}
             disabled={busy}
-            onClick={() => setPicker("card")}
+            menu={{
+              label: "카드",
+              options: [{ value: CARD_NONE, label: "카드 미연결" }, ...cardOptions],
+              value: txn.cardId ?? CARD_NONE,
+              onSelect: onChangeCard,
+            }}
           >
             {ownershipMismatch ? (
               <span role="status" className="text-warning-strong">
@@ -1765,7 +1791,12 @@ function TransactionDetailDialog({
             label="공개 범위"
             value={visibilityLabel}
             disabled={busy}
-            onClick={() => setPicker("visibility")}
+            menu={{
+              label: "공개 범위",
+              options: VISIBILITY_OPTIONS,
+              value: txn.visibility,
+              onSelect: onChangeVisibility,
+            }}
           />
           <FieldRow
             label="메모"
@@ -1863,7 +1894,7 @@ function TransactionDetailDialog({
           </div>
         ) : null}
 
-        {/* 알맞은 카테고리가 없으면 카테고리 시트의 '새 카테고리 만들기'로 여기서 바로 만들어 지정한다. */}
+        {/* 알맞은 카테고리가 없으면 카테고리 목록의 '새 카테고리 만들기'로 여기서 바로 만들어 지정한다. */}
         {creatingCategory ? (
           <div className="flex flex-col gap-1.5">
             <div className="flex gap-2">
@@ -1911,53 +1942,6 @@ function TransactionDetailDialog({
           </div>
         ) : null}
 
-        <PickerSheet
-          open={picker === "category"}
-          onClose={() => setPicker(null)}
-          title="카테고리"
-          options={categoryOptions}
-          value={txn.categoryId}
-          onSelect={(value) => {
-            onChangeCategory(value);
-            if (searchTerm) {
-              setRuleFor({
-                id: value,
-                name:
-                  categoryOptions.find((o) => o.value === value)?.label ??
-                  "선택한 분류",
-              });
-              setRuleState("offered");
-            }
-          }}
-          footer={
-            <button
-              type="button"
-              onClick={() => {
-                setPicker(null);
-                setCreatingCategory(true);
-              }}
-              className="text-primary text-body -mx-2 flex min-h-12 items-center rounded-control px-2 text-left font-medium hover:bg-muted active:bg-muted"
-            >
-              + 새 카테고리 만들기
-            </button>
-          }
-        />
-        <PickerSheet
-          open={picker === "card"}
-          onClose={() => setPicker(null)}
-          title="카드"
-          options={[{ value: CARD_NONE, label: "카드 미연결" }, ...cardOptions]}
-          value={txn.cardId ?? CARD_NONE}
-          onSelect={onChangeCard}
-        />
-        <PickerSheet
-          open={picker === "visibility"}
-          onClose={() => setPicker(null)}
-          title="공개 범위"
-          options={VISIBILITY_OPTIONS}
-          value={txn.visibility}
-          onSelect={onChangeVisibility}
-        />
 
         {/* 가족에게 물어보기(확인 요청) — 자기 훅을 쓰는 독립 컴포넌트 */}
         <ReviewRequestAction txn={txn} disabled={busy} />

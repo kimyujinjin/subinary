@@ -7,8 +7,17 @@ import {
   type MacBankJob,
   type MacBankRunnerState,
 } from "@family/contracts";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { BottomSheet } from "@/components/widgets/bottom-sheet";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { OverflowMenu, type OverflowAction } from "@/components/widgets/overflow-menu";
 import { StatusChip } from "@/components/widgets/status-chip";
 import { useAuth } from "@/lib/auth-context";
@@ -381,7 +390,11 @@ export function BankStartPanel({
         </div>
       ) : null}
       {runner ? (
-        <BottomSheet open={credentialOpen} onOpenChange={setCredentialOpen} title="신한은행 로그인 정보">
+        <Dialog open={credentialOpen} onOpenChange={setCredentialOpen}>
+          <DialogContent aria-describedby={undefined}>
+          <DialogHeader className="text-left">
+            <DialogTitle>신한은행 로그인 정보</DialogTitle>
+          </DialogHeader>
           <BankCredentialForm
             key={runner.id}
             householdId={householdId}
@@ -391,22 +404,29 @@ export function BankStartPanel({
             disabled={busy || active}
             onChanged={() => { void read(); }}
           />
-        </BottomSheet>
+          </DialogContent>
+        </Dialog>
       ) : null}
-      <BottomSheet open={revokeOpen} onOpenChange={setRevokeOpen} title="Mac 연결을 해제할까요?">
-        <p className="text-body text-muted-foreground pb-3">
-          저장한 로그인 정보도 함께 지워지고, 다시 쓰려면 Mac에서 연결을 새로 해야 해요.
-        </p>
-        <Button
-          variant="destructive"
-          size="lg"
-          className="w-full"
-          disabled={busy}
-          onClick={() => { setRevokeOpen(false); void write("revoke"); }}
-        >
-          연결 해제
-        </Button>
-      </BottomSheet>
+      <AlertDialog open={revokeOpen} onOpenChange={setRevokeOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Mac 연결을 해제할까요?</AlertDialogTitle>
+            <AlertDialogDescription>
+              저장한 로그인 정보도 함께 지워지고, 다시 쓰려면 Mac에서 연결을 새로 해야 해요.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>닫기</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={busy}
+              onClick={() => { setRevokeOpen(false); void write("revoke"); }}
+            >
+              연결 해제
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

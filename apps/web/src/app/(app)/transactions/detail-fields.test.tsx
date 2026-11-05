@@ -1,6 +1,6 @@
 /**
  * 거래 상세 정보·설정 줄(2026-11-05 사용자 지적: '분류' 아래 드롭다운이 입력 양식처럼 쌓여 보기 안 좋았다).
- * 바꾸는 줄은 이름 · 값 · › 한 줄이고, 누르면 선택 시트가 열린다.
+ * 값을 고르는 줄은 '이름 · 값 · ›' 한 줄이고, 누르면 그 자리 아래로 드롭다운이 펼쳐진다(시트가 아니다).
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -9,25 +9,40 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { FieldList, FieldRow } from "./detail-fields";
-import { PickerOptionList } from "./picker-sheet";
+
+const options = [
+  { value: "a", label: "카페" },
+  { value: "b", label: "식비" },
+];
 
 describe("거래 상세 정보·설정 줄", () => {
-  it("바꾸는 줄은 이름·값·화살표가 한 줄인 버튼이고, 읽기 전용 줄은 버튼이 아니다", () => {
+  it("값을 고르는 줄은 드롭다운 버튼, 창을 여는 줄은 창 버튼, 읽기 전용 줄은 버튼이 아니다", () => {
     const html = renderToStaticMarkup(
       <FieldList>
         <FieldRow label="결제자" value="수빈" />
-        <FieldRow label="카테고리" value="카페" onClick={() => undefined} />
+        <FieldRow
+          label="카테고리"
+          value="카페"
+          menu={{
+            label: "카테고리",
+            options,
+            value: "a",
+            onSelect: () => undefined,
+          }}
+        />
+        <FieldRow label="메모" value="남기기" muted onClick={() => undefined} />
       </FieldList>
     );
-    expect(html.match(/<button/g)).toHaveLength(1);
-    expect(html).toContain('aria-haspopup="dialog"');
-    const button = html.slice(
+    expect(html.match(/<button/g)).toHaveLength(2);
+    expect(html.match(/aria-haspopup="menu"/g)).toHaveLength(1);
+    expect(html.match(/aria-haspopup="dialog"/g)).toHaveLength(1);
+    const menuButton = html.slice(
       html.indexOf("<button"),
       html.indexOf("</button>")
     );
-    expect(button).toContain("카테고리");
-    expect(button).toContain("카페");
-    expect(button).toContain("<svg");
+    expect(menuButton).toContain("카테고리");
+    expect(menuButton).toContain("카페");
+    expect(menuButton).toContain("<svg");
     expect(html).not.toContain("<select");
   });
 
@@ -37,7 +52,12 @@ describe("거래 상세 정보·설정 줄", () => {
         label="카드"
         value="카드 미연결"
         muted
-        onClick={() => undefined}
+        menu={{
+          label: "카드",
+          options,
+          value: null,
+          onSelect: () => undefined,
+        }}
       >
         카드에 연결하면 공개 범위가 카드 설정을 따라가요.
       </FieldRow>
@@ -47,26 +67,7 @@ describe("거래 상세 정보·설정 줄", () => {
     expect(html).toContain("카드에 연결하면");
   });
 
-  it("선택지 목록은 지금 값만 선택됨·체크로 표시한다", () => {
-    const html = renderToStaticMarkup(
-      <PickerOptionList
-        label="카테고리"
-        options={[
-          { value: "a", label: "카페" },
-          { value: "b", label: "식비" },
-        ]}
-        value="b"
-        onPick={() => undefined}
-      />
-    );
-    expect(html).toContain('role="listbox"');
-    expect(html.match(/aria-selected="true"/g)).toHaveLength(1);
-    const selected = html.slice(html.indexOf('aria-selected="true"'));
-    expect(selected.slice(0, selected.indexOf("</button>"))).toContain("식비");
-    expect(html.match(/<svg/g)).toHaveLength(1);
-  });
-
-  it("거래 상세는 드롭다운을 쌓지 않고 이 줄과 선택 시트를 쓴다", () => {
+  it("거래 상세는 바텀 시트이고, 값 고르기는 드롭다운 줄 세 개다 — 쌓인 드롭다운·선택 시트는 없다", () => {
     const source = readFileSync(
       join(process.cwd(), "src/app/(app)/transactions/page.tsx"),
       "utf8"
@@ -74,8 +75,10 @@ describe("거래 상세 정보·설정 줄", () => {
     const start = source.indexOf("function TransactionDetailDialog(");
     const end = source.indexOf("\nfunction ", start + 1);
     const detail = source.slice(start, end);
+    expect(detail).toContain('layout="sheet"');
     expect(detail).toContain("<FieldList>");
-    expect(detail.match(/<PickerSheet\b/g)).toHaveLength(3);
+    expect(detail.match(/\bmenu=\{\{/g)).toHaveLength(3);
+    expect(detail).not.toContain("PickerSheet");
     for (const id of ["detail-category", "detail-visibility", "detail-card"]) {
       expect(detail).not.toContain(`id="${id}"`);
     }

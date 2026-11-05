@@ -4,7 +4,7 @@ import * as React from "react";
 import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog";
 
 import { cn } from "@/lib/utils";
-import { DIALOG_SHEET } from "@/components/ui/sheet-layout";
+import { ALERT_CENTERED } from "@/components/ui/sheet-layout";
 import { buttonVariants } from "@/components/ui/button";
 
 function AlertDialog(
@@ -56,12 +56,12 @@ function AlertDialogContent({
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         className={cn(
-          // 리뉴얼 §8: 화면 폭과 상관없이 하단 시트(대화상자와 같은 모양).
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-50 grid w-full gap-4 overflow-y-auto overscroll-contain p-5 duration-200 outline-none",
-          DIALOG_SHEET,
+          // 확인(예/아니오)은 모든 폭에서 화면 가운데 작은 창이다 — 바텀 시트는 상세 보기·선택지·안내만(sheet-layout.ts 표).
+          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-50 grid gap-4 duration-200 outline-none",
+          ALERT_CENTERED,
           className,
         )}
-        style={{ paddingBottom: "max(1.25rem, calc(1rem + var(--safe-bottom)))", ...style }}
+        style={style}
         {...props}
       />
     </AlertDialogPortal>

@@ -3,8 +3,16 @@
 import { useState } from "react";
 import { CONNECTED_ACCOUNT_SHARING_CONSENT_TEXT } from "@family/contracts";
 
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { BottomSheet } from "@/components/widgets/bottom-sheet";
 import { StatusChip } from "@/components/widgets/status-chip";
 import { useConnectedAccounts, useSetConnectedAccountSharing } from "@/lib/connected-accounts-client";
 
@@ -12,21 +20,28 @@ import { useConnectedAccounts, useSetConnectedAccountSharing } from "@/lib/conne
 function SharingSheet({ open, onOpenChange, share }: { open: boolean; onOpenChange: (open: boolean) => void; share: boolean }) {
   const mutation = useSetConnectedAccountSharing();
   return (
-    <BottomSheet open={open} onOpenChange={onOpenChange} title={share ? "연결 계좌를 가족과 공유할까요?" : "가족 공유를 끌까요?"}>
-      <p className="text-body text-muted-foreground pb-3">
-        {share ? CONNECTED_ACCOUNT_SHARING_CONSENT_TEXT : "가족 화면과 가족 자산 합계에서 내 연결 계좌가 빠져요. 나에게는 계속 보여요."}
-      </p>
-      {mutation.isError ? <p role="alert" className="text-caption text-destructive pb-2">저장하지 못했어요. 잠시 후 다시 시도해 주세요.</p> : null}
-      <Button
-        size="lg"
-        className="w-full"
-        variant={share ? "default" : "destructive"}
-        disabled={mutation.isPending}
-        onClick={() => mutation.mutate(share, { onSuccess: () => onOpenChange(false) })}
-      >
-        {mutation.isPending ? "저장 중…" : share ? "동의하고 공유" : "공유 끄기"}
-      </Button>
-    </BottomSheet>
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{share ? "연결 계좌를 가족과 공유할까요?" : "가족 공유를 끌까요?"}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {share ? CONNECTED_ACCOUNT_SHARING_CONSENT_TEXT : "가족 화면과 가족 자산 합계에서 내 연결 계좌가 빠져요. 나에게는 계속 보여요."}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {mutation.isError ? <p role="alert" className="text-caption text-destructive">저장하지 못했어요. 잠시 후 다시 시도해 주세요.</p> : null}
+        <AlertDialogFooter>
+          <AlertDialogCancel>닫기</AlertDialogCancel>
+          {/* 저장이 끝나야 닫는다 — AlertDialogAction은 누르는 즉시 닫혀 실패를 보여줄 수 없다. */}
+          <Button
+            variant={share ? "default" : "destructive"}
+            disabled={mutation.isPending}
+            onClick={() => mutation.mutate(share, { onSuccess: () => onOpenChange(false) })}
+          >
+            {mutation.isPending ? "저장 중…" : share ? "동의하고 공유" : "공유 끄기"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

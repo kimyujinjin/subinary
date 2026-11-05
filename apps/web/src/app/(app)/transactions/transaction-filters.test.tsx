@@ -81,6 +81,9 @@ describe("가계부 기간·조건", () => {
     expect(idle).not.toContain("초기화");
     expect(idle).not.toContain("<select");
     expect(idle).not.toContain("필터 닫기");
+    // 기간 + 카테고리·구성원·카드·취소·환불 = 드롭다운 버튼 5개(시트가 아니다). 확인할 거래는 켜고 끄는 칩.
+    expect(idle.match(/aria-haspopup="menu"/g)).toHaveLength(5);
+    expect(idle).not.toContain('aria-haspopup="dialog"');
 
     const filtered = render({
       ...empty,

@@ -284,7 +284,7 @@ export function RecordDialog({
               event.stopPropagation();
             }
           }}
-          className="flex flex-col gap-0 overflow-hidden p-0 [&>*]:min-w-0 [&>button]:top-1 [&>button]:right-1 [&>button]:inline-flex [&>button]:size-11 [&>button]:items-center [&>button]:justify-center sm:max-w-xl"
+          className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 [&>*]:min-w-0 [&>button]:top-1 [&>button]:right-1 [&>button]:inline-flex [&>button]:size-11 [&>button]:items-center [&>button]:justify-center sm:max-w-xl"
         >
           <DialogHeader className="shrink-0 border-b px-4 py-4 pr-12 sm:px-6 sm:pr-12">
             <DialogTitle>{title}</DialogTitle>

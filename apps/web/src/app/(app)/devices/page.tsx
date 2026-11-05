@@ -22,6 +22,15 @@ import type {
   DeviceSummary,
 } from "@family/contracts";
 
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -42,7 +51,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  BottomSheet,
   EmptyState,
   ListLoading,
   ListRow,
@@ -393,32 +401,35 @@ export default function DevicesPage() {
       ) : null}
 
       {/* 되돌리기 어려운 행동 확인 */}
-      <BottomSheet
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        title={
-          confirm?.type === "rotate"
-            ? "연결 열쇠를 다시 발급할까요?"
-            : "이 기기 연결을 해제할까요?"
-        }
-      >
-        <p className="text-body text-muted-foreground pb-3">
-          {confirm?.type === "rotate"
-            ? `'${confirm.device.name}'에 넣어 둔 지금 열쇠는 바로 쓸 수 없게 되니, 새 열쇠를 단축어·MacroDroid에 다시 넣어 주세요.`
-            : confirm
-              ? `'${confirm.device.name}'에서 오는 카드 문자를 더 이상 받지 않아요.`
-              : ""}
-        </p>
-        <Button
-          variant={confirm?.type === "revoke" ? "destructive" : "default"}
-          size="lg"
-          className="w-full"
-          disabled={actionPending}
-          onClick={runConfirm}
-        >
-          {confirm?.type === "revoke" ? "연결 해제" : "다시 발급"}
-        </Button>
-      </BottomSheet>
+      {/* 확인(예/아니오)은 화면 가운데 작은 창이다 — sheet-layout.ts 표. */}
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirm?.type === "rotate"
+                ? "연결 열쇠를 다시 발급할까요?"
+                : "이 기기 연결을 해제할까요?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirm?.type === "rotate"
+                ? `'${confirm.device.name}'에 넣어 둔 지금 열쇠는 바로 쓸 수 없게 되니, 새 열쇠를 단축어·MacroDroid에 다시 넣어 주세요.`
+                : confirm
+                  ? `'${confirm.device.name}'에서 오는 카드 문자를 더 이상 받지 않아요.`
+                  : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>닫기</AlertDialogCancel>
+            <Button
+              variant={confirm?.type === "revoke" ? "destructive" : "default"}
+              disabled={actionPending}
+              onClick={runConfirm}
+            >
+              {confirm?.type === "revoke" ? "연결 해제" : "다시 발급"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

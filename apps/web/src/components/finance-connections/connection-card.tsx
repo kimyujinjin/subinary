@@ -2,9 +2,17 @@
 
 import { useState } from "react";
 import type { FinanceConnection } from "@family/contracts";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { BottomSheet } from "@/components/widgets/bottom-sheet";
 import { OverflowMenu } from "@/components/widgets/overflow-menu";
 import { StatusChip, type ChipTone } from "@/components/widgets/status-chip";
 import { CONNECTION_ERROR, CONNECTION_STATUS, connectionDecimal, connectionMoney, connectionTime, hasPreviousSnapshot } from "./model";
@@ -87,10 +95,18 @@ export function ConnectionCard({ item, disabled, unconfirmed = false, canManage,
       ) : item.selectedAccountId && settled ? <p className="text-body text-muted-foreground">아직 보유 주식을 가져오지 못했어요.</p> : null}
       {enabled && item.nextRefreshAt && !item.canRefresh && settled && item.selectedAccountId ? <p className="text-caption text-muted-foreground">다음 조회 가능: {connectionTime(item.nextRefreshAt)} 이후</p> : null}
       {canManage && enabled && item.selectedAccountId ? <Button variant="weak" className="w-full" disabled={disabled || !enabled || !item.canRefresh} onClick={onRefresh}>새로 조회</Button> : null}
-      <BottomSheet open={confirmDelete} onOpenChange={setConfirmDelete} title="연결을 해제할까요?">
-        <p className="text-body text-muted-foreground pb-3">모아에 저장한 연결 키를 삭제하고 조회를 멈춰요. 토스증권의 API 키 자체는 폐기되지 않고, 이전 조회 기록은 보관돼요.</p>
-        <Button variant="destructive" size="lg" className="w-full" disabled={disabled} onClick={() => { setConfirmDelete(false); onDisconnect(); }}>삭제하고 연결 해제</Button>
-      </BottomSheet>
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>연결을 해제할까요?</AlertDialogTitle>
+            <AlertDialogDescription>모아에 저장한 연결 키를 삭제하고 조회를 멈춰요. 토스증권의 API 키 자체는 폐기되지 않고, 이전 조회 기록은 보관돼요.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>닫기</AlertDialogCancel>
+            <Button variant="destructive" disabled={disabled} onClick={() => { setConfirmDelete(false); onDisconnect(); }}>삭제하고 연결 해제</Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </article>
   );
 }

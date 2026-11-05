@@ -5,15 +5,16 @@
  * 이 화면에서 사용자가 하는 일은 셋이다 — 달을 넘겨 보기, 가맹점 찾기, 조건으로 좁히기.
  * - 달: `2026년 11월 ▾`(눌러서 고르기, 전체 기간 포함) + `‹ ›`로 한 달씩. 가장 자주 하므로 한 번에 닿게 둔다.
  * - 검색: 늘 보이는 검색칸(`children`).
- * - 조건: 가로로 넘기는 칩 한 줄. 칩을 누르면 선택 시트가 열리고, 고른 값이 칩에 바로 보인다.
+ * - 조건: 가로로 넘기는 칩 한 줄. 칩을 누르면 그 자리 아래로 드롭다운이 펼쳐지고, 고른 값이 칩에 바로 보인다.
  *   칩 순서는 쓰는 빈도 — 확인할 거래(할 일) · 카테고리 · 구성원(가족 앱) · 카드 · 취소·환불.
  *
  * 예전에는 '필터' 버튼 → 라벨 붙은 드롭다운 5개를 쌓은 패널 → '필터 닫기' 순서였고, 적용된 조건은
  * 패널 밖 칩 줄에 한 번 더 보여 같은 정보가 두 군데 있었다. 유형·상태는 '취소·환불' 하나로 합쳤다
  * (`filter-summary.ts`). '초기화'는 기간과 검색어를 남기고 조건만 지운다.
+ * 값 고르기는 시트가 아니라 드롭다운이다(`components/ui/sheet-layout.ts` 표).
  */
 import { ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -31,17 +32,17 @@ import {
   type TransactionFilterOption,
   type TransactionFilterValues,
 } from "./filter-summary";
-import { PickerSheet } from "./picker-sheet";
+import { PickerMenu } from "./picker-menu";
 
-/** 선택 시트의 '전체' 값(빈 문자열은 React key·선택 비교에 쓰기 애매하다). */
+/** 드롭다운의 '전체' 값(빈 문자열은 선택 비교에 쓰기 애매하다). */
 const ALL = "__all__";
 
-type Sheet = "month" | "categoryId" | "memberId" | "cardId" | "cancellation";
-
 /** 칩이 바꾸는 조건 — 순서가 곧 화면 순서다. */
-const PICKER_CHIPS: ReadonlyArray<{
-  key: "categoryId" | "memberId" | "cardId";
-}> = [{ key: "categoryId" }, { key: "memberId" }, { key: "cardId" }];
+const PICKER_CHIPS: ReadonlyArray<"categoryId" | "memberId" | "cardId"> = [
+  "categoryId",
+  "memberId",
+  "cardId",
+];
 
 export function TransactionFilters({
   month,
@@ -66,9 +67,6 @@ export function TransactionFilters({
   onToggleReview: () => void;
   children?: ReactNode;
 }) {
-  const [sheet, setSheet] = useState<Sheet | null>(null);
-  const close = () => setSheet(null);
-
   // 한 달씩 이동은 고를 수 있는 달 안에서만. 전체 기간이면 화살표를 두지 않는다.
   const months = [
     ...new Set(monthOptions.map((option) => option.value)),
@@ -86,19 +84,25 @@ export function TransactionFilters({
   return (
     <section className="flex min-w-0 flex-col gap-3" aria-label="거래 필터">
       <div className="flex min-w-0 items-center justify-between gap-2">
-        <button
-          type="button"
-          aria-haspopup="dialog"
-          aria-label={`기간: ${monthLabel}`}
-          onClick={() => setSheet("month")}
-          className="text-heading flex min-h-11 min-w-0 items-center gap-1 font-bold tabular-nums"
-        >
-          <span className="truncate">{monthLabel}</span>
-          <ChevronDown
-            aria-hidden="true"
-            className="text-muted-foreground size-5 shrink-0"
-          />
-        </button>
+        <PickerMenu
+          label="기간"
+          options={[{ value: ALL, label: "전체 기간" }, ...monthOptions]}
+          value={month || ALL}
+          onSelect={(value) => onMonthChange(value === ALL ? "" : value)}
+          trigger={
+            <button
+              type="button"
+              aria-label={`기간: ${monthLabel}`}
+              className="text-heading flex min-h-11 min-w-0 items-center gap-1 font-bold tabular-nums"
+            >
+              <span className="truncate">{monthLabel}</span>
+              <ChevronDown
+                aria-hidden="true"
+                className="text-muted-foreground size-5 shrink-0"
+              />
+            </button>
+          }
+        />
         {month ? (
           <div className="flex shrink-0 items-center">
             <Button
@@ -153,40 +157,66 @@ export function TransactionFilters({
           ) : null}
           <Chip
             active={values.reviewOnly}
-            pressed={values.reviewOnly}
+            aria-pressed={values.reviewOnly}
             onClick={onToggleReview}
           >
             확인할 거래
           </Chip>
-          {PICKER_CHIPS.map(({ key }) => {
+          {PICKER_CHIPS.map((key) => {
             const name = TRANSACTION_FILTER_LABELS[key];
             const valueLabel = filterValueLabel(key, values, choices);
             return (
-              <Chip
+              <PickerMenu
                 key={key}
-                menu
-                active={valueLabel != null}
-                ariaLabel={
-                  valueLabel ? `${name}: ${valueLabel}` : `${name} 고르기`
+                label={name}
+                options={[
+                  { value: ALL, label: `전체 ${name}` },
+                  ...choices[key],
+                ]}
+                value={values[key] || ALL}
+                onSelect={(value) => onChange(key, value === ALL ? "" : value)}
+                trigger={
+                  <Chip
+                    menu
+                    active={valueLabel != null}
+                    aria-label={
+                      valueLabel ? `${name}: ${valueLabel}` : `${name} 고르기`
+                    }
+                  >
+                    {valueLabel ?? name}
+                  </Chip>
                 }
-                onClick={() => setSheet(key)}
-              >
-                {valueLabel ?? name}
-              </Chip>
+              />
             );
           })}
-          <Chip
-            menu
-            active={cancellationLabel != null}
-            ariaLabel={
-              cancellationLabel
-                ? `취소·환불: ${cancellationLabel}`
-                : "취소·환불 고르기"
+          <PickerMenu
+            label="취소·환불"
+            options={[
+              { value: ALL, label: "전체" },
+              ...CANCELLATION_FILTER_OPTIONS,
+            ]}
+            value={cancellationFilterValue(values) || ALL}
+            onSelect={(value) => {
+              const change = cancellationFilterChange(
+                value === ALL ? "" : value
+              );
+              onChange("type", change.type);
+              onChange("status", change.status);
+            }}
+            trigger={
+              <Chip
+                menu
+                active={cancellationLabel != null}
+                aria-label={
+                  cancellationLabel
+                    ? `취소·환불: ${cancellationLabel}`
+                    : "취소·환불 고르기"
+                }
+              >
+                {cancellationLabel ?? "취소·환불"}
+              </Chip>
             }
-            onClick={() => setSheet("cancellation")}
-          >
-            {cancellationLabel ?? "취소·환불"}
-          </Chip>
+          />
         </div>
         {hasTransactionConditions(values) ? (
           <button
@@ -203,82 +233,36 @@ export function TransactionFilters({
           문자·환율 처리 대기는 제외해요.
         </p>
       ) : null}
-
-      <PickerSheet
-        open={sheet === "month"}
-        onClose={close}
-        title="기간"
-        options={[{ value: ALL, label: "전체 기간" }, ...monthOptions]}
-        value={month || ALL}
-        onSelect={(value) => onMonthChange(value === ALL ? "" : value)}
-      />
-      {PICKER_CHIPS.map(({ key }) => (
-        <PickerSheet
-          key={key}
-          open={sheet === key}
-          onClose={close}
-          title={TRANSACTION_FILTER_LABELS[key]}
-          options={[
-            { value: ALL, label: `전체 ${TRANSACTION_FILTER_LABELS[key]}` },
-            ...choices[key],
-          ]}
-          value={values[key] || ALL}
-          onSelect={(value) => onChange(key, value === ALL ? "" : value)}
-        />
-      ))}
-      <PickerSheet
-        open={sheet === "cancellation"}
-        onClose={close}
-        title="취소·환불"
-        options={[
-          { value: ALL, label: "전체" },
-          ...CANCELLATION_FILTER_OPTIONS,
-        ]}
-        value={cancellationFilterValue(values) || ALL}
-        onSelect={(value) => {
-          const next = cancellationFilterChange(value === ALL ? "" : value);
-          onChange("type", next.type);
-          onChange("status", next.status);
-        }}
-      />
     </section>
   );
 }
 
 /**
  * 조건 칩. 손가락 영역은 44px(min-h-11), 보이는 알약은 36px다.
- * 고르는 칩(`menu`)은 ▾와 함께 선택 시트를 열고, 켜고 끄는 칩은 `aria-pressed`로 상태를 알린다.
+ * 고르는 칩(`menu`)은 ▾와 함께 드롭다운의 버튼이 된다(Radix가 ref·aria·열림 상태를 넘긴다).
  */
 function Chip({
   active,
   menu,
-  pressed,
-  ariaLabel,
-  onClick,
   children,
-}: {
-  active: boolean;
-  menu?: boolean;
-  pressed?: boolean;
-  ariaLabel?: string;
-  onClick: () => void;
-  children: ReactNode;
-}) {
+  className,
+  ...props
+}: ComponentProps<"button"> & { active: boolean; menu?: boolean }) {
   return (
     <button
       type="button"
-      onClick={onClick}
-      aria-label={ariaLabel}
-      aria-haspopup={menu ? "dialog" : undefined}
-      aria-pressed={menu ? undefined : pressed}
-      className="group flex min-h-11 shrink-0 items-center focus-visible:outline-none"
+      {...props}
+      className={cn(
+        "group flex min-h-11 shrink-0 items-center focus-visible:outline-none",
+        className
+      )}
     >
       <span
         className={cn(
           "text-caption flex h-9 max-w-48 items-center gap-1 rounded-full border px-3 font-medium whitespace-nowrap transition-colors group-focus-visible:ring-2 group-focus-visible:ring-ring",
           active
             ? "border-primary/30 bg-primary/10 text-primary"
-            : "border-border bg-background text-foreground group-hover:bg-muted/60"
+            : "border-border bg-background text-foreground group-hover:bg-muted/60 group-data-[state=open]:bg-muted/60"
         )}
       >
         <span className="min-w-0 truncate">{children}</span>

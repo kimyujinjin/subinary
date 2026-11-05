@@ -270,7 +270,7 @@ export function AddTransactionDialog({
     <>
     <Dialog open={open} onOpenChange={(next) => { if (!next) requestClose(); }}>
       <DialogContent
-        className="max-w-md overflow-y-auto overscroll-contain"
+        className="max-h-[90dvh] max-w-md overflow-y-auto overscroll-contain"
         onEscapeKeyDown={(event) => { if (inFlight.current) event.preventDefault(); }}
         onInteractOutside={(event) => { if (inFlight.current) event.preventDefault(); }}
       >

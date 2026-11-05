@@ -6,7 +6,7 @@ import { XIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { SheetHandle } from "./sheet-handle";
-import { DIALOG_SHEET } from "./sheet-layout";
+import { DIALOG_RESPONSIVE, DIALOG_SHEET } from "./sheet-layout";
 
 function Dialog(props: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />;
@@ -47,9 +47,10 @@ function DialogOverlay({
 }
 
 /**
- * 화면 폭과 상관없이 아래에서 올라오는 시트(`DIALOG_SHEET`). 넓은 화면에서는 가운데 정렬·최대 폭 lg.
- * 화면 하단 안전 영역을 비우고 시트 안만 스크롤한다. 위쪽 손잡이를 끌어내리면 닫힌다.
- * 열 때는 시트 자체에 포커스를 둬 첫 버튼에 포커스 테두리가 뜨지 않게 한다.
+ * 기본(`layout="auto"`)은 입력 폼 모양이다 — 폰은 아래에서 올라오고 넓은 화면은 가운데(`DIALOG_RESPONSIVE`).
+ * `layout="sheet"`는 상세 보기용 바텀 시트다 — 모든 폭에서 아래에 붙고 최대 85%, 손잡이를 끌어내리면 닫힌다.
+ * 어느 쪽이든 화면 하단 안전 영역을 비우고 창 안만 스크롤한다. 용도별 기준은 `sheet-layout.ts` 표.
+ * 열 때는 창 자체에 포커스를 둬 첫 버튼에 포커스 테두리가 뜨지 않게 한다.
  */
 function DialogContent({
   className,
@@ -57,8 +58,11 @@ function DialogContent({
   style,
   onOpenAutoFocus,
   ref,
+  layout = "auto",
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Content>) {
+}: React.ComponentProps<typeof DialogPrimitive.Content> & {
+  layout?: "auto" | "sheet";
+}) {
   const sheetRef = React.useRef<HTMLDivElement | null>(null);
   const closeRef = React.useRef<HTMLButtonElement | null>(null);
   return (
@@ -79,7 +83,7 @@ function DialogContent({
         }}
         className={cn(
           "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-50 grid w-full gap-4 overflow-y-auto overscroll-contain p-5 duration-200 outline-none",
-          DIALOG_SHEET,
+          layout === "sheet" ? DIALOG_SHEET : DIALOG_RESPONSIVE,
           className
         )}
         // 하단 안전 영역(홈 인디케이터)만큼 비운다 — 호출부의 p-* 클래스가 덮어써도 유지되도록 inline으로.
@@ -89,11 +93,13 @@ function DialogContent({
         }}
         {...props}
       >
-        <SheetHandle
-          sheetRef={sheetRef}
-          closeRef={closeRef}
-          className="absolute top-0 left-1/2 z-10 -translate-x-1/2"
-        />
+        {layout === "sheet" ? (
+          <SheetHandle
+            sheetRef={sheetRef}
+            closeRef={closeRef}
+            className="absolute top-0 left-1/2 z-10 -translate-x-1/2"
+          />
+        ) : null}
         {children}
         <DialogPrimitive.Close
           ref={closeRef}
