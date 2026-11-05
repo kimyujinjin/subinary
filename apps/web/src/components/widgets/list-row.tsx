@@ -13,6 +13,8 @@ interface ListRowProps {
   subtitle?: ReactNode;
   /** 카드 식별 정보처럼 말줄임 대신 여러 줄을 써야 하는 부제의 스타일. */
   subtitleClassName?: string;
+  /** 제목 굵기 등 덧씌우기(예: 알림함의 읽은 항목은 보통 굵기). */
+  titleClassName?: string;
   /** 우측 주 값(보통 금액). */
   value?: ReactNode;
   /** 우측 보조(상태 배지/시각 등). */
@@ -50,10 +52,11 @@ export function ListRow({
   ariaLabel,
   chevron,
   className,
+  titleClassName,
 }: ListRowProps) {
   const interactive = href != null || onClick != null;
   const rowClass = cn(
-    "flex min-h-16 w-full min-w-0 items-center gap-2.5 rounded-xl px-1 py-3.5 text-left sm:gap-3 sm:px-2",
+    "flex min-h-16 w-full min-w-0 items-center gap-2.5 rounded-control px-1 py-3.5 text-left sm:gap-3 sm:px-2",
     interactive &&
       "hover:bg-muted/70 focus-visible:ring-ring cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
     className,
@@ -64,7 +67,7 @@ export function ListRow({
       {icon ? (
         <span
           className={cn(
-            "bg-accent text-accent-foreground flex size-9 shrink-0 items-center justify-center rounded-full text-lg sm:size-10 [&_svg]:size-[18px] sm:[&_svg]:size-5",
+            "bg-accent text-accent-foreground flex size-9 shrink-0 items-center justify-center rounded-full text-heading sm:size-10 [&_svg]:size-[18px] sm:[&_svg]:size-5",
             iconClassName,
           )}
         >
@@ -72,9 +75,9 @@ export function ListRow({
         </span>
       ) : null}
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-[15px] font-semibold" title={typeof title === "string" ? title : undefined}>{title}</span>
+        <span className={cn("text-body truncate font-semibold", titleClassName)} title={typeof title === "string" ? title : undefined}>{title}</span>
         {subtitle ? (
-          <span className={cn("text-muted-foreground truncate text-xs leading-5", subtitleClassName)} title={typeof subtitle === "string" ? subtitle : undefined}>
+          <span className={cn("text-muted-foreground text-caption truncate", subtitleClassName)} title={typeof subtitle === "string" ? subtitle : undefined}>
             {subtitle}
           </span>
         ) : null}
@@ -82,12 +85,12 @@ export function ListRow({
       {value != null || valueSub != null ? (
         <span className="flex min-w-0 max-w-[58%] shrink-0 flex-col items-end gap-1 text-right [overflow-wrap:anywhere]">
           {value != null ? (
-            <span className="max-w-full text-[14px] font-semibold tabular-nums sm:text-[15px]">
+            <span className="text-body max-w-full font-semibold tabular-nums">
               {value}
             </span>
           ) : null}
           {valueSub != null ? (
-            <span className="text-muted-foreground max-w-full text-xs">
+            <span className="text-muted-foreground text-caption max-w-full">
               {valueSub}
             </span>
           ) : null}

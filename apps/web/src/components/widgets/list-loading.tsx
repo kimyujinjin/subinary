@@ -28,7 +28,7 @@ export function ListLoading({
     <div role="status" aria-busy="true" className={cn("space-y-3", className)}>
       <span className="sr-only">{label}</span>
       {Array.from({ length: rows }, (_, index) => (
-        <Skeleton key={index} className="h-20 w-full rounded-2xl" />
+        <Skeleton key={index} className="h-20 w-full rounded-card" />
       ))}
     </div>
   );

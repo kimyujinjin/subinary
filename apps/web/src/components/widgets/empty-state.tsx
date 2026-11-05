@@ -54,13 +54,13 @@ export function EmptyState({
           {icon}
         </span>
       ) : emoji ? (
-        <span className="text-3xl" aria-hidden="true">
+        <span className="text-display" aria-hidden="true">
           {emoji}
         </span>
       ) : null}
-      <p className="mt-1 text-[15px] font-semibold">{title}</p>
+      <p className="text-body mt-1 font-semibold">{title}</p>
       {description ? (
-        <p className="text-muted-foreground text-[13px]">{description}</p>
+        <p className="text-muted-foreground text-caption">{description}</p>
       ) : null}
       {action ? <div className="mt-3 w-full max-w-60">{action}</div> : null}
     </div>
