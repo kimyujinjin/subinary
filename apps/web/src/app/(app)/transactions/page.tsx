@@ -76,13 +76,13 @@ import {
   OverflowMenu,
   type OverflowAction,
 } from "@/components/widgets/overflow-menu";
-import { SectionHeader } from "@/components/widgets/section-header";
 import { toast } from "sonner";
 import {
   merchantLabel,
   merchantSearchTerm,
   transactionOccurredAt as occurredAt,
 } from "@/lib/transaction-display";
+import { FieldList, FieldRow, PickerSheet } from "./detail-fields";
 import { MerchantHistory } from "./merchant-history";
 import { LedgerHeader } from "@/components/ledger-header";
 import { ApiError, api } from "@/lib/api-client";
@@ -1455,6 +1455,16 @@ function TransactionDetailDialog({
 
   // 인라인 '새 카테고리 만들기' 상태.
   const [creatingCategory, setCreatingCategory] = useState(false);
+  /** 열려 있는 선택 시트(카테고리·카드·공개 범위). 한 번에 하나만 연다. */
+  const [picker, setPicker] = useState<
+    "category" | "card" | "visibility" | null
+  >(null);
+  const categoryLabel = categoryOptions.find(
+    (o) => o.value === txn.categoryId
+  )?.label;
+  const visibilityLabel =
+    VISIBILITY_OPTIONS.find((o) => o.value === txn.visibility)?.label ??
+    txn.visibility;
   const [newCategoryName, setNewCategoryName] = useState("");
   const [categorySaving, setCategorySaving] = useState(false);
   const [categoryError, setCategoryError] = useState<string | null>(null);
@@ -1722,23 +1732,55 @@ function TransactionDetailDialog({
         ) : null}
 
         {/* 결제 정보 — 문장 대신 훑어보는 키-값 */}
-        <dl className="border-border/60 divide-border/60 divide-y border-y">
-          <InfoRow label="결제자">{memberName}</InfoRow>
-          <InfoRow label="카드">
-            {cardLabel}
+        {/*
+          정보·설정 한 목록(2026-11-05 사용자 지적으로 '분류' 칸 묶음을 합쳤다). 바꾸는 줄은 눌러서
+          선택 시트를 열고, 고르면 바로 저장된다. 가장 자주 바꾸는 카테고리를 결제자 바로 아래에 둔다.
+        */}
+        <FieldList>
+          <FieldRow label="결제자" value={memberName} />
+          <FieldRow
+            label="카테고리"
+            value={categoryLabel ?? "미분류"}
+            muted={categoryLabel == null}
+            disabled={busy}
+            onClick={() => setPicker("category")}
+          />
+          <FieldRow
+            label="카드"
+            value={cardLabel}
+            muted={txn.cardId == null}
+            disabled={busy}
+            onClick={() => setPicker("card")}
+          >
             {ownershipMismatch ? (
-              <span
-                role="status"
-                className="text-warning-strong text-caption mt-1 block"
-              >
-                거래 구성원과 카드 소유자가 달라요. 아래 &lsquo;카드&rsquo;에서
-                올바른 카드인지 확인해 주세요.
+              <span role="status" className="text-warning-strong">
+                거래 구성원과 카드 소유자가 달라요. 올바른 카드인지 확인해 주세요.
               </span>
+            ) : txn.cardId == null || txn.status === "pending_review" ? (
+              "카드에 연결하면 공개 범위가 카드 설정을 따라가요."
             ) : null}
-          </InfoRow>
+          </FieldRow>
+          <FieldRow
+            label="공개 범위"
+            value={visibilityLabel}
+            disabled={busy}
+            onClick={() => setPicker("visibility")}
+          />
+          <FieldRow
+            label="메모"
+            value={
+              txn.memo ? (
+                <span className="line-clamp-2">{txn.memo}</span>
+              ) : (
+                "남기기"
+              )
+            }
+            muted={!txn.memo}
+            disabled={busy}
+            onClick={onOpenMemo}
+          />
           {installment ? (
-            <InfoRow label="할부">
-              {installment}개월
+            <FieldRow label="할부" value={`${installment}개월`}>
               {/*
                 할부는 **승인월에 전액** 계상된다. `installmentMonths`는 보관만 되고
                 집계·예산·정기지출 어디에서도 월 분할에 쓰이지 않는다
@@ -1749,255 +1791,172 @@ function TransactionDetailDialog({
                 맞지 않고, 사용자는 앱이 틀렸다고 판단한다. 실제 월 분할은 금액 계약
                 (ADR-0027)을 건드리므로 별건이고, 여기서는 **정직하게 말하는 것**만 한다.
               */}
-              <span className="text-muted-foreground text-caption mt-1 block">
-                이 달 합계에는 전액 {formatMoney(txn.netAmount, txn.currency)}이
-                들어가 있어요 (월{" "}
-                {formatMoney(
-                  Math.round(txn.netAmount / installment),
-                  txn.currency
-                )}
-                씩).
-              </span>
-            </InfoRow>
+              이 달 합계에는 전액 {formatMoney(txn.netAmount, txn.currency)}이
+              들어가 있어요 (월{" "}
+              {formatMoney(
+                Math.round(txn.netAmount / installment),
+                txn.currency
+              )}
+              씩).
+            </FieldRow>
           ) : null}
           {foreign ? (
-            <InfoRow label="해외 결제">
-              {formatMoney(
+            <FieldRow
+              label="해외 결제"
+              value={formatMoney(
                 txn.originalAmount as number,
                 txn.originalCurrency as string
               )}
+            >
               <TransactionFxDetails
                 currency={txn.originalCurrency as string}
                 exchangeRate={txn.exchangeRate}
                 fx={txn.fx}
               />
-            </InfoRow>
+            </FieldRow>
           ) : null}
           {partiallyCancelled ? (
-            <InfoRow label="취소">
-              원래 {formatMoney(txn.amount, txn.currency)} 중{" "}
-              {formatMoney(txn.cancelledAmount, txn.currency)} 취소
-            </InfoRow>
+            <FieldRow
+              label="취소"
+              value={
+                <>
+                  원래 {formatMoney(txn.amount, txn.currency)} 중{" "}
+                  {formatMoney(txn.cancelledAmount, txn.currency)} 취소
+                </>
+              }
+            />
           ) : null}
-        </dl>
+        </FieldList>
 
-        {/* 분류 — 고르면 바로 저장된다. 가장 자주 바꾸는 카테고리를 맨 위에 둔다. */}
-        <section aria-label="분류" className="flex min-w-0 flex-col gap-4">
-          <SectionHeader
-            as="h3"
-            title="분류"
-            trailing={
-              <span className="text-caption text-muted-foreground">
-                고르면 바로 저장돼요
-              </span>
-            }
-          />
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="detail-category">카테고리</Label>
-            <Select
-              value={txn.categoryId ?? ""}
-              disabled={busy}
-              onValueChange={(value) => {
-                if (!value || value === txn.categoryId) return;
-                onChangeCategory(value);
-                if (searchTerm) {
-                  setRuleFor({
-                    id: value,
-                    name:
-                      categoryOptions.find((o) => o.value === value)?.label ??
-                      "선택한 분류",
-                  });
-                  setRuleState("offered");
-                }
-              }}
-            >
-              <SelectTrigger
-                id="detail-category"
-                className="min-h-11 min-w-0 w-full max-w-full"
-              >
-                <SelectValue
-                  className="min-w-0 flex-1 truncate text-left"
-                  placeholder="미분류"
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {categoryOptions.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {/* 분류 변경이 저장 중이거나 저장됐을 때만 — 실패하면 묻지 않는다(오류는 위에서 말한다). */}
-            {ruleFor && (ruleReady || busy) ? (
-              <div
-                className="bg-muted flex flex-col gap-2 rounded-control p-3"
-                role="status"
-              >
-                {ruleState === "applied" ? (
-                  <p className="text-caption">
-                    앞으로 들어오는 {merchant} 결제는 &lsquo;{ruleFor.name}
-                    &rsquo;(으)로 분류해요.
-                  </p>
-                ) : (
-                  <>
-                    <p className="text-caption">
-                      앞으로 들어오는 {merchant} 결제도 &lsquo;{ruleFor.name}
-                      &rsquo;(으)로 분류할까요? 지난 거래는 그대로예요.
-                    </p>
-                    <Button
-                      type="button"
-                      variant="tint"
-                      size="sm"
-                      className="min-h-10 self-start"
-                      disabled={!ruleReady || busy || ruleState === "saving"}
-                      onClick={() => void applyRuleForMerchant()}
-                    >
-                      {ruleState === "saving"
-                        ? "저장 중…"
-                        : "앞으로도 이렇게 분류"}
-                    </Button>
-                  </>
-                )}
-              </div>
-            ) : null}
-
-            {/* 알맞은 카테고리가 없으면 여기서 바로 새로 만들어 지정. */}
-            {creatingCategory ? (
-              <div className="flex flex-col gap-1.5">
-                <div className="flex gap-2">
-                  <Input
-                    value={newCategoryName}
-                    onChange={(e) => setNewCategoryName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        void submitNewCategory();
-                      }
-                    }}
-                    placeholder="새 카테고리 이름"
-                    maxLength={20}
-                    autoFocus
-                    disabled={categorySaving}
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => void submitNewCategory()}
-                    disabled={categorySaving || newCategoryName.trim() === ""}
-                  >
-                    저장
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      setCreatingCategory(false);
-                      setNewCategoryName("");
-                      setCategoryError(null);
-                    }}
-                    disabled={categorySaving}
-                  >
-                    취소
-                  </Button>
-                </div>
-                {categoryError ? (
-                  <p className="text-destructive text-caption">
-                    {categoryError}
-                  </p>
-                ) : null}
-              </div>
+        {/* 분류 변경이 저장 중이거나 저장됐을 때만 — 실패하면 묻지 않는다(오류는 위에서 말한다). */}
+        {ruleFor && (ruleReady || busy) ? (
+          <div
+            className="bg-muted flex flex-col gap-2 rounded-control p-3"
+            role="status"
+          >
+            {ruleState === "applied" ? (
+              <p className="text-caption">
+                앞으로 들어오는 {merchant} 결제는 &lsquo;{ruleFor.name}
+                &rsquo;(으)로 분류해요.
+              </p>
             ) : (
-              <button
-                type="button"
-                onClick={() => setCreatingCategory(true)}
-                disabled={busy}
-                className="text-primary text-caption min-h-11 w-fit font-medium hover:underline disabled:opacity-50"
-              >
-                + 새 카테고리 만들기
-              </button>
+              <>
+                <p className="text-caption">
+                  앞으로 들어오는 {merchant} 결제도 &lsquo;{ruleFor.name}
+                  &rsquo;(으)로 분류할까요? 지난 거래는 그대로예요.
+                </p>
+                <Button
+                  type="button"
+                  variant="tint"
+                  size="sm"
+                  className="min-h-10 self-start"
+                  disabled={!ruleReady || busy || ruleState === "saving"}
+                  onClick={() => void applyRuleForMerchant()}
+                >
+                  {ruleState === "saving"
+                    ? "저장 중…"
+                    : "앞으로도 이렇게 분류"}
+                </Button>
+              </>
             )}
           </div>
+        ) : null}
 
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="detail-visibility">공개 범위</Label>
-            <Select
-              value={txn.visibility}
-              disabled={busy}
-              onValueChange={onChangeVisibility}
-            >
-              <SelectTrigger
-                id="detail-visibility"
-                className="min-h-11 min-w-0 w-full max-w-full"
+        {/* 알맞은 카테고리가 없으면 카테고리 시트의 '새 카테고리 만들기'로 여기서 바로 만들어 지정한다. */}
+        {creatingCategory ? (
+          <div className="flex flex-col gap-1.5">
+            <div className="flex gap-2">
+              <Input
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void submitNewCategory();
+                  }
+                }}
+                placeholder="새 카테고리 이름"
+                maxLength={20}
+                autoFocus
+                disabled={categorySaving}
+              />
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void submitNewCategory()}
+                disabled={categorySaving || newCategoryName.trim() === ""}
               >
-                <SelectValue className="min-w-0 flex-1 truncate text-left" />
-              </SelectTrigger>
-              <SelectContent>
-                {VISIBILITY_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* 카드 연결/재지정 — 미연결·모호(pending_review) 거래 해소 경로 */}
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="detail-card">카드</Label>
-            <Select
-              value={txn.cardId ?? CARD_NONE}
-              disabled={busy}
-              onValueChange={onChangeCard}
-            >
-              <SelectTrigger
-                id="detail-card"
-                className="min-h-11 min-w-0 w-full max-w-full"
+                저장
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setCreatingCategory(false);
+                  setNewCategoryName("");
+                  setCategoryError(null);
+                }}
+                disabled={categorySaving}
               >
-                <SelectValue
-                  className="min-w-0 flex-1 truncate text-left"
-                  placeholder="카드 미연결"
-                />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={CARD_NONE}>카드 미연결</SelectItem>
-                {cardOptions.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {txn.cardId == null || txn.status === "pending_review" ? (
-              <p className="text-muted-foreground text-caption">
-                카드에 연결하면 공개 범위가 카드 설정을 따라가요.
+                취소
+              </Button>
+            </div>
+            {categoryError ? (
+              <p className="text-destructive text-caption">
+                {categoryError}
               </p>
             ) : null}
           </div>
+        ) : null}
 
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <Label>메모</Label>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={onOpenMemo}
-                className="text-accent-foreground text-caption min-h-11 font-medium disabled:opacity-50"
-              >
-                {txn.memo ? "수정하기" : "남기기"}
-              </button>
-            </div>
-            <p
-              className={cn(
-                "bg-muted text-body rounded-control px-3 py-2.5 break-words",
-                !txn.memo && "text-muted-foreground"
-              )}
+        <PickerSheet
+          open={picker === "category"}
+          onClose={() => setPicker(null)}
+          title="카테고리"
+          options={categoryOptions}
+          value={txn.categoryId}
+          onSelect={(value) => {
+            onChangeCategory(value);
+            if (searchTerm) {
+              setRuleFor({
+                id: value,
+                name:
+                  categoryOptions.find((o) => o.value === value)?.label ??
+                  "선택한 분류",
+              });
+              setRuleState("offered");
+            }
+          }}
+          footer={
+            <button
+              type="button"
+              onClick={() => {
+                setPicker(null);
+                setCreatingCategory(true);
+              }}
+              className="text-primary text-body -mx-2 flex min-h-12 items-center rounded-control px-2 text-left font-medium hover:bg-muted active:bg-muted"
             >
-              {txn.memo ?? "아직 메모가 없어요"}
-            </p>
-          </div>
-        </section>
+              + 새 카테고리 만들기
+            </button>
+          }
+        />
+        <PickerSheet
+          open={picker === "card"}
+          onClose={() => setPicker(null)}
+          title="카드"
+          options={[{ value: CARD_NONE, label: "카드 미연결" }, ...cardOptions]}
+          value={txn.cardId ?? CARD_NONE}
+          onSelect={onChangeCard}
+        />
+        <PickerSheet
+          open={picker === "visibility"}
+          onClose={() => setPicker(null)}
+          title="공개 범위"
+          options={VISIBILITY_OPTIONS}
+          value={txn.visibility}
+          onSelect={onChangeVisibility}
+        />
 
         {/* 가족에게 물어보기(확인 요청) — 자기 훅을 쓰는 독립 컴포넌트 */}
         <ReviewRequestAction txn={txn} disabled={busy} />
@@ -2080,17 +2039,6 @@ function TransactionDetailDialog({
 }
 
 /** 상세 시트의 결제 정보 한 줄(키-값). */
-function InfoRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex min-w-0 gap-4 py-3">
-      <dt className="text-caption text-muted-foreground w-16 shrink-0 pt-0.5">
-        {label}
-      </dt>
-      <dd className="text-body min-w-0 flex-1 break-words">{children}</dd>
-    </div>
-  );
-}
-
 /* -------------------------------------------------------------------------- */
 /* Memo modal                                                                 */
 /* -------------------------------------------------------------------------- */
