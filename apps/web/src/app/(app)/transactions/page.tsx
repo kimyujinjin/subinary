@@ -82,7 +82,8 @@ import {
   merchantSearchTerm,
   transactionOccurredAt as occurredAt,
 } from "@/lib/transaction-display";
-import { FieldList, FieldRow, PickerSheet } from "./detail-fields";
+import { FieldList, FieldRow } from "./detail-fields";
+import { PickerSheet } from "./picker-sheet";
 import { MerchantHistory } from "./merchant-history";
 import { LedgerHeader } from "@/components/ledger-header";
 import { ApiError, api } from "@/lib/api-client";

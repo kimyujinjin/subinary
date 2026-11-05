@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { FieldList, FieldRow, PickerOptionList } from "./detail-fields";
+import { FieldList, FieldRow } from "./detail-fields";
+import { PickerOptionList } from "./picker-sheet";
 
 describe("거래 상세 정보·설정 줄", () => {
   it("바꾸는 줄은 이름·값·화살표가 한 줄인 버튼이고, 읽기 전용 줄은 버튼이 아니다", () => {
