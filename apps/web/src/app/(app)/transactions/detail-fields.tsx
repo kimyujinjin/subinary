@@ -8,7 +8,7 @@
  * 예전에는 위 정보 목록(결제자·카드)과 아래 '분류' 칸(카테고리·공개 범위·카드 드롭다운, 메모 상자)이 따로 있어
  * 카드가 두 번 나왔다.
  */
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, ChevronsUpDown } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
@@ -45,21 +45,24 @@ export function FieldRow({
   muted?: boolean;
   children?: ReactNode;
 }) {
-  const interactive = menu != null || onClick != null;
   const body = (
     <>
-      <span className="text-body text-muted-foreground w-20 shrink-0">
-        {label}
-      </span>
+      <span className="text-body text-foreground w-20 shrink-0">{label}</span>
       <span
         className={cn(
-          "text-body min-w-0 flex-1 text-right break-words",
-          muted && "text-muted-foreground"
+          "text-body text-muted-foreground min-w-0 flex-1 text-right break-words",
+          muted && "text-muted-foreground/60"
         )}
       >
         {value}
       </span>
-      {interactive ? (
+      {/* 값 고르기(그 자리 메뉴)는 ⌃⌄, 다른 화면을 여는 줄은 › — HIG 팝업 버튼·내비게이션 표시. */}
+      {menu ? (
+        <ChevronsUpDown
+          aria-hidden="true"
+          className="text-muted-foreground/60 size-4 shrink-0"
+        />
+      ) : onClick ? (
         <ChevronRight
           aria-hidden="true"
           className="text-muted-foreground/50 -mr-1 size-5 shrink-0"

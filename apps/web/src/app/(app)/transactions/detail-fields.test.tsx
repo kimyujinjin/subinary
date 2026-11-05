@@ -43,6 +43,12 @@ describe("거래 상세 정보·설정 줄", () => {
     expect(menuButton).toContain("카테고리");
     expect(menuButton).toContain("카페");
     expect(menuButton).toContain("<svg");
+    // 설정 앱 위계: 이름은 기본 글자색, 값은 회색. 값 고르기 줄은 ⌃⌄, 다른 창을 여는 줄은 ›.
+    expect(menuButton).toContain("lucide-chevrons-up-down");
+    expect(menuButton).toMatch(/text-foreground[^"]*"[^>]*>카테고리/);
+    expect(menuButton).toMatch(/text-muted-foreground[^"]*"[^>]*>카페/);
+    const dialogButton = html.slice(html.lastIndexOf("<button"));
+    expect(dialogButton).toContain("lucide-chevron-right");
     expect(html).not.toContain("<select");
   });
 

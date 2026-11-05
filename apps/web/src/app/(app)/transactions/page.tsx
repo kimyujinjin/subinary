@@ -1193,7 +1193,8 @@ function TransactionsView() {
           if (!open) setDetailId(null);
         }}
       >
-        <AlertDialogContent>
+        {/* 사용자가 예상하지 못한 문제를 알리는 창이라 얼럿(가운데)이다 — 확인(액션 시트)과 다르다. */}
+        <AlertDialogContent variant="alert">
           <AlertDialogHeader>
             <AlertDialogTitle>{detailFallbackError?.title}</AlertDialogTitle>
             <AlertDialogDescription>

@@ -1,17 +1,18 @@
 /**
- * 창 모양 — 용도마다 하나(2026-11-05 전수조사로 정리).
+ * 창 모양 — 용도마다 하나, 애플 HIG의 구분을 따른다(2026-11-05 전수조사로 정리).
  *
- * | 용도                         | 모양                                                   | 쓰는 것                          |
- * |------------------------------|--------------------------------------------------------|----------------------------------|
- * | 상세 보기(가계부 거래 상세)  | 바텀 시트: 모든 폭에서 아래에 붙음, 최대 85%, 손잡이   | `DialogContent layout="sheet"`   |
- * | 선택지·안내(자산 추가 등)    | 바텀 시트: 모든 폭, 최대 85%, 손잡이                   | `BottomSheet` 위젯               |
- * | 입력 폼(거래 추가·메모 등)   | 폰은 아래에서 올라오고 넓은 화면은 가운데, 손잡이 없음 | `DialogContent`(기본)            |
- * | 확인(지울까요? 등 예/아니오) | 모든 폭에서 화면 가운데 작은 창                        | `AlertDialogContent`             |
- * | 값 고르기(카테고리·기간 등)  | 누른 자리 아래 드롭다운 — 창이 아니다                  | `PickerMenu`(transactions)       |
+ * | 용도                                   | HIG 부품        | 모양                                                       | 쓰는 것                              |
+ * |----------------------------------------|-----------------|------------------------------------------------------------|--------------------------------------|
+ * | 상세 보기(가계부 거래 상세)            | 시트            | 모든 폭에서 아래에 붙음, 최대 85%, 손잡이                  | `DialogContent layout="sheet"`       |
+ * | 선택지·안내(자산 추가·보관 안내 등)    | 시트            | 모든 폭에서 아래에 붙음, 최대 85%, 손잡이                  | `BottomSheet` 위젯                   |
+ * | 입력 폼(거래 추가·메모 등)             | 시트·폼 시트    | 폰은 아래에서 올라오고 넓은 화면은 가운데, 손잡이 없음     | `DialogContent`(기본)                |
+ * | 내가 누른 동작의 확인(삭제·해제 등)    | 액션 시트       | 폰은 아래쪽에 떠 있는 카드(위험한 버튼 위, 취소 아래), 넓은 화면은 가운데 | `AlertDialogContent`(기본)  |
+ * | 예상 못 한 문제 알림                   | 얼럿            | 모든 폭에서 화면 가운데 작은 창                            | `AlertDialogContent variant="alert"` |
+ * | 값 고르기(카테고리·기간 등)            | 팝업 버튼+메뉴  | 누른 자리 아래 메뉴, 지금 값에 체크 — 창이 아니다          | `PickerMenu`(transactions)           |
  *
- * 같은 날 '대화상자·확인창·선택 목록을 모두 바텀 시트로' 넓혔다가 사용자 지적("모든 걸 다 바텀 시트로
- * 만들라고 한 건 아니었다")으로 되돌렸다. 바텀 시트는 상세 보기와 선택지·안내에만 쓴다.
- * `sheet-layout.test.ts`가 고정한다.
+ * HIG: "의도한 동작에 딸린 선택(확인)에는 얼럿이 아니라 액션 시트를 쓴다. 얼럿은 보통 예상하지 못한 문제를 알린다."
+ * 같은 날 '전부 바텀 시트'로 넓혔다가("모든 걸 다 바텀 시트로 만들라고 한 건 아니었다") 정리했고,
+ * 확인을 가운데 창으로만 두었다가 HIG 기준으로 액션 시트로 고쳤다. `sheet-layout.test.ts`가 고정한다.
  */
 
 /** 바텀 시트 위치 — 아래에 붙고 위 모서리만 둥글다. 넓은 화면(sm 이상)에서는 가운데 정렬만 더한다. */
@@ -28,6 +29,13 @@ export const DIALOG_SHEET = `${SHEET_POSITION} ${SHEET_MAX_HEIGHT} sm:max-w-lg s
 export const DIALOG_RESPONSIVE =
   "inset-x-0 bottom-0 max-h-[calc(100dvh-var(--safe-top)-1.5rem)] rounded-t-card data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom sm:inset-x-auto sm:bottom-auto sm:top-[50%] sm:left-[50%] sm:max-h-[calc(100dvh-4rem)] sm:max-w-lg sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-card sm:p-6 sm:data-[state=open]:zoom-in-95 sm:data-[state=closed]:zoom-out-95";
 
-/** 확인(`AlertDialogContent`) — 모든 폭에서 화면 가운데 작은 창. */
+/**
+ * 액션 시트(`AlertDialogContent` 기본) — 내가 누른 동작의 확인. 폰에서는 화면 양옆·아래에 여백을 두고 떠 있는
+ * 작은 카드(손잡이·스크롤 없음, 위험한 버튼이 위·취소가 아래), 넓은 화면(sm 이상)에서는 가운데 작은 창.
+ */
+export const ACTION_SHEET =
+  "inset-x-2 bottom-[max(0.5rem,var(--safe-bottom))] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-card p-5 shadow-lg data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom sm:inset-x-auto sm:bottom-auto sm:top-[50%] sm:left-[50%] sm:w-full sm:max-w-sm sm:translate-x-[-50%] sm:translate-y-[-50%] sm:p-6 sm:data-[state=open]:zoom-in-95 sm:data-[state=closed]:zoom-out-95";
+
+/** 얼럿(`AlertDialogContent variant="alert"`) — 예상 못 한 문제 알림. 모든 폭에서 화면 가운데 작은 창. */
 export const ALERT_CENTERED =
   "top-[50%] left-[50%] w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-card p-6 shadow-lg sm:max-w-sm data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95";

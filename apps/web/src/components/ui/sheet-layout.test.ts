@@ -3,7 +3,8 @@
  *
  * 같은 날 대화상자·확인창·선택 목록을 모두 바텀 시트로 바꿨다가 "모든 걸 다 바텀 시트로 만들라고 한 건
  * 아니었다"는 지적으로 정리했다. 바텀 시트는 상세 보기(거래 상세)와 선택지·안내(BottomSheet 위젯)뿐이다.
- * 확인은 가운데 작은 창, 입력 폼은 폰에서 아래·넓은 화면에서 가운데, 값 고르기는 드롭다운이다.
+ * 확인은 액션 시트(폰에서 아래쪽에 떠 있는 카드), 예상 못 한 문제는 얼럿(가운데), 입력 폼은 폰에서 아래·넓은 화면에서
+ * 가운데, 값 고르기는 메뉴(드롭다운)다 — 애플 HIG 구분.
  * node 환경이라 Radix 포털 안을 렌더할 수 없어, 공용 클래스와 소스를 직접 확인한다.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -12,6 +13,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  ACTION_SHEET,
   ALERT_CENTERED,
   DIALOG_RESPONSIVE,
   DIALOG_SHEET,
@@ -58,22 +60,39 @@ describe("창 모양 — 용도마다 하나", () => {
     );
   });
 
-  it("확인은 모든 폭에서 화면 가운데 작은 창이다", () => {
-    expect(classes(ALERT_CENTERED)).toEqual(
+  it("내가 누른 동작의 확인은 액션 시트다 — 폰에서는 아래쪽에 떠 있는 카드, 넓은 화면에서는 가운데", () => {
+    expect(classes(ACTION_SHEET)).toEqual(
       expect.arrayContaining([
-        "top-[50%]",
-        "left-[50%]",
-        "translate-y-[-50%]",
-        "sm:max-w-sm",
+        "inset-x-2",
+        "bottom-[max(0.5rem,var(--safe-bottom))]",
+        "rounded-card",
+        "data-[state=open]:slide-in-from-bottom",
+        "sm:top-[50%]",
+        "sm:translate-y-[-50%]",
       ])
     );
-    for (const sheetClass of [
-      "bottom-0",
-      "rounded-t-card",
-      "slide-in-from-bottom",
-    ]) {
+    // 바텀 시트(화면 폭 가득·위 모서리만 둥글게·손잡이)가 아니다.
+    for (const sheetClass of ["inset-x-0", "rounded-t-card", SHEET_MAX_HEIGHT]) {
+      expect(classes(ACTION_SHEET)).not.toContain(sheetClass);
+    }
+  });
+
+  it("예상 못 한 문제 알림만 얼럿이다 — 모든 폭에서 화면 가운데", () => {
+    expect(classes(ALERT_CENTERED)).toEqual(
+      expect.arrayContaining(["top-[50%]", "left-[50%]", "translate-y-[-50%]", "sm:max-w-sm"])
+    );
+    for (const sheetClass of ["bottom-0", "rounded-t-card", "slide-in-from-bottom"]) {
       expect(ALERT_CENTERED).not.toContain(sheetClass);
     }
+    const alert = read("components/ui/alert-dialog.tsx");
+    expect(alert).toContain('variant = "action"');
+    expect(alert).toContain('variant === "alert" ? ALERT_CENTERED : ACTION_SHEET');
+    const users = tsxFiles(SRC)
+      .filter((file) => !file.includes("/components/ui/"))
+      .flatMap((file) =>
+        (readFileSync(file, "utf8").match(/variant="alert"/g) ?? []).map(() => file.slice(SRC.length + 1))
+      );
+    expect(users).toEqual(["app/(app)/transactions/page.tsx"]);
   });
 
   it('Dialog 기본은 입력 폼 모양이고, 손잡이는 layout="sheet"일 때만 단다', () => {

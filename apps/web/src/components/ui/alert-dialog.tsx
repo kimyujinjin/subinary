@@ -4,7 +4,7 @@ import * as React from "react";
 import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog";
 
 import { cn } from "@/lib/utils";
-import { ALERT_CENTERED } from "@/components/ui/sheet-layout";
+import { ACTION_SHEET, ALERT_CENTERED } from "@/components/ui/sheet-layout";
 import { buttonVariants } from "@/components/ui/button";
 
 function AlertDialog(
@@ -45,20 +45,26 @@ function AlertDialogOverlay({
   );
 }
 
+/**
+ * 기본(`variant="action"`)은 액션 시트 — 내가 누른 동작(삭제·해제·로그아웃·버리기)의 확인.
+ * `variant="alert"`는 얼럿 — 예상하지 못한 문제를 알릴 때. 기준은 `sheet-layout.ts` 표.
+ */
 function AlertDialogContent({
   className,
   style,
+  variant = "action",
   ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Content>) {
+}: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
+  variant?: "action" | "alert";
+}) {
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         className={cn(
-          // 확인(예/아니오)은 모든 폭에서 화면 가운데 작은 창이다 — 바텀 시트는 상세 보기·선택지·안내만(sheet-layout.ts 표).
           "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-50 grid gap-4 duration-200 outline-none",
-          ALERT_CENTERED,
+          variant === "alert" ? ALERT_CENTERED : ACTION_SHEET,
           className,
         )}
         style={style}
@@ -75,7 +81,7 @@ function AlertDialogHeader({
   return (
     <div
       data-slot="alert-dialog-header"
-      className={cn("flex flex-col gap-2 text-left", className)}
+      className={cn("flex flex-col gap-2 text-center", className)}
       {...props}
     />
   );
