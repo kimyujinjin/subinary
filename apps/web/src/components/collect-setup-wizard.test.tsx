@@ -77,7 +77,8 @@ vi.mock("@/lib/queries", () => ({ useDevices: () => ({}) }));
 
 import { CollectSetupWizard } from "./collect-setup-wizard";
 
-const KEY = "synthetic-collect-key-0000";
+// 가짜 열쇠는 엔트로피가 낮은 값으로 둔다 — 그럴듯한 문자열은 CI gitleaks(generic-api-key)가 비밀로 잡는다.
+const KEY = "k".repeat(32);
 
 function device(changes: Partial<DeviceSummary> = {}): DeviceSummary {
   return {
