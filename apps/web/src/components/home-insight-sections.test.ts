@@ -250,7 +250,7 @@ const consumption = (props: Partial<HomeConsumptionCardProps> = {}) =>
       isCurrentMonth: true,
       loading: false,
       error: false,
-      reviews: noExceptions,
+      todo: {},
       processing: noExceptions,
       monthly: weekly({ totalNet: 526339, previousNet: 812414 }),
       ...props,
@@ -274,7 +274,7 @@ describe("홈 소비 카드(개편)", () => {
 
   it("가족이 물어본 결제는 건수를 알 때만 할 일 화면으로 연결한다", () => {
     const requests = { count: 2, loading: false, error: false };
-    const html = consumption({ requests });
+    const html = consumption({ todo: { requests } });
     expect(html).toContain("가족이 물어본 결제 2건");
     expect(html).toContain('href="/todo?section=requests"');
     for (const hidden of [
@@ -282,7 +282,7 @@ describe("홈 소비 카드(개편)", () => {
       { ...requests, loading: true },
       { ...requests, error: true },
     ]) {
-      expect(consumption({ requests: hidden })).not.toContain(
+      expect(consumption({ todo: { requests: hidden } })).not.toContain(
         "가족이 물어본 결제"
       );
     }

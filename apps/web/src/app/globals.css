@@ -20,6 +20,8 @@
   --card-foreground: #19283f;
   --popover: #ffffff;
   --popover-foreground: #19283f;
+  /* 떠 있는 면(Dialog·AlertDialog·BottomSheet 바탕). 라이트는 배경과 같은 흰색 그대로다. */
+  --elevated: #ffffff;
 
   --primary: #2456cf;
   --primary-foreground: #ffffff;
@@ -56,6 +58,9 @@
 
   --border: #e5e8eb;
   --input: #e5e8eb;
+  /* 꺼진 컨트롤(스위치 트랙·체크박스 테두리). --input은 흰 바탕 대비 1.23:1이라 모양이 보이지 않았다 —
+     비텍스트 대비 3:1 이상(color-contrast.test.ts). */
+  --control-off: #8b95a1;
   --ring: #2456cf;
 
   --chart-1: #2456cf;
@@ -84,6 +89,8 @@
   --card-foreground: #eef3fc;
   --popover: #25344b;
   --popover-foreground: #eef3fc;
+  /* 페이지 배경과 같으면 뒤 덮개 위에서 1.11:1로 묻힌다. 입력칸(--muted)은 여전히 구분되게 배경과 muted 사이 밝기. */
+  --elevated: #1e2838;
 
   --primary: #a5c5ff;
   --primary-foreground: #11294d;
@@ -115,6 +122,8 @@
 
   --border: #ffffff14;
   --input: #ffffff1f;
+  /* 반투명이면 바탕마다 대비가 달라져 불투명으로 둔다 — 배경·떠 있는 면 둘 다 3:1 이상. */
+  --control-off: #6e7785;
   --ring: #a5c5ff;
 
   --chart-1: #a5c5ff;
@@ -168,6 +177,7 @@
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+  --color-elevated: var(--elevated);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
@@ -189,6 +199,7 @@
   --color-warning-strong: var(--warning-strong);
   --color-border: var(--border);
   --color-input: var(--input);
+  --color-control-off: var(--control-off);
   --color-ring: var(--ring);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
@@ -273,6 +284,8 @@ html.kb-open [data-fab] {
   }
   html {
     color-scheme: light dark;
+    /* 웹뷰 기본 탭 하이라이트(누른 자리의 반투명 사각형)를 끈다 — 눌림 표시는 각 부품의 active: 상태가 맡는다. */
+    -webkit-tap-highlight-color: transparent;
     /* 스크롤 끝 바운스가 앱 셸(헤더·탭바)까지 흔드는 것 방지 — 채팅 등
      * 내부 스크롤러가 끝에 닿았을 때 바디로 체이닝되는 것도 함께 차단. */
     overscroll-behavior-y: none;

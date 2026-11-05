@@ -106,8 +106,16 @@ export function FinanceLoading() {
   return <ListLoading rows={2} />;
 }
 
+/**
+ * 누르면 액션 시트로 한 번 더 묻는 버튼.
+ *
+ * 확인 버튼 글자는 '확인'이 아니라 실제로 일어날 동작(기본은 `label` — '자산 삭제' 등)이다.
+ * 지우기·제거처럼 되돌리기 어려운 동작(`destructive`)은 확인 버튼도 위험 색으로 그린다 —
+ * 예전에는 무엇을 하든 채움 '확인'이라 삭제와 다시 불러오기가 같은 무게로 보였다.
+ */
 export function ConfirmAction({
   label,
+  confirmLabel,
   title,
   description,
   onConfirm,
@@ -115,6 +123,8 @@ export function ConfirmAction({
   destructive = false,
 }: {
   label: string;
+  /** 확인 버튼 글자. 없으면 `label`을 그대로 쓴다. */
+  confirmLabel?: string;
   title: string;
   description: string;
   onConfirm: () => void;
@@ -145,8 +155,12 @@ export function ConfirmAction({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="min-h-11">취소</AlertDialogCancel>
-            <AlertDialogAction className="min-h-11" onClick={onConfirm}>
-              확인
+            <AlertDialogAction
+              variant={destructive ? "destructive" : "default"}
+              className="min-h-11 h-auto whitespace-normal"
+              onClick={onConfirm}
+            >
+              {confirmLabel ?? label}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -306,7 +320,7 @@ export function RecordDialog({
               {notice}
             </p>
           ) : null}
-          <DialogFooter className="bg-background shrink-0 flex-row flex-wrap gap-2 border-t px-4 py-3 sm:flex-row sm:px-6 [&>button]:w-auto [&>button]:min-w-0 [&>button]:flex-[1_1_7rem] [&>p]:w-full">
+          <DialogFooter className="bg-elevated shrink-0 flex-row flex-wrap gap-2 border-t px-4 py-3 sm:flex-row sm:px-6 [&>button]:w-auto [&>button]:min-w-0 [&>button]:flex-[1_1_7rem] [&>p]:w-full">
             {footer}
             <Button
               type="button"
@@ -332,7 +346,11 @@ export function RecordDialog({
                 <AlertDialogCancel className="min-h-11">
                   계속 입력하기
                 </AlertDialogCancel>
-                <AlertDialogAction className="min-h-11" onClick={finish}>
+                <AlertDialogAction
+                  variant="destructive"
+                  className="min-h-11"
+                  onClick={finish}
+                >
                   저장 안 함
                 </AlertDialogAction>
               </AlertDialogFooter>

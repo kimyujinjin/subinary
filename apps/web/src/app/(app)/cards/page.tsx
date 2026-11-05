@@ -937,7 +937,7 @@ export default function CardsPage() {
                   });
                 }
               }}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive"
             >
               비활성화
             </AlertDialogAction>

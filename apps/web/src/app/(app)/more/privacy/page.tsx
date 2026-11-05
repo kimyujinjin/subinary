@@ -27,8 +27,12 @@ import { useState, type ReactNode } from "react";
 import type { PrivacyOverview } from "@family/contracts";
 import { DEFAULT_TIMEZONE } from "@family/shared";
 
-import { Button } from "@/components/ui/button";
-import { BottomSheet, ListLoading, PageBackHeader } from "@/components/widgets";
+import {
+  BottomSheet,
+  ErrorState,
+  ListLoading,
+  PageBackHeader,
+} from "@/components/widgets";
 import { useAuth } from "@/lib/auth-context";
 import { useHousehold } from "@/lib/household-context";
 import { fetchPrivacyOverview, privacyQueryKey } from "./privacy-api";
@@ -120,14 +124,12 @@ export default function PrivacyPage() {
     return (
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
         <PageBackHeader title="개인정보" />
-        <div className="flex flex-col items-start gap-3">
-          <p role="alert" className="text-body text-destructive">
-            개인정보 설정을 불러오지 못했어요
-          </p>
-          <Button variant="weak" onClick={() => void overviewQuery.refetch()}>
-            다시 불러오기
-          </Button>
-        </div>
+        <ErrorState
+          align="start"
+          message="개인정보 설정을 불러오지 못했어요"
+          retrying={overviewQuery.isFetching}
+          onRetry={() => void overviewQuery.refetch()}
+        />
       </div>
     );
   }

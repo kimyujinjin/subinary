@@ -501,7 +501,7 @@ export function AddTransactionDialog({
         <AlertDialogHeader><AlertDialogTitle>입력을 그만둘까요?</AlertDialogTitle><AlertDialogDescription>아직 등록하지 않은 입력은 사라져요.</AlertDialogDescription></AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>계속 입력</AlertDialogCancel>
-          <AlertDialogAction onClick={() => { setDiscardOpen(false); onOpenChange(false); }}>입력 버리기</AlertDialogAction>
+          <AlertDialogAction variant="destructive" onClick={() => { setDiscardOpen(false); onOpenChange(false); }}>입력 버리기</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

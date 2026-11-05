@@ -38,13 +38,13 @@ import {
 export interface TodoCounts {
   /** 미해결 결제 실패 묶음. */
   declines: CardSmsDeclineGroup[];
-  /** 확인이 필요한 거래(확인필요 + 중복의심, 최신순). */
+  /** 확인이 필요한 거래(확인 필요 + 중복 의심, 최신순). */
   reviews: TransactionSummary[];
-  /** 읽지 못한 문자 — 전 기간(홈 3일 창을 적용하지 않은 원본). */
+  /** 읽지 못한 문자 — 전 기간(최근 창을 적용하지 않은 원본). */
   sms: CardSmsEventSummary[];
-  /** 그중 홈이 노출하는 최근 창 안쪽. */
+  /** 그중 최근 3일 창 안쪽(`HOME_SMS_WINDOW_MS`). 지금 홈은 창 없이 전 기간을 센다. */
   smsRecent: CardSmsEventSummary[];
-  /** 홈 창 밖(= 홈에서는 "지난 문자 N건 더 보기"로만 보이는 것). */
+  /** 최근 3일 창 밖. */
   smsOlder: CardSmsEventSummary[];
   /** Original read projection retained for compatibility; never use its length as task count. */
   unposted: CardSmsEventSummary[];

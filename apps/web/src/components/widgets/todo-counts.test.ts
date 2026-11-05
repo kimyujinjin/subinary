@@ -8,6 +8,9 @@ import type {
 
 import {
   HOME_SMS_WINDOW_MS,
+  TODO_SECTION_IDS,
+  isTodoSectionId,
+  todoSectionHref,
   partitionSmsByWindow,
   partitionTodoSms,
   pendingCountText,
@@ -258,5 +261,18 @@ describe("pendingCountText", () => {
   it("스캔 상한에 걸리면 N+건으로 표기한다", () => {
     expect(pendingCountText(false, false, 100, true)).toBe("100+건");
     expect(pendingCountText(false, false, 3, false)).toBe("3건");
+  });
+});
+
+describe("todo section anchors", () => {
+  it("accepts only known section ids so a stray query never scrolls somewhere random", () => {
+    for (const id of TODO_SECTION_IDS) {
+      expect(isTodoSectionId(id)).toBe(true);
+      expect(todoSectionHref(id)).toBe(`/todo?section=${id}`);
+    }
+    expect(isTodoSectionId(null)).toBe(false);
+    expect(isTodoSectionId(undefined)).toBe(false);
+    expect(isTodoSectionId("")).toBe(false);
+    expect(isTodoSectionId("constructor")).toBe(false);
   });
 });

@@ -57,7 +57,7 @@ function NotificationBell() {
       href="/notifications"
       aria-label={count > 0 ? `알림 ${count}건` : "알림"}
       // 헤더 아이콘은 배경 없이 아이콘 24 + 터치 44(docs/ux-renewal-2026-11.md §3.3).
-      className="text-foreground/80 hover:text-foreground relative -mr-2 flex size-11 items-center justify-center transition-colors"
+      className="text-foreground/80 hover:text-foreground relative -mr-2 flex size-11 items-center justify-center transition-colors active:text-foreground"
     >
       <Bell className="size-6" strokeWidth={1.8} aria-hidden="true" />
       {count > 0 ? (
@@ -87,7 +87,7 @@ function NavigationItem({
         "text-micro flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-control px-1 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:min-h-12 lg:flex-row lg:justify-start lg:gap-3 lg:px-4 lg:py-3 lg:text-sm",
         active
           ? "text-foreground font-semibold lg:bg-muted"
-          : "text-muted-foreground/80 hover:text-foreground lg:hover:bg-muted"
+          : "text-muted-foreground/80 hover:text-foreground lg:hover:bg-muted active:text-foreground"
       )}
     >
       <span className="relative flex h-8 w-11 shrink-0 items-center justify-center lg:h-auto lg:w-auto">

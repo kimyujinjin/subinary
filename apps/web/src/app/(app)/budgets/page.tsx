@@ -582,7 +582,7 @@ function BudgetsView() {
         </Fab>
       ) : null}
       <div className="flex min-w-0 items-center justify-start">
-        <MonthSwitcher month={month} months={availableMonths} onChange={setMonth} className="-ml-2" />
+        <MonthSwitcher month={month} months={availableMonths} onChange={setMonth} className="-ml-3" />
       </div>
 
       {/* 목록 ------------------------------------------------------------- */}
@@ -683,17 +683,17 @@ function BudgetsView() {
                     단일 카드 필터 링크를 각각 제공해 다른 지출이 섞이지 않게 한다. */}
                   <div className="-mb-2 flex items-start gap-2">
                     {spentHref ? (
-                      <Link href={spentHref} className="text-caption text-muted-foreground hover:text-foreground inline-flex min-h-11 flex-1 items-center font-medium">
+                      <Link href={spentHref} className="text-caption text-muted-foreground hover:text-foreground inline-flex min-h-11 flex-1 items-center font-medium active:text-foreground">
                         어디서 썼는지 보기 ›
                       </Link>
                     ) : budget.scopeType === "card_group" ? (
                       // 카드 구성(소유자·끝 4자리)은 기본으로 펼치지 않는다(§5 예산) — 필요할 때만 연다.
                       <details className="min-w-0 flex-1">
-                        <summary className="text-caption text-muted-foreground hover:text-foreground flex min-h-11 cursor-pointer items-center font-medium">카드별로 어디서 썼는지 보기</summary>
+                        <summary className="text-caption text-muted-foreground hover:text-foreground flex min-h-11 cursor-pointer items-center font-medium active:text-foreground">카드별로 어디서 썼는지 보기</summary>
                         <div className="flex flex-col pb-2">
                           {budget.cardIds.map((id) => {
                             const card = cardsQuery.data?.find((item) => item.id === id);
-                            return <Link key={id} href={transactionsHref({ month, cardId: id })} className="text-body hover:bg-muted/50 -mx-2 flex min-h-11 items-center rounded-control px-2">{card ? cardIdentityLabel(card, memberNames) : "등록 카드 내역 확인"} ›</Link>;
+                            return <Link key={id} href={transactionsHref({ month, cardId: id })} className="text-body hover:bg-muted/50 -mx-2 flex min-h-11 items-center rounded-control px-2 active:bg-muted">{card ? cardIdentityLabel(card, memberNames) : "등록 카드 내역 확인"} ›</Link>;
                           })}
                         </div>
                       </details>
@@ -1080,7 +1080,7 @@ function BudgetsView() {
           <AlertDialogFooter className="flex-col sm:flex-col">
             <AlertDialogAction
               onClick={confirmDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-11 w-full"
+              variant="destructive" className="h-11 w-full"
             >
               {deleteMutation.isPending ? (
                 <Loader2 className="size-4 animate-spin" />

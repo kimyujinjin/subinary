@@ -92,4 +92,12 @@ describe("알림 설정 화면", () => {
     expect(switchTag(html, "notify-own")).toContain('disabled=""');
     expect(html).toMatch(/<input[^>]*id="min-amount"[^>]*disabled=""/);
   });
+
+  it("불러오지 못하면 공용 오류 상태로 원인 한 줄과 '다시 불러오기'를 보여 준다", () => {
+    state.data = undefined;
+    const html = renderToStaticMarkup(<NotificationSettingsPage />);
+    expect(html).toMatch(/<p role="alert"[^>]*>알림 설정을 불러오지 못했어요<\/p>/);
+    expect(html).toMatch(/<button[^>]*>다시 불러오기<\/button>/);
+    expect(html).not.toContain("푸시 알림");
+  });
 });

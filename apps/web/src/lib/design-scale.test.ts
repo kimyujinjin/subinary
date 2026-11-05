@@ -28,8 +28,11 @@ function count(pattern: RegExp): number {
 }
 
 // 상한은 내리기만 한다. 화면 개편 PR에서 실제 개수에 맞춰 갱신한다.
-const MAX_ARBITRARY_TEXT_SIZE = 48; // 2026-11-05 가계부 필터 재설계 뒤 49 → 48
+const MAX_ARBITRARY_TEXT_SIZE = 45; // 2026-11-05 공용 부품 정리 뒤 48 → 45
 const MAX_ARBITRARY_RADIUS = 1;
+// 이름 붙은 옛 크기(text-sm·rounded-xl 등)도 토큰 밖 값이다. 2026-11-05 처음 잴 때의 개수 — 하위 화면을 고칠 때마다 내린다.
+const MAX_NAMED_TEXT_SIZE = 239;
+const MAX_NAMED_RADIUS = 54;
 
 describe("디자인 스케일 래칫", () => {
   it("임의 글자 크기(text-[Npx])가 늘지 않는다 — text-display/title/heading/body/caption/micro를 쓴다", () => {
@@ -42,5 +45,35 @@ describe("디자인 스케일 래칫", () => {
     expect(count(/rounded-(?:t-|b-)?\[[^\]]+\]/g)).toBeLessThanOrEqual(
       MAX_ARBITRARY_RADIUS
     );
+  });
+
+  // 임의 값만 세면 text-sm·rounded-xl 같은 옛 값이 새 코드에 다시 들어와도 걸리지 않았다(2026-11-05 HIG 검수).
+  it("이름 붙은 옛 글자 크기(text-xs·sm·lg·xl…)가 늘지 않는다", () => {
+    expect(
+      count(/(?<![\w-])text-(?:xs|sm|base|lg|xl|2xl|3xl|4xl|5xl)(?![\w-])/g)
+    ).toBeLessThanOrEqual(MAX_NAMED_TEXT_SIZE);
+  });
+
+  // Tailwind v4의 hover:는 마우스가 있는 기기에서만 켜지고, 웹뷰 기본 탭 하이라이트는 globals.css에서 껐다.
+  // 그래서 hover 색만 있는 누름 요소는 폰에서 눌러도 아무 반응이 없다(2026-11-05 최종 검토).
+  it("hover 색이 있는 클래스에는 눌림(active:) 표시도 있다 — 폰에는 hover가 없다", () => {
+    const offenders = sourceFiles(SRC).flatMap((file) => {
+      const text = readFileSync(file, "utf8");
+      return [...text.matchAll(/(["`])((?:(?!\1)[^\\\n]|\\.)*?)\1/g)].flatMap((m) => {
+        const tokens = m[2].split(/\s+/);
+        const hover = tokens.some((t) => /^hover:(bg|text)-/.test(t) && t !== "hover:bg-transparent");
+        const active = tokens.some((t) => /(^|:)active:/.test(t));
+        return hover && !active ? [`${file.slice(SRC.length + 1)}: ${m[2].slice(0, 60)}`] : [];
+      });
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it("이름 붙은 옛 모서리(rounded-sm·md·lg·xl…)가 늘지 않는다", () => {
+    expect(
+      count(
+        /(?<![\w-])rounded-(?:t-|b-|l-|r-|tl-|tr-|bl-|br-)?(?:xs|sm|md|lg|xl|2xl|3xl)(?![\w-])/g
+      )
+    ).toBeLessThanOrEqual(MAX_NAMED_RADIUS);
   });
 });

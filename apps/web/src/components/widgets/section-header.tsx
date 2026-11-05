@@ -26,7 +26,7 @@ export function SectionHeader({
   as?: "h2" | "h3";
 }) {
   const actionClass =
-    "text-caption text-muted-foreground hover:text-foreground -mr-2 inline-flex min-h-11 items-center px-2 font-medium";
+    "text-caption text-muted-foreground hover:text-foreground -mr-2 inline-flex min-h-11 items-center px-2 font-medium active:text-foreground";
   return (
     <div
       className={cn(

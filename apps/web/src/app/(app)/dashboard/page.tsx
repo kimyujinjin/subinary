@@ -16,6 +16,10 @@ import { useTodoCounts } from "@/components/widgets";
 import { useAuth } from "@/lib/auth-context";
 import { currentMonth } from "@/lib/format";
 import {
+  homeProcessingSource,
+  homeTodoSources,
+} from "@/lib/home-finance-summary";
+import {
   buildUpcomingRows,
   lastWeekWindow,
   paceText,
@@ -186,25 +190,15 @@ function HomeView() {
         loading={monthly.isLoading}
         error={monthly.isError}
         pace={paceLine}
-        requests={{
+        // 할 일 화면·가계부 배지와 같은 useTodoCounts 기준으로 센다(lib/home-finance-summary).
+        todo={homeTodoSources(todo, {
           count:
             requests.data?.items.filter((item) => item.direction === "received")
               .length ?? 0,
           loading: requests.isLoading,
           error: requests.isError,
-        }}
-        reviews={{
-          count: todo.reviews.length,
-          loading: todo.reviewsLoading,
-          error: todo.reviewsError,
-          truncated: todo.reviewsTruncated,
-        }}
-        processing={{
-          count: todo.processing.length,
-          loading: todo.processingLoading,
-          error: todo.processingError,
-          truncated: todo.processingTruncated,
-        }}
+        })}
+        processing={homeProcessingSource(todo)}
         months={availableMonths}
         onMonthChange={changeMonth}
       />

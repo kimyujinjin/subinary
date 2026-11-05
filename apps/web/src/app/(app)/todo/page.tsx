@@ -4,21 +4,23 @@
  *
  * 매일 생기는 **처리 작업** 3종을 한 화면에 모은다:
  *  1) 결제 실패(미해결) — `declined`는 거래로 승격되지 않아 어떤 집계에도 안 잡힌다
- *  2) 확인이 필요한 거래 — 확인필요 · 중복의심
+ *  2) 확인이 필요한 거래 — 확인 필요 · 중복 의심
  *  3) 읽지 못한 문자 — 파싱 실패 · LLM 격리
  *
- * **왜 이 화면이 따로 필요한가**: 홈은 '확인이 필요한 문자'를 최근 3일만 보여준다.
+ * **왜 이 화면이 따로 필요한가**: 예전 홈은 '확인이 필요한 문자'를 최근 3일만 보여줬다.
  * 홈을 깔끔하게 유지하려는 결정이었지만, 그 결과 처리되지 않은 문자가 3일 뒤 조용히
- * 사라졌다(드리프트 D-7). 문자 한 통이 거래 한 건이고, 사라지면 지출 합계가 영구히
+ * 사라졌다(드리프트 D-7). 지금 홈은 전 기간 건수를 '확인할 문자' 줄로 세어 이 화면으로 보낸다. 문자 한 통이 거래 한 건이고, 사라지면 지출 합계가 영구히
  * 틀린다. 그래서 이 화면은 **기간 제한 없이** 전 기간 백로그를 보여준다.
  *
  * 새 백엔드는 없다 — 세 소스 모두 홈이 이미 호출하던 쿼리이고, `useTodoCounts()`가
  * 같은 queryKey를 공유하므로 홈↔여기를 오가도 요청이 늘지 않는다.
  *
  * **진입점**: 가계부 섹션 내비의 '할 일'(`components/ledger-nav.tsx`), 홈 소비 카드의
- * 처리 대기 링크, 설정 → 가계부 관리. 하단 탭이 5개에서 3개로 줄며 전용 탭은 사라졌고,
- * 숫자 배지는 섹션 내비로 옮겼다. 배지는 이 화면과 같은 `useTodoCounts().total`을
- * 쓴다 — 배지와 목록이 다른 수를 세면 안 된다.
+ * 할 일 줄(`/todo?section=…` — 그 섹션으로 스크롤한다). 홈에서 처리 대기는 상태
+ * 문구일 뿐이고, 환율이 없어 멈춘 문자만 처리 대기 섹션으로 가는 줄이 있다.
+ * 하단 탭이 5개에서 3개로 줄며 전용 탭은 사라졌고, 숫자 배지는 섹션 내비로 옮겼다.
+ * 배지는 이 화면과 같은 `useTodoCounts().total`을 쓴다 — 배지와 목록이 다른 수를 세면
+ * 안 된다.
  *
  * '처리 완료 이력' 섹션은 로드맵 와이어프레임에 있지만 **소스가 없다** — 확정한
  * 문자·거래에 "누가 언제 처리했는지"를 남기는 테이블이 없다(결제 실패만 해결/확인
@@ -68,6 +70,7 @@ import {
   formatWon,
 } from "@/lib/format";
 import { postingMessage } from "@/lib/sms-posting";
+import { isTodoSectionId } from "@/components/widgets/todo-counts";
 
 export default function TodoPage() {
   // 확정·제외 직후 캐시를 갱신하고, 문자 자동 정리가 대기 중이면 해당 묶음만 다시 읽는다.
@@ -80,7 +83,7 @@ export default function TodoPage() {
   const smsGroups = useCardSmsReviewGroups();
   const cardQuery = useCardList();
   const stopPolicy = useDisableSmsReviewPolicy();
-  const scrolledProcessing = useRef(false);
+  const scrolledToSection = useRef(false);
   const policies = smsGroups.data?.policies ?? [];
   const groups = smsGroups.data?.items ?? [];
   useEffect(() => {
@@ -96,24 +99,6 @@ export default function TodoPage() {
       setSelectedSms(requested);
     }
   }, []);
-  useEffect(() => {
-    const target = new URLSearchParams(window.location.search).get("section");
-    if (
-      !scrolledProcessing.current &&
-      (target === "processing" || target === "requests")
-    ) {
-      const section = document.getElementById(target);
-      if (section) {
-        section.scrollIntoView({ block: "start" });
-        scrolledProcessing.current = true;
-      }
-    }
-  }, [
-    todo.processingLoading,
-    todo.processing.length,
-    todo.unpostedUnknown.length,
-    received.length,
-  ]);
 
   const loading =
     requests.isLoading ||
@@ -121,6 +106,25 @@ export default function TodoPage() {
     todo.reviewsLoading ||
     smsGroups.isLoading ||
     todo.unpostedLoading;
+  // 홈 줄로 `/todo?section=…`에 오면 그 섹션으로 스크롤한다. 화면 전체를 다 읽은 뒤에만
+  // 한다 — 위쪽 스켈레톤이 남아 있을 때 스크롤하면 스켈레톤이 빠지면서 목표 섹션이 위로
+  // 밀려 올라간다. 처리 대기(문자함 쿼리)도 기다린다 — 끝나면 '확인이 필요한 문자'가 줄어
+  // 아래 섹션이 움직인다. 오류도 isLoading을 false로 만드니 영영 막히지는 않는다.
+  const settled = !loading && !todo.processingLoading;
+  useEffect(() => {
+    if (!settled || scrolledToSection.current) return;
+    const target = new URLSearchParams(window.location.search).get("section");
+    if (!isTodoSectionId(target)) return;
+    // 다 읽었는데 섹션이 없으면(그사이 0건) 맨 위에 둔다. 나중에 새 건이 와도 화면을
+    // 끌고 가지 않으려고 건수 변화로는 다시 찾지 않는다. 못 찾았을 때 끝났다고 표시하지
+    // 않는 이유: householdId가 정해지기 전에는 쿼리가 꺼져 있어 읽기 전인데도 settled가
+    // 되므로, 실제로 읽고 난 뒤 한 번 더 찾아야 한다.
+    const section = document.getElementById(target);
+    if (section) {
+      section.scrollIntoView({ block: "start" });
+      scrolledToSection.current = true;
+    }
+  }, [settled]);
   const anyError =
     requests.isError ||
     todo.declinesError ||
@@ -162,6 +166,7 @@ export default function TodoPage() {
       {/* 1) 결제 실패 — 가장 위에 둔다. 셋 중 유일하게 **돈이 나가지 않은** 사고라
           방치하면 서비스가 끊긴다(정기결제 수단 미갱신 → 멤버십 종료). */}
       <Section
+        id="declines"
         show={todo.declinesError || todo.declines.length > 0}
         title="결제가 계속 실패하고 있어요"
         countText={pendingCountText(
@@ -230,6 +235,7 @@ export default function TodoPage() {
       {/* 2) 확인이 필요한 거래 — 탭하면 그 건의 상세가 바로 열린다(목록으로 보내면
           사용자가 방금 누른 건을 다시 찾아야 한다). */}
       <Section
+        id="reviews"
         show={todo.reviewsError || todo.reviews.length > 0}
         title="확인이 필요한 거래"
         countText={pendingCountText(
@@ -261,7 +267,9 @@ export default function TodoPage() {
         ))}
       </Section>
 
+      {/* 홈의 '확인할 문자' 줄은 화면에 먼저 보이는 문자 섹션으로 온다(section=sms). */}
       <Section
+        id={todo.unpostedNeedsReview.length > 0 ? "sms" : undefined}
         show={todo.unpostedNeedsReview.length > 0}
         title="확인이 필요한 문자"
         countText={pendingCountText(
@@ -292,6 +300,7 @@ export default function TodoPage() {
 
       {/* 본인 문자를 같은 양식으로 묶고 대표 한 건을 검토한다. */}
       <Section
+        id={todo.unpostedNeedsReview.length > 0 ? undefined : "sms"}
         show={smsGroups.isError || groups.length > 0}
         title="거래 반영 전 문자"
         countText={pendingCountText(
@@ -446,7 +455,11 @@ function Section({
 }>) {
   if (!show) return null;
   return (
-    <section id={id} className="finance-panel scroll-mt-4 overflow-hidden pt-4">
+    <section
+      id={id}
+      // 고정 헤더(--app-header-h) 밑에 제목이 가리지 않게 헤더 높이만큼 더 띄운다.
+      className="finance-panel scroll-mt-[calc(var(--app-header-h)+1rem)] overflow-hidden pt-4"
+    >
       <div className="flex items-baseline justify-between gap-2 px-5">
         <h2 className="text-heading">{title}</h2>
         <span className="text-caption text-muted-foreground tabular-nums">
@@ -478,7 +491,7 @@ function FooterLink({
   return (
     <Link
       href={href}
-      className="text-caption text-muted-foreground hover:bg-muted/50 hover:text-foreground block px-5 py-3 font-medium transition-colors"
+      className="text-caption text-muted-foreground hover:bg-muted/50 hover:text-foreground block px-5 py-3 font-medium transition-colors active:bg-muted"
     >
       {children} ›
     </Link>

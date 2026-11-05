@@ -6,8 +6,11 @@ import React from "react";
 import { MonthSwitcher } from "@/components/widgets/month-switcher";
 import { formatMonth, formatWon } from "@/lib/format";
 import {
-  HOME_REVIEW_HREF,
-  visibleReviewCount,
+  homeFxWaitRow,
+  homeProcessingText,
+  homeTodoRows,
+  type HomeProcessingSource,
+  type HomeTodoSources,
 } from "@/lib/home-finance-summary";
 
 export interface HomeConsumptionCardProps {
@@ -16,18 +19,16 @@ export interface HomeConsumptionCardProps {
   monthly?: MonthlyAnalytics;
   loading: boolean;
   error: boolean;
-  reviews: {
-    count: number;
-    loading: boolean;
-    error: boolean;
-    truncated: boolean;
-  };
-  processing: {
-    count: number;
-    loading: boolean;
-    error: boolean;
-    truncated: boolean;
-  };
+  /**
+   * 할 일 줄. 순서는 `HOME_TODO_ORDER`를 따르고(할 일 화면 섹션 순서), 할 일 화면과
+   * 같은 기준으로 세며, 건수를 아는 1건 이상만 보인다.
+   */
+  todo: HomeTodoSources;
+  /**
+   * 처리 대기 문자. 할 일이 아니라 합계에 넣지 않는다 — 반영하는 중인 문자는 회색 상태
+   * 문구로, 환율이 없어 멈춘 문자는 할 일 화면 처리 대기 섹션으로 가는 줄로 보인다.
+   */
+  processing?: HomeProcessingSource;
   /**
    * 거래가 있는 달 목록. `onMonthChange`와 함께 주면 카드 안에서 달을 옮길 수 있다.
    * 월 이동은 **이 카드의 금액에만** 영향을 주므로 컨트롤도 여기 둔다.
@@ -39,12 +40,6 @@ export interface HomeConsumptionCardProps {
    * 첫 한 시간·지난달 기록 없음·과거 달) 기존 전월 비교로 돌아간다.
    */
   pace?: string | null;
-  /** 가족이 나에게 물어본 결제(확인 요청) 건수. 아는 경우에만 줄을 보인다. */
-  requests?: {
-    count: number;
-    loading: boolean;
-    error: boolean;
-  };
 }
 
 /**
@@ -66,33 +61,31 @@ export function monthComparison(
   }`;
 }
 
+// py-3: 한 줄이면 min-h-12(48px) 그대로이고, 긴 문구가 두 줄로 접혀도 구분선에 붙지 않는다.
 const ROW =
-  "text-body hover:bg-muted/50 focus-visible:outline-ring -mx-5 flex min-h-12 items-center gap-2 px-5 focus-visible:outline-2 focus-visible:-outline-offset-2";
+  "text-body hover:bg-muted/50 focus-visible:outline-ring -mx-5 flex min-h-12 items-center gap-2 px-5 py-3 focus-visible:outline-2 focus-visible:-outline-offset-2 active:bg-muted";
 
-/** 확인할 거래는 별도 카드 없이 관련 소비 금액 아래 한 줄로만 안내한다. */
+/** 할 일은 별도 카드 없이 소비 금액 아래 줄로만 안내한다. */
 export function HomeConsumptionCard({
   month,
   isCurrentMonth,
   monthly,
   loading,
   error,
-  reviews,
+  todo,
   processing,
   months,
   onMonthChange,
   pace,
-  requests,
 }: HomeConsumptionCardProps) {
-  const reviewCount = visibleReviewCount(reviews);
-  const processingCount = visibleReviewCount(processing);
-  const requestCount = requests ? visibleReviewCount(requests) : null;
+  const rows = homeTodoRows(todo);
+  const processingText = homeProcessingText(processing);
+  const fxWait = homeFxWaitRow(processing);
   const amountKnown =
     !loading && !error && monthly != null && Number.isFinite(monthly.totalNet);
   const comparison = amountKnown
     ? pace ?? monthComparison(monthly, isCurrentMonth)
     : null;
-  const hasRows =
-    requestCount !== null || reviewCount !== null || processingCount !== null;
   return (
     <section
       className="finance-panel panel-flush-top flex min-w-0 flex-col px-5 pt-1"
@@ -104,7 +97,7 @@ export function HomeConsumptionCard({
             month={month}
             months={months}
             onChange={onMonthChange}
-            className="-ml-2"
+            className="-ml-3"
           />
         ) : (
           <span className="text-caption text-muted-foreground">
@@ -141,50 +134,37 @@ export function HomeConsumptionCard({
             : "카드 사용액을 불러오지 못했어요."}
         </p>
       )}
-      <p className="text-caption text-muted-foreground mt-1">
-        {comparison ? `${comparison} · ` : ""}결제 취소 반영
-      </p>
-      {hasRows ? (
+      {/* 금액을 모를 때 '결제 취소 반영'만 남으면 없는 숫자에 단서를 다는 셈이라 함께 숨긴다. */}
+      {amountKnown ? (
+        <p className="text-caption text-muted-foreground mt-1">
+          {comparison ? `${comparison} · ` : ""}결제 취소 반영
+        </p>
+      ) : null}
+      {processingText ? (
+        <p role="status" className="text-caption text-muted-foreground mt-1">
+          {processingText}
+        </p>
+      ) : null}
+      {rows.length > 0 || fxWait ? (
         <div className="divide-border/60 mt-4 divide-y border-t border-border/60">
-          {requestCount !== null ? (
-            <Link href="/todo?section=requests" className={ROW}>
-              <span className="min-w-0 flex-1">
-                가족이 물어본 결제 {requestCount.toLocaleString("ko-KR")}건
-              </span>
+          {rows.map((row) => (
+            <Link key={row.key} href={row.href} className={ROW}>
+              <span className="min-w-0 flex-1">{row.text}</span>
               <ChevronRight
                 className="text-muted-foreground/60 size-5 shrink-0"
                 aria-hidden="true"
               />
             </Link>
-          ) : null}
-          {reviewCount !== null ? (
-            <Link href={HOME_REVIEW_HREF} className={ROW}>
-              <span className="min-w-0 flex-1">
-                확인할 거래 {reviewCount.toLocaleString("ko-KR")}
-                {reviews.truncated ? "+" : ""}건
-              </span>
-              <span className="text-caption text-muted-foreground">
-                전체 기간
-              </span>
+          ))}
+          {/* 할 일이 아닌 상태라 할 일 줄 뒤에 둔다. */}
+          {fxWait ? (
+            <Link href={fxWait.href} className={ROW}>
+              <span className="min-w-0 flex-1">{fxWait.text}</span>
               <ChevronRight
                 className="text-muted-foreground/60 size-5 shrink-0"
                 aria-hidden="true"
               />
             </Link>
-          ) : null}
-          {processingCount !== null ? (
-            <div role="status">
-              <Link href="/todo?section=processing" className={ROW}>
-                <span className="min-w-0 flex-1">
-                  문자·환율 확인 대기 {processingCount.toLocaleString("ko-KR")}
-                  {processing.truncated ? "+" : ""}건
-                </span>
-                <ChevronRight
-                  className="text-muted-foreground/60 size-5 shrink-0"
-                  aria-hidden="true"
-                />
-              </Link>
-            </div>
           ) : null}
         </div>
       ) : (

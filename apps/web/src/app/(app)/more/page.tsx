@@ -101,7 +101,7 @@ const GROUPS: ReadonlyArray<MoreGroup> = [
 
 /** 확인 시트의 '닫기' — 채움 버튼 아래의 글자 버튼(§3.3). */
 const SHEET_CLOSE_CLASS =
-  "h-11 w-full bg-transparent text-muted-foreground hover:bg-muted dark:bg-transparent dark:hover:bg-muted";
+  "h-11 w-full bg-transparent text-muted-foreground hover:bg-muted dark:bg-transparent dark:hover:bg-muted active:bg-muted";
 
 const ROW_CLASS =
   "hover:bg-muted/60 active:bg-muted focus-visible:ring-ring flex min-h-14 w-full items-center gap-4 px-5 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset";

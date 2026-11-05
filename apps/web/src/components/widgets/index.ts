@@ -28,3 +28,6 @@ export { SectionHeader } from "./section-header";
 export { BottomSheet, SheetOption } from "./bottom-sheet";
 export { OverflowMenu, type OverflowAction } from "./overflow-menu";
 export { Fab } from "./fab";
+// 알림 줄·불러오기 실패(2026-11-05 HIG 검수) — 화면마다 따로 짜던 오류·안내 마크업을 모은다.
+export { InlineNotice, type NoticeTone } from "./inline-notice";
+export { ErrorState } from "./error-state";

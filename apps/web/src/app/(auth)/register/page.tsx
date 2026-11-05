@@ -3,12 +3,18 @@
  * Family Memory AI — web · 회원가입 (오늘의집 톤)
  * registerRequestSchema로 클라 검증 → useAuth().register → /dashboard(→ 온보딩).
  * 카드 없는 화이트 베이스 센터 컬럼: 브랜드 마크 + 큰 제목 + 필드 + 풀폭 CTA.
+ *
+ * 운영은 초대받은 사람만 가입할 수 있다(P0-4). 웹은 서버 설정을 모르므로 폼은
+ * 그대로 두고, 폼 위 한 줄로 초대 여부를 먼저 알린다(문구는 `../invite-links`).
+ * 서버 거절은 칸 아래가 아니라 폼 위에 둔다 — 이메일 칸 아래에 붙이면 이메일이
+ * 틀린 것처럼 읽힌다.
  * ------------------------------------------------------------------------- */
 import { zodResolver } from "@hookform/resolvers/zod";
 import { CreditCard, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Suspense, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 
 import { registerRequestSchema, type RegisterRequest } from "@family/contracts";
@@ -24,8 +30,11 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { ApiError } from "@/lib/api-client";
+import { InlineNotice } from "@/components/widgets/inline-notice";
+import { ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
+
+import { joinPathFor, loginHrefFor, registerNoticeFor } from "../invite-links";
 
 /**
  * `useSearchParams`는 Suspense 경계가 필요하다(정적 export 포함). 초대 링크에서
@@ -43,8 +52,23 @@ export default function RegisterPage() {
 function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const inviteToken = searchParams.get("invite") ?? undefined;
+  const inviteToken = searchParams.get("invite") || null;
   const { register, status } = useAuth();
+  const [serverError, setServerError] = useState<string | null>(null);
+
+  // 초대 화면(/join)과 같은 키라 거기서 넘어오면 캐시를 그대로 쓴다. 비인증 공개 경로다.
+  const previewQuery = useQuery({
+    queryKey: ["invitation-preview", inviteToken],
+    enabled: inviteToken !== null,
+    retry: false,
+    staleTime: 5 * 60_000,
+    queryFn: () => api.households.previewInvite(inviteToken ?? ""),
+  });
+  const notice = registerNoticeFor(
+    inviteToken,
+    previewQuery.data,
+    previewQuery.error instanceof ApiError && previewQuery.error.status === 404,
+  );
 
   const form = useForm<RegisterRequest>({
     resolver: zodResolver(registerRequestSchema),
@@ -59,16 +83,13 @@ function RegisterForm() {
     try {
       await register({ ...values, ...(inviteToken ? { inviteToken } : {}) });
       // 초대로 들어왔으면 가입 직후 수락 화면으로 되돌려 보낸다(가구 참여까지 한 번에).
-      router.replace(
-        inviteToken ? `/join?token=${encodeURIComponent(inviteToken)}` : "/dashboard",
-      );
+      router.replace(inviteToken ? joinPathFor(inviteToken) : "/dashboard");
     } catch (err) {
-      form.setError("email", {
-        message:
-          err instanceof ApiError
-            ? err.message
-            : "가입하지 못했어요. 잠시 후 다시 시도해 주세요.",
-      });
+      setServerError(
+        err instanceof ApiError
+          ? err.message
+          : "가입하지 못했어요. 잠시 후 다시 시도해 주세요.",
+      );
     }
   }
 
@@ -77,25 +98,33 @@ function RegisterForm() {
       <div className="flex w-full max-w-sm flex-col gap-8">
         {/* 브랜드 마크 + 큰 제목 */}
         <div className="flex flex-col items-center gap-3 text-center">
-          <span className="bg-primary text-primary-foreground flex size-12 items-center justify-center rounded-xl">
+          <span className="bg-primary text-primary-foreground rounded-card flex size-12 items-center justify-center">
             <CreditCard className="size-6" />
           </span>
-          <h1 className="text-2xl font-bold tracking-tight">
+          <h1 className="text-title tracking-tight">
             가족 소비 관리,
             <br />
             오늘부터 시작해요
           </h1>
-          <p className="text-muted-foreground text-sm">
+          <p className="text-muted-foreground text-body">
             계정 하나로 가족 모두의 지출을 한곳에 모아요.
           </p>
         </div>
 
         <Form {...form}>
           <form
-            onSubmit={form.handleSubmit(onSubmit)}
+            onSubmit={(event) => {
+              // 다시 누르면 지난 서버 거절은 지운다(칸 검증에서 멈춰도 남지 않게).
+              setServerError(null);
+              void form.handleSubmit(onSubmit)(event);
+            }}
             className="flex flex-col gap-4"
             noValidate
           >
+            <InlineNotice>{notice}</InlineNotice>
+            {serverError ? (
+              <InlineNotice tone="error">{serverError}</InlineNotice>
+            ) : null}
             <FormField
               control={form.control}
               name="name"
@@ -162,11 +191,12 @@ function RegisterForm() {
           </form>
         </Form>
 
-        <p className="text-muted-foreground text-center text-sm">
-          이미 계정이 있나요?{" "}
+        <p className="text-muted-foreground text-body flex flex-wrap items-center justify-center gap-x-1">
+          이미 계정이 있나요?
+          {/* 초대로 왔으면 로그인 뒤 수락 화면으로 돌아오게 토큰을 실어 보낸다. */}
           <Link
-            href="/login"
-            className="text-accent-foreground font-medium hover:underline"
+            href={loginHrefFor(inviteToken)}
+            className="text-accent-foreground inline-flex min-h-11 items-center px-1 font-medium hover:underline"
           >
             로그인하기
           </Link>

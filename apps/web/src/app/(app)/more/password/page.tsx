@@ -45,7 +45,7 @@ function PasswordInput(props: Readonly<Omit<ComponentProps<typeof Input>, "type"
         aria-pressed={visible}
         aria-controls={props.id}
         onClick={() => setVisible((v) => !v)}
-        className="text-muted-foreground hover:text-foreground absolute inset-y-0 right-0.5 my-auto hover:bg-transparent [&_svg:not([class*='size-'])]:size-5"
+        className="text-muted-foreground hover:text-foreground absolute inset-y-0 right-0.5 my-auto hover:bg-transparent [&_svg:not([class*='size-'])]:size-5 active:text-foreground"
       >
         {visible ? <EyeOff /> : <Eye />}
       </Button>

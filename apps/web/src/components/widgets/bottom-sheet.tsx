@@ -39,7 +39,8 @@ export function BottomSheet({
             (event.currentTarget as HTMLElement).focus();
           }}
           className={cn(
-            "bg-card text-card-foreground fixed z-50 flex flex-col gap-2 outline-none",
+            // 떠 있는 면(Dialog와 같은 bg-elevated): 다크에서 페이지 배경색이면 뒤 덮개와 구분되지 않는다.
+            "bg-elevated text-card-foreground dark:border-t dark:border-white/10 fixed z-50 flex flex-col gap-2 outline-none",
             "data-[state=open]:animate-in data-[state=closed]:animate-out duration-200",
             SHEET_POSITION,
             SHEET_MAX_HEIGHT,

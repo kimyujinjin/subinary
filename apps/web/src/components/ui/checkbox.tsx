@@ -42,8 +42,11 @@ function Checkbox({
       <input
         type="checkbox"
         className={cn(
-          "peer border-input dark:bg-input/30 absolute inset-0 m-0 size-full appearance-none rounded-[4px] border shadow-xs outline-none transition-[color,box-shadow]",
-          "checked:bg-primary checked:border-primary",
+          // 테두리는 --control-off — --input(1.23:1)이면 빈 상자가 보이지 않는다(비텍스트 대비 3:1, color-contrast.test.ts).
+          // 모서리 4px은 토큰(control 12px)으로 바꾸면 16px 상자가 원이 되어 라디오처럼 보여 그대로 둔다.
+          "peer border-control-off dark:bg-input/30 absolute inset-0 m-0 size-full appearance-none rounded-[4px] border shadow-xs outline-none transition-[color,box-shadow]",
+          // 다크의 dark:bg-input/30이 checked보다 뒤에 와서 체크해도 빈 상자로 보였다 — 다크에서도 체크 색을 다시 건다.
+          "checked:bg-primary checked:border-primary dark:checked:bg-primary",
           "focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]",
           "disabled:cursor-not-allowed",
         )}

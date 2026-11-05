@@ -25,6 +25,7 @@ interface MonthSwitcherProps {
  *
  * 현재월은 목록에 없을 수 있다(그 달 거래가 아직 0건). 그래서 `months`에 현재월을
  * 합쳐서 경계를 계산한다 — 그렇지 않으면 거래 없는 달 초에 뒤로 갈 수 없다.
+ * 화살표는 누르는 영역 44px(HIG 최소)에 아이콘 20px — 가계부 목록의 `‹ ›`와 같은 크기다.
  */
 export function MonthSwitcher({
   month,
@@ -39,30 +40,33 @@ export function MonthSwitcher({
   const next = available ? nextAvailable(available, month) : null;
 
   return (
-    <div className={cn("flex items-center gap-1", className)}>
+    <div className={cn("flex items-center", className)}>
       <Button
         variant="ghost"
         size="icon"
-        className="size-8"
+        className="size-11"
         disabled={prev == null}
         aria-label="이전 달"
         onClick={() => prev && onChange(prev)}
       >
-        <ChevronLeft className="size-4" />
+        <ChevronLeft className="size-5" />
       </Button>
       {/* 라벨 폭이 달마다 흔들리면 화살표가 움직여 오탭이 난다 → 최소 폭 고정. */}
-      <span className="min-w-[6.5rem] text-center text-[13px] font-medium tabular-nums">
+      <span
+        aria-live="polite"
+        className="text-body min-w-26 text-center font-medium tabular-nums"
+      >
         {formatMonth(month)}
       </span>
       <Button
         variant="ghost"
         size="icon"
-        className="size-8"
+        className="size-11"
         disabled={next == null}
         aria-label="다음 달"
         onClick={() => next && onChange(next)}
       >
-        <ChevronRight className="size-4" />
+        <ChevronRight className="size-5" />
       </Button>
     </div>
   );

@@ -92,7 +92,7 @@ export function BankCredentialForm({ householdId, runnerId, credentials, storage
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>닫기</AlertDialogCancel>
-          <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => { void change("delete"); }}>지우기</AlertDialogAction>
+          <AlertDialogAction variant="destructive" onClick={() => { void change("delete"); }}>지우기</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

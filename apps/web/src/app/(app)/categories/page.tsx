@@ -297,7 +297,7 @@ export default function CategoriesPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>닫기</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive"
               disabled={deleteMut.isPending}
               onClick={(event) => {
                 // 실패하면 시트를 열어 둔 채 오류를 보여 준다(성공 시 onDelete가 닫는다).

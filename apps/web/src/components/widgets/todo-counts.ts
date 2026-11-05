@@ -16,14 +16,40 @@ import type {
 import { smsPostingDisposition } from "@/lib/sms-posting";
 
 /**
- * 홈이 '확인이 필요한 문자'를 노출하는 기간(3일).
+ * 최근 문자 창(3일) — `useTodoCounts()`의 `smsRecent`/`smsOlder`가 이 창으로 가른다.
  *
- * 이 창은 **홈만의 결정**이다 — 홈이 오래된 백로그로 덮이지 않게 하려는 것이지,
- * 지난 문자를 처리하지 않아도 된다는 뜻이 아니다. 그래서 `/todo`는 이 창을 쓰지
- * 않고 전 기간을 보여주고, 홈은 대신 "지난 문자 N건 더 보기"로 `/todo`에 넘긴다
- * (드리프트 D-7: 3일 뒤 화면에서 사라져 거래 한 건이 영구히 유실됐다).
+ * 예전 홈은 이 창 안의 문자만 보여줬다. 지금 홈은 창을 쓰지 않는다 — '확인할 문자
+ * N건' 줄이 전 기간을 세어 `/todo?section=sms`로 넘기고, `/todo`도 전 기간을 보여준다.
+ * 창이 지난 문자를 처리하지 않아도 된다는 뜻이 되면 안 된다(드리프트 D-7: 3일 뒤
+ * 화면에서 사라져 거래 한 건이 영구히 유실됐다).
  */
 export const HOME_SMS_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * 할 일 화면 섹션 앵커(`/todo?section=<id>` → 같은 id의 섹션으로 스크롤).
+ *
+ * 홈 줄이 넘기는 값과 할 일 화면이 받는 값을 한곳에 둔다 — 따로 적으면 한쪽만 바뀌었을
+ * 때 링크가 조용히 화면 맨 위에 떨어진다.
+ */
+export const TODO_SECTION_IDS = [
+  "declines",
+  "requests",
+  "sms",
+  "reviews",
+  "processing",
+] as const;
+
+export type TodoSectionId = (typeof TODO_SECTION_IDS)[number];
+
+export function isTodoSectionId(
+  value: string | null | undefined,
+): value is TodoSectionId {
+  return (TODO_SECTION_IDS as readonly string[]).includes(value ?? "");
+}
+
+export function todoSectionHref(id: TodoSectionId): string {
+  return `/todo?section=${id}`;
+}
 
 /**
  * 아직 조치가 필요한 결제 실패 묶음.
@@ -41,7 +67,7 @@ export function unresolvedDeclines(
 }
 
 /**
- * 확인이 필요한 거래(확인필요 + 중복의심)를 최신순 한 목록으로 합친다.
+ * 확인이 필요한 거래(확인 필요 + 중복 의심)를 최신순 한 목록으로 합친다.
  *
  * 이미 '중복이라 제외'(`excludedAt`)한 거래는 사용자가 처리를 끝낸 것이므로 뺀다.
  * id로 중복을 제거하는 이유: 두 상태 쿼리는 서로 다른 시점에 갱신될 수 있어,
@@ -67,7 +93,7 @@ export function pendingReviewTransactions(
   return [...byId.values()].sort((a, b) => at(b) - at(a));
 }
 
-/** 읽지 못한 문자를 홈 노출 창(최근) / 그 이전(지난) 으로 가른다. */
+/** 읽지 못한 문자를 최근 창 / 그 이전(지난) 으로 가른다. 지금 홈은 이 창을 쓰지 않는다(전 기간을 센다). */
 export function partitionSmsByWindow(
   events: readonly CardSmsEventSummary[] | undefined,
   now: number,
@@ -77,8 +103,8 @@ export function partitionSmsByWindow(
   const recent: CardSmsEventSummary[] = [];
   const older: CardSmsEventSummary[] = [];
   for (const e of events ?? []) {
-    // 시각을 못 읽는 문자는 '지난' 쪽에 둔다 — 홈에서는 빠지지만 /todo에는 남아
-    // 어느 쪽으로 판정하든 항목이 사라지지 않는다(사라지는 것이 최악이다).
+    // 시각을 못 읽는 문자는 '지난' 쪽에 둔다 — 어느 쪽으로 판정하든 /todo 에는 남아
+    // 항목이 사라지지 않는다(사라지는 것이 최악이다).
     const at = timeOf(e.receivedAt);
     if (Number.isFinite(at) && at >= cutoff) recent.push(e);
     else older.push(e);
@@ -119,7 +145,7 @@ export function partitionTodoSms(
 export interface TodoCountBreakdown {
   /** 미해결 결제 실패 묶음 수. */
   declines: number;
-  /** 확인이 필요한 거래 수(확인필요 + 중복의심, 제외 처리분 제외). */
+  /** 확인이 필요한 거래 수(확인 필요 + 중복 의심, 제외 처리분 제외). */
   reviews: number;
   /** 읽지 못한 문자 수(전 기간). */
   sms: number;

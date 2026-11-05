@@ -28,7 +28,7 @@ interface ListRowProps {
   href?: string;
   /** 클릭 가능한 행의 스크린리더 설명. */
   ariaLabel?: string;
-  /** 우측 끝 chevron 표시. */
+  /** 우측 끝 › 표시(다른 화면으로 넘어가는 줄). 폰에서도 보인다. */
   chevron?: boolean;
   className?: string;
 }
@@ -38,6 +38,7 @@ interface ListRowProps {
  * [원형 아이콘] 제목/부제 ······ 값/보조 [›]
  *
  * 좁은 화면에서는 아이콘과 간격을 줄여 금액이 들어갈 자리를 확보한다.
+ * 누르는 줄(`href`·`onClick`)은 눌린 동안 배경이 짙어진다 — 터치 화면에는 hover가 없어서다.
  */
 export function ListRow({
   icon,
@@ -58,7 +59,7 @@ export function ListRow({
   const rowClass = cn(
     "flex min-h-16 w-full min-w-0 items-center gap-2.5 rounded-control px-1 py-3.5 text-left sm:gap-3 sm:px-2",
     interactive &&
-      "hover:bg-muted/70 focus-visible:ring-ring cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
+      "hover:bg-muted/70 active:bg-muted focus-visible:ring-ring cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
     className,
   );
 
@@ -97,7 +98,9 @@ export function ListRow({
         </span>
       ) : null}
       {chevron ? (
-        <ChevronRight className="text-muted-foreground/50 hidden size-4 shrink-0 sm:block" aria-hidden="true" />
+        // 640px 미만에서 숨겼더니 폰에서 눌리는 줄인지 알 수 없었다(2026-11-05 HIG 검수) → 모든 폭에서 보인다.
+        // 앞 간격을 줄여(-ml-1) 금액 칸 자리를 지키고, 70% 농도는 흰 배경에서 아이콘 대비 3:1을 넘긴다.
+        <ChevronRight className="text-muted-foreground/70 -ml-1 size-5 shrink-0" aria-hidden="true" />
       ) : null}
     </>
   );

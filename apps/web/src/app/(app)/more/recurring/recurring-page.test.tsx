@@ -158,6 +158,23 @@ describe("정기 지출 화면", () => {
     ).toContain("정기 결제를 찾고 있어요");
   });
 
+  it("불러오지 못하면 공용 오류 상태로 원인 한 줄과 '다시 불러오기'만 보여 준다", async () => {
+    // retryOnMount: false — 실패한 쿼리를 그리는 순간 다시 불러오기로 바꾸지 않게 해 오류 화면을 그대로 본다.
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryOnMount: false } },
+    });
+    await client.prefetchQuery({
+      queryKey: recurringQueryKey(HOUSEHOLD),
+      queryFn: () => Promise.reject(new Error("offline")),
+    });
+    const html = renderToStaticMarkup(
+      createElement(QueryClientProvider, { client }, createElement(RecurringPage)),
+    );
+    expect(html).toMatch(/<p role="alert"[^>]*>정기 지출을 불러오지 못했어요<\/p>/);
+    expect(html).toMatch(/<button[^>]*>다시 불러오기<\/button>/);
+    expect(html).not.toContain("아직 준비 중이에요");
+  });
+
   it("기능이 꺼져 있으면 한 문장으로 준비 중이라고 말한다", () => {
     const html = render({ enabled: false, items: [], computedAt: null });
     expect(html).toContain("아직 준비 중이에요");

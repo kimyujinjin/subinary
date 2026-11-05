@@ -433,7 +433,7 @@ function LedgerAnalysisView() {
             month={month}
             months={availableMonths}
             onChange={changeMonth}
-            className="-ml-2"
+            className="-ml-3"
           />
         </div>
       )}

@@ -95,14 +95,14 @@ function AssetRow({ kind, row }: { kind: ManualAssetKind; row: AssetRowData }) {
       </span>
     </>
   );
-  const className = "-mx-2 flex min-h-16 w-[calc(100%+1rem)] min-w-0 items-center gap-3 rounded-control px-2 py-2.5 text-left hover:bg-muted/50";
+  const className = "-mx-2 flex min-h-16 w-[calc(100%+1rem)] min-w-0 items-center gap-3 rounded-control px-2 py-2.5 text-left hover:bg-muted/50 active:bg-muted";
   if (row.href) return <Link href={row.href} className={className}>{body}</Link>;
   if (row.onClick) return <button type="button" onClick={row.onClick} className={className}>{body}</button>;
   return <div className={className}>{body}</div>;
 }
 
 const MANAGE_ROW =
-  "text-body hover:bg-muted/50 flex min-h-14 items-center gap-3 px-5 font-medium";
+  "text-body hover:bg-muted/50 flex min-h-14 items-center gap-3 px-5 font-medium active:bg-muted";
 
 function ScopedAssets({
   householdId,
@@ -301,7 +301,7 @@ function ScopedAssets({
                     className={`text-caption h-9 shrink-0 rounded-full px-4 font-semibold transition-colors ${
                       kind === value
                         ? "bg-foreground text-background"
-                        : "bg-card text-muted-foreground hover:text-foreground"
+                        : "bg-card text-muted-foreground hover:text-foreground active:text-foreground"
                     }`}
                     aria-pressed={kind === value}
                     onClick={() => setKind(value)}

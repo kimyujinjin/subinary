@@ -99,7 +99,7 @@ async function readCatalog(
 }
 
 const ROW =
-  "hover:bg-muted/50 flex min-h-16 items-center gap-3 px-5 py-3 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring";
+  "hover:bg-muted/50 flex min-h-16 items-center gap-3 px-5 py-3 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring active:bg-muted";
 
 export function AssetConnectionHub({
   householdId,
@@ -265,7 +265,7 @@ function ProviderList({
 
       <Link
         href="/assets/loan-records"
-        className="text-caption text-muted-foreground hover:text-foreground inline-flex min-h-11 items-center"
+        className="text-caption text-muted-foreground hover:text-foreground inline-flex min-h-11 items-center active:text-foreground"
       >
         이전에 가져온 대출 기록
       </Link>

@@ -634,7 +634,7 @@ export default function MerchantsPage() {
                   role="radio"
                   aria-checked={active}
                   onClick={() => setCanonical(name)}
-                  className="hover:bg-muted/70 flex min-h-12 w-full items-center gap-3 rounded-control px-1 py-2 text-left transition-colors"
+                  className="hover:bg-muted/70 flex min-h-12 w-full items-center gap-3 rounded-control px-1 py-2 text-left transition-colors active:bg-muted"
                 >
                   <span
                     className={cn(
@@ -673,7 +673,7 @@ export default function MerchantsPage() {
                         "text-caption min-h-9 rounded-full px-3 font-semibold transition-colors",
                         active
                           ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-muted-foreground hover:text-foreground",
+                          : "bg-muted text-muted-foreground hover:text-foreground active:text-foreground",
                       )}
                     >
                       {c.name}
@@ -717,7 +717,7 @@ export default function MerchantsPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>닫기</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive"
               disabled={deleteAlias.isPending}
               onClick={(event) => {
                 event.preventDefault();

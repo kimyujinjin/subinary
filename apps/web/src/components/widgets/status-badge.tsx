@@ -1,19 +1,19 @@
 import type { ReactNode } from "react";
 
-import { Badge } from "@/components/ui/badge";
+import { StatusChip, type ChipTone } from "./status-chip";
 
 export type BadgeTone = "neutral" | "success" | "warning" | "danger" | "info";
 
-/** tone → shadcn Badge variant 매핑. */
-const TONE_VARIANT: Record<
-  BadgeTone,
-  "default" | "secondary" | "destructive" | "success" | "warning"
-> = {
-  neutral: "secondary",
-  success: "success",
-  warning: "warning",
-  danger: "destructive",
-  info: "default",
+/**
+ * tone → StatusChip 색조. 예전에는 꽉 찬 Badge로 그려 같은 상태가 목록(칩)과 상세(배지)에서
+ * 다른 모양·다른 띄어쓰기로 보였다(2026-11-05 HIG 검수) — 상태 표시는 StatusChip 하나로 그린다.
+ */
+const TONE_CHIP: Record<BadgeTone, ChipTone> = {
+  neutral: "neutral",
+  success: "ok",
+  warning: "attention",
+  danger: "error",
+  info: "pending",
 };
 
 /** 상태값 → 색조(거래/카드/장치/초대/멤버 상태 공용). */
@@ -33,18 +33,18 @@ const STATUS_TONES: Record<string, BadgeTone> = {
   ignored: "neutral",
 };
 
-/** 상태값 → 한국어 라벨. */
+/** 상태값 → 한국어 라벨. 띄어쓰기는 맞춤법대로(가계부 목록의 상태 칩과 같은 글자). */
 const STATUS_LABELS: Record<string, string> = {
   approved: "승인",
-  partially_cancelled: "부분취소",
+  partially_cancelled: "부분 취소",
   cancelled: "취소",
-  pending_review: "확인필요",
-  duplicate_suspected: "중복의심",
+  pending_review: "확인 필요",
+  duplicate_suspected: "중복 의심",
   active: "활성",
   inactive: "비활성",
   revoked: "폐기",
   removed: "제거됨",
-  pending: "대기",
+  pending: "대기 중",
   accepted: "수락됨",
   expired: "만료",
   ignored: "결제 내역 아님",
@@ -65,5 +65,5 @@ export function StatusBadge({ status, label, tone }: StatusBadgeProps) {
   if (label === undefined && (status === "approved" || status === "active")) return null;
   const resolvedTone = tone ?? STATUS_TONES[status] ?? "neutral";
   const resolvedLabel = label ?? STATUS_LABELS[status] ?? status;
-  return <Badge variant={TONE_VARIANT[resolvedTone]}>{resolvedLabel}</Badge>;
+  return <StatusChip tone={TONE_CHIP[resolvedTone]}>{resolvedLabel}</StatusChip>;
 }

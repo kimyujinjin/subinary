@@ -116,3 +116,106 @@ describe("핵심 화면 색 대비", () => {
     }
   }
 });
+
+/** 반투명 hex면 `token()`이 앞 6자리만 읽어 거짓 통과한다 — 대비를 고정할 토큰은 불투명이어야 한다. */
+function opaqueToken(scope: string, name: string): string {
+  const m = new RegExp(`--${name}:\\s*(#[0-9a-fA-F]+)\\s*;`).exec(block(scope));
+  if (!m || m[1]!.length !== 7) {
+    throw new Error(`${scope}의 --${name}은 불투명 6자리 hex여야 한다 — 반투명이면 바탕마다 대비가 달라진다`);
+  }
+  return token(scope, name);
+}
+
+/** `fg`를 `alpha` 비율로 `bg` 위에 겹친 색(뒤 덮개 bg-black/40·50 계산용). */
+function over(fg: string, bg: string, alpha: number): string {
+  const ch = (hex: string, i: number) => parseInt(hex.slice(i, i + 2), 16);
+  return `#${[1, 3, 5]
+    .map((i) =>
+      Math.round(ch(fg, i) * alpha + ch(bg, i) * (1 - alpha))
+        .toString(16)
+        .padStart(2, "0")
+    )
+    .join("")}`;
+}
+
+/** 부품 소스에서 실제로 쓰는 색 토큰 이름을 읽는다 — 부품이 다른 토큰으로 돌아가면 이 검사가 그 토큰을 잰다. */
+function usedToken(file: string, pattern: RegExp): string {
+  const source = readFileSync(join(process.cwd(), "src/components/ui", file), "utf8");
+  const m = pattern.exec(source);
+  if (!m) throw new Error(`${file}에서 ${pattern}을 찾지 못했다`);
+  return m[1]!;
+}
+
+// 비텍스트 대비(WCAG 1.4.11): 꺼진 스위치 트랙·빈 체크박스 테두리는 모양이 곧 정보라 바탕 대비 3:1이 필요하다.
+// --input(#e5e8eb)을 쓰던 때 흰 바탕 대비 1.23:1(다크 1.44:1)이라 꺼진 스위치가 보이지 않았다.
+const NON_TEXT = 3;
+
+describe("꺼진 컨트롤 비텍스트 대비 (3:1, globals.css·부품 소스에서 직접 읽음)", () => {
+  const controls = [
+    {
+      label: "스위치 꺼짐 트랙",
+      name: usedToken("switch.tsx", /data-\[state=unchecked\]:bg-([a-z-]+)/),
+    },
+    {
+      label: "체크박스 테두리",
+      name: usedToken("checkbox.tsx", /\bpeer border-([a-z-]+)/),
+    },
+  ];
+  // 스위치·체크박스가 놓이는 바탕: 페이지·카드·떠 있는 면(Dialog·시트).
+  for (const scope of [":root", ".dark"]) {
+    for (const { label, name } of controls) {
+      for (const surface of ["background", "card", "elevated"]) {
+        it(`${scope} ${label}(--${name}) / ${surface}`, () => {
+          const ratio = contrast(opaqueToken(scope, name), token(scope, surface));
+          expect(
+            ratio,
+            `${label} 대비 ${ratio.toFixed(2)}:1 (필요 ${NON_TEXT}:1)`
+          ).toBeGreaterThanOrEqual(NON_TEXT);
+        });
+      }
+    }
+    it(`${scope} 스위치 손잡이(--background) / 꺼짐 트랙`, () => {
+      const track = opaqueToken(scope, controls[0]!.name);
+      expect(contrast(token(scope, "background"), track)).toBeGreaterThanOrEqual(
+        NON_TEXT
+      );
+    });
+  }
+});
+
+describe("떠 있는 면(--elevated: Dialog·AlertDialog·BottomSheet 바탕)", () => {
+  it("라이트는 페이지 배경과 같은 색 그대로다", () => {
+    expect(token(":root", "elevated")).toBe(token(":root", "background"));
+  });
+
+  it("다크는 뒤 덮개(bg-black/40·50)로 어두워진 페이지와 구분된다", () => {
+    // 페이지 배경을 그대로 쓰던 때 1.09~1.11:1이라 창 가장자리가 보이지 않았다.
+    for (const alpha of [0.4, 0.5]) {
+      const dimmed = over("#000000", token(".dark", "background"), alpha);
+      const ratio = contrast(token(".dark", "elevated"), dimmed);
+      expect(ratio, `덮개 ${alpha}: ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(1.25);
+    }
+  });
+
+  for (const scope of [":root", ".dark"]) {
+    it(`${scope} 입력칸(--muted)이 떠 있는 면 위에서 묻히지 않는다`, () => {
+      // 다크 --popover(#25344b)처럼 --muted와 같은 밝기로 올리면 창 안의 입력칸이 사라진다.
+      expect(
+        contrast(token(scope, "muted"), token(scope, "elevated"))
+      ).toBeGreaterThanOrEqual(1.1);
+    });
+    for (const foreground of [
+      "foreground",
+      "card-foreground",
+      "muted-foreground",
+      "primary",
+      "destructive",
+    ]) {
+      it(`${scope} ${foreground}/elevated: AA 본문 대비`, () => {
+        expect(
+          contrast(token(scope, foreground), token(scope, "elevated"))
+        ).toBeGreaterThanOrEqual(AA_TEXT);
+      });
+    }
+  }
+});

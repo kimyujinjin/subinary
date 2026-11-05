@@ -48,6 +48,7 @@ function AlertDialogOverlay({
 /**
  * 기본(`variant="action"`)은 액션 시트 — 내가 누른 동작(삭제·해제·로그아웃·버리기)의 확인.
  * `variant="alert"`는 얼럿 — 예상하지 못한 문제를 알릴 때. 기준은 `sheet-layout.ts` 표.
+ * 바탕은 Dialog와 같은 `bg-elevated`(다크에서 뒤 덮개와 구분되는 떠 있는 면 + 위쪽 1px 경계).
  */
 function AlertDialogContent({
   className,
@@ -63,7 +64,7 @@ function AlertDialogContent({
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-50 grid gap-4 duration-200 outline-none",
+          "bg-elevated dark:border-t dark:border-white/10 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-50 grid gap-4 duration-200 outline-none",
           variant === "alert" ? ALERT_CENTERED : ACTION_SHEET,
           className,
         )}
@@ -129,13 +130,17 @@ function AlertDialogDescription({
   );
 }
 
+/** 확인 버튼. 지우기·해제처럼 되돌리기 어려운 동작은 `variant="destructive"` — 호출부가 색 클래스를 덧대지 않게 한다. */
 function AlertDialogAction({
   className,
+  variant = "default",
   ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Action>) {
+}: React.ComponentProps<typeof AlertDialogPrimitive.Action> & {
+  variant?: "default" | "destructive";
+}) {
   return (
     <AlertDialogPrimitive.Action
-      className={cn(buttonVariants(), className)}
+      className={cn(buttonVariants({ variant }), className)}
       {...props}
     />
   );

@@ -82,4 +82,12 @@ describe("개인정보 화면", () => {
     };
     expect(renderToStaticMarkup(<PrivacyPage />)).toContain("보관 중인 카드 문자가 없어요");
   });
+
+  it("불러오지 못하면 공용 오류 상태로 원인 한 줄과 '다시 불러오기'를 보여 준다", () => {
+    state.overview = undefined;
+    const html = renderToStaticMarkup(<PrivacyPage />);
+    expect(html).toMatch(/<p role="alert"[^>]*>개인정보 설정을 불러오지 못했어요<\/p>/);
+    expect(html).toMatch(/<button[^>]*>다시 불러오기<\/button>/);
+    expect(html).not.toContain("문자 보내는 기기");
+  });
 });

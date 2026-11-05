@@ -17,6 +17,7 @@ import { ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
+import { PickerMenu } from "@/components/ui/picker-menu";
 import { cn } from "@/lib/utils";
 import {
   CANCELLATION_FILTER_OPTIONS,
@@ -32,7 +33,6 @@ import {
   type TransactionFilterOption,
   type TransactionFilterValues,
 } from "./filter-summary";
-import { PickerMenu } from "./picker-menu";
 
 /** 드롭다운의 '전체' 값(빈 문자열은 선택 비교에 쓰기 애매하다). */
 const ALL = "__all__";
@@ -222,7 +222,7 @@ export function TransactionFilters({
           <button
             type="button"
             onClick={onClearAll}
-            className="text-caption text-muted-foreground hover:text-foreground min-h-11 shrink-0 px-2 font-medium whitespace-nowrap"
+            className="text-caption text-muted-foreground hover:text-foreground min-h-11 shrink-0 px-2 font-medium whitespace-nowrap active:text-foreground"
           >
             초기화
           </button>

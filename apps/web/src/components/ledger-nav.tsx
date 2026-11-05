@@ -60,7 +60,7 @@ export function LedgerNav({
               "text-body relative -mb-px flex min-h-12 min-w-0 flex-1 items-center justify-center gap-1 px-1.5 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
               active === item.key
                 ? "text-foreground font-semibold after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-foreground"
-                : "text-muted-foreground hover:text-foreground font-medium"
+                : "text-muted-foreground hover:text-foreground font-medium active:text-foreground"
             )}
           >
             <span className="min-w-0 truncate">{item.label}</span>

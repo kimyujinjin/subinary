@@ -32,10 +32,9 @@ import {
 } from "@family/contracts";
 import { NOTIFICATION_CHANNEL_META, NOTIFICATION_CHANNELS } from "@family/shared";
 
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { ListLoading, PageBackHeader } from "@/components/widgets";
+import { ErrorState, ListLoading, PageBackHeader } from "@/components/widgets";
 import {
   useNotificationPreferences,
   useUpdateNotificationPreferences,
@@ -221,7 +220,8 @@ function AmountInput({
 }
 
 export default function NotificationSettingsPage() {
-  const { data, isLoading, isError, refetch } = useNotificationPreferences();
+  const { data, isLoading, isError, isFetching, refetch } =
+    useNotificationPreferences();
   const update = useUpdateNotificationPreferences();
   const saver = useAutoSave(update.mutateAsync);
   const { queue } = saver;
@@ -273,14 +273,12 @@ export default function NotificationSettingsPage() {
       {isLoading ? (
         <ListLoading rows={3} label="알림 설정을 불러오는 중이에요." />
       ) : isError || !view ? (
-        <div className="flex flex-col items-start gap-3">
-          <p role="alert" className="text-body text-destructive">
-            알림 설정을 불러오지 못했어요
-          </p>
-          <Button variant="weak" onClick={() => void refetch()}>
-            다시 불러오기
-          </Button>
-        </div>
+        <ErrorState
+          align="start"
+          message="알림 설정을 불러오지 못했어요"
+          retrying={isFetching}
+          onRetry={() => void refetch()}
+        />
       ) : (
         <>
           <section className="finance-panel overflow-hidden py-1">

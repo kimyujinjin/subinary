@@ -31,7 +31,14 @@ import type {
   TransactionUpdateRequest,
 } from "@family/contracts";
 import { DEFAULT_TIMEZONE } from "@family/shared";
-import { Plus, Search, X } from "lucide-react";
+import {
+  ChevronRight,
+  Plus,
+  Receipt,
+  Search,
+  SearchX,
+  X,
+} from "lucide-react";
 
 import { ReviewRequestAction } from "@/components/review-request-action";
 import { Button } from "@/components/ui/button";
@@ -56,6 +63,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { PickerMenu } from "@/components/ui/picker-menu";
 import {
   Select,
   SelectContent,
@@ -65,6 +73,8 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  EmptyState,
+  ErrorState,
   Fab,
   ListRow,
   Money,
@@ -84,6 +94,7 @@ import {
 } from "@/lib/transaction-display";
 import { FieldList, FieldRow } from "./detail-fields";
 import { MerchantHistory } from "./merchant-history";
+import { useDuplicatePair } from "./duplicate-pair";
 import { LedgerHeader } from "@/components/ledger-header";
 import { ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
@@ -105,12 +116,15 @@ import {
 import { useHousehold } from "@/lib/household-context";
 import {
   invalidateTransactionScope,
+  queryKeys,
+  useAnalyticsMonths,
   useCardList,
   useCategoryList,
   useCreateCategory,
   useHouseholdMembers,
   useHouseholdSummary,
   useInfiniteTransactions,
+  useTransactions,
 } from "@/lib/queries";
 import {
   detailFallbackCopy,
@@ -135,15 +149,27 @@ import {
 import { AddTransactionDialog } from "./add-transaction-dialog";
 import { TransactionFxDetails } from "@/components/transaction-fx-details";
 import { TransactionFilters } from "./transaction-filters";
-import type {
-  ActiveTransactionFilter,
-  TransactionFilterKey,
+import {
+  hasTransactionConditions,
+  type ActiveTransactionFilter,
+  type TransactionFilterKey,
 } from "./filter-summary";
 import {
   initialTransactionMonth,
   transactionReviewPeriodQuery,
 } from "@/lib/transaction-review-filter";
 import { matchesCandidateSearch, retainSelection } from "./candidate-search";
+import {
+  decisionOffersExclude,
+  reviewDecision,
+  rowActionToast,
+  type ReviewDecisionAction,
+  type RowActionKind,
+} from "./decision-copy";
+import {
+  transactionsEmptyCopy,
+  type TransactionsEmptyAction,
+} from "./empty-state-copy";
 
 /* -------------------------------------------------------------------------- */
 /* Local types                                                                */
@@ -197,10 +223,10 @@ const TYPE_OPTIONS: ReadonlyArray<Option> = [
 /** 상태 필터 옵션(DB txnStatus 5종). */
 const STATUS_OPTIONS: ReadonlyArray<Option> = [
   { value: "approved", label: "승인" },
-  { value: "partially_cancelled", label: "부분취소" },
+  { value: "partially_cancelled", label: "부분 취소" },
   { value: "cancelled", label: "취소" },
-  { value: "pending_review", label: "확인필요" },
-  { value: "duplicate_suspected", label: "중복의심" },
+  { value: "pending_review", label: "확인 필요" },
+  { value: "duplicate_suspected", label: "중복 의심" },
 ];
 
 /** 공개범위 편집 옵션. */
@@ -219,7 +245,9 @@ type RowAction =
   | { kind: "markValid"; id: string }
   | { kind: "exclude"; id: string }
   | { kind: "include"; id: string }
-  | { kind: "linkCancellation"; id: string; approvalTransactionId: string };
+  | { kind: "linkCancellation"; id: string; approvalTransactionId: string }
+  // 카드가 애매한 '확인 필요' 결제에서 카드를 고르면 연결과 확인을 한 번에 한다.
+  | { kind: "resolveCard"; id: string; cardId: string };
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -236,7 +264,7 @@ function errorMessage(error: unknown): string {
 
 /** 거래 발생 시각(승인 → 취소 → 수신 순 fallback). */
 const TXN_STATUS_CHIP: Record<string, [ChipTone, string]> = {
-  partially_cancelled: ["attention", "부분취소"],
+  partially_cancelled: ["attention", "부분 취소"],
   cancelled: ["neutral", "취소"],
   pending_review: ["attention", "확인 필요"],
   duplicate_suspected: ["error", "중복 의심"],
@@ -372,32 +400,17 @@ function TransactionsView() {
     setSharedOnly(false);
   };
 
-  /** 모든 필터를 기본값(이번 달·전체)으로 되돌린다(빈 상태 CTA). */
-  const resetFilters = () => {
-    setMonth(currentMonth());
-    setMemberId("");
-    setCardId("");
-    setCategoryId("");
-    setType("");
-    setStatus("");
-    setReviewOnly(false);
-    setQInput("");
-    setQ("");
-    setExcludedOnly(false);
-    setSharedOnly(false);
+  /** 칩 줄과 빈 상태가 함께 보는 조건 값(기간·검색어는 뺀다). */
+  const filterValues = {
+    categoryId,
+    cardId,
+    memberId,
+    type,
+    status,
+    reviewOnly,
+    excludedOnly,
+    sharedOnly,
   };
-
-  const hasActiveFilter =
-    memberId !== "" ||
-    cardId !== "" ||
-    categoryId !== "" ||
-    type !== "" ||
-    status !== "" ||
-    reviewOnly ||
-    q !== "" ||
-    excludedOnly ||
-    sharedOnly ||
-    month !== currentMonth();
 
   // 타이핑마다 요청하면 한 단어에 대여섯 번 쿼리가 나간다 → 300ms 디바운스.
   useEffect(() => {
@@ -539,6 +552,11 @@ function TransactionsView() {
     ]
   );
   const listQuery = useInfiniteTransactions(filters);
+  // 빈 목록이 '이번 달은 아직'인지 '거래가 하나도 없음'인지 가른다 — 목록과 같은 API로 기간·조건 없이 1건만 부른다.
+  // 달별 집계(원화 승인만 센다)로 가르면 외화·취소만 있는 가족에게도 장치 연결을 권했다.
+  const anyTransactionQuery = useTransactions({ limit: 1 });
+  // '지난달 보기'가 빈 달을 가리키지 않게 거래 있는 달을 본다(홈 월 스위처와 같은 캐시).
+  const monthsQuery = useAnalyticsMonths();
 
   // 무한 스크롤: 모든 페이지의 items를 평탄화한다.
   const items = useMemo(
@@ -683,6 +701,11 @@ function TransactionsView() {
             return api.transactions.linkCancellation(token, action.id, {
               approvalTransactionId: action.approvalTransactionId,
             });
+          case "resolveCard":
+            // 카드 변경만으로는 '확인 필요'가 풀리지 않는다(서버 update는 status를 건드리지 않는다).
+            return api.transactions
+              .update(token, action.id, { cardId: action.cardId })
+              .then(() => api.transactions.markValid(token, action.id));
           default: {
             const exhaustive: never = action;
             throw new Error(`unknown action: ${JSON.stringify(exhaustive)}`);
@@ -697,7 +720,11 @@ function TransactionsView() {
       // 경로와 동일 범위 — 조합 불일치/누락 방지).
       invalidateTransactionScope(queryClient);
     },
-    onError: (error) => setActionError(errorMessage(error)),
+    onError: (error, action) => {
+      setActionError(errorMessage(error));
+      // 카드 연결은 됐는데 확인이 실패했을 수 있다 — 화면이 바뀐 카드를 놓치지 않게 다시 읽는다.
+      if (action.kind === "resolveCard") invalidateTransactionScope(queryClient);
+    },
   });
 
   const busyId = mutation.isPending ? mutation.variables?.id ?? null : null;
@@ -848,6 +875,33 @@ function TransactionsView() {
   const showLoading = householdId != null && listQuery.isLoading;
   const showError = listQuery.isError;
 
+  const emptyCopy = transactionsEmptyCopy({
+    month,
+    currentMonth: currentMonth(),
+    // '확인할 거래' 칩만 켰는지, 다른 조건과 함께 켰는지에 따라 제목이 다르다.
+    hasOtherConditions: hasTransactionConditions({
+      ...filterValues,
+      reviewOnly: false,
+    }),
+    reviewOnly,
+    query: q,
+    hasAnyTransaction: anyTransactionQuery.data
+      ? anyTransactionQuery.data.items.length > 0
+      : null,
+    monthsWithTransactions: monthsQuery.data
+      ? monthsQuery.data.items.map((item) => item.month)
+      : null,
+  });
+  const emptyAction = emptyCopy.action;
+  // 빈 목록의 버튼은 원인 하나만 지운다 — 칩 줄의 '초기화'처럼 조건만 지우고 기간·검색어는 둔다.
+  const runEmptyAction = (action: TransactionsEmptyAction) => {
+    if (action.kind === "clearConditions") clearConditions();
+    else if (action.kind === "clearSearch") {
+      setQInput("");
+      setQ("");
+    } else if (action.kind === "showMonth") setMonth(action.month);
+  };
+
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">
       <LedgerHeader active="transactions" month={month} />
@@ -858,16 +912,7 @@ function TransactionsView() {
       <TransactionFilters
         month={month}
         monthOptions={monthOptions}
-        values={{
-          categoryId,
-          cardId,
-          memberId,
-          type,
-          status,
-          reviewOnly,
-          excludedOnly,
-          sharedOnly,
-        }}
+        values={filterValues}
         choices={{
           categoryId: categoryFilterOptions,
           cardId: cardOptions,
@@ -909,7 +954,7 @@ function TransactionsView() {
               type="button"
               onClick={() => setQInput("")}
               aria-label="검색어 지우기"
-              className="text-muted-foreground hover:text-foreground focus-visible:outline-ring absolute top-1/2 right-1 flex size-11 -translate-y-1/2 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2"
+              className="text-muted-foreground hover:text-foreground focus-visible:outline-ring absolute top-1/2 right-1 flex size-11 -translate-y-1/2 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 active:text-foreground"
             >
               <X className="size-4" aria-hidden="true" />
             </button>
@@ -951,49 +996,34 @@ function TransactionsView() {
               ))}
             </div>
           ) : showError ? (
-            <p
-              className="text-destructive py-6 text-center text-sm"
-              role="alert"
-            >
-              거래를 불러오지 못했어요: {errorMessage(listQuery.error)}
-            </p>
+            <ErrorState
+              message={`거래를 불러오지 못했어요: ${errorMessage(
+                listQuery.error
+              )}`}
+              onRetry={() => void listQuery.refetch()}
+              retrying={listQuery.isFetching}
+            />
           ) : items.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-12 text-center">
-              <span className="text-4xl" aria-hidden>
-                🧾
-              </span>
-              {hasActiveFilter ? (
-                <>
-                  <p className="pt-1 text-[15px] font-semibold">
-                    {reviewOnly
-                      ? "조건에 맞는 확인할 거래가 없어요"
-                      : "조건에 맞는 거래가 없어요"}
-                  </p>
-                  <p className="text-muted-foreground text-sm">
-                    필터를 바꿔서 다시 찾아볼까요?
-                  </p>
+            <EmptyState
+              icon={emptyCopy.reason === "noMatch" ? <SearchX /> : <Receipt />}
+              title={emptyCopy.title}
+              description={emptyCopy.description ?? undefined}
+              action={
+                emptyAction?.kind === "connectDevice" ? (
+                  <Button variant="weak" className="w-full" asChild>
+                    <Link href={emptyAction.href}>{emptyAction.label}</Link>
+                  </Button>
+                ) : emptyAction ? (
                   <Button
-                    variant="tint"
-                    className="mt-3 min-h-11"
-                    onClick={resetFilters}
+                    variant="weak"
+                    className="w-full"
+                    onClick={() => runEmptyAction(emptyAction)}
                   >
-                    필터 초기화하기
+                    {emptyAction.label}
                   </Button>
-                </>
-              ) : (
-                <>
-                  <p className="pt-1 text-[15px] font-semibold">
-                    아직 거래가 없어요
-                  </p>
-                  <p className="text-muted-foreground text-sm">
-                    카드 문자가 도착하면 자동으로 정리해 드려요
-                  </p>
-                  <Button variant="tint" className="mt-3 min-h-11" asChild>
-                    <Link href="/devices">장치 연결하러 가기</Link>
-                  </Button>
-                </>
-              )}
-            </div>
+                ) : undefined
+              }
+            />
           ) : (
             <>
               {/* 날짜마다 상자를 나누지 않고 한 섹션 안에 날짜 머리로 구분한다(§8). */}
@@ -1090,7 +1120,7 @@ function TransactionsView() {
                               txn.masked ? undefined : () => setDetailId(txn.id)
                             }
                             className={cn(
-                              "rounded-control py-3 hover:bg-muted/60",
+                              "rounded-control py-3 hover:bg-muted/60 active:bg-muted",
                               busyId === txn.id
                                 ? "pointer-events-none opacity-60"
                                 : undefined
@@ -1116,7 +1146,7 @@ function TransactionsView() {
                   <button
                     type="button"
                     onClick={() => void fetchNextPage()}
-                    className="text-accent-foreground hover:bg-muted focus-visible:outline-ring min-h-11 rounded-xl px-5 text-[13px] font-medium focus-visible:outline-2 focus-visible:outline-offset-2"
+                    className="text-accent-foreground hover:bg-muted focus-visible:outline-ring min-h-11 rounded-xl px-5 text-[13px] font-medium focus-visible:outline-2 focus-visible:outline-offset-2 active:bg-muted"
                   >
                     더 보기
                   </button>
@@ -1144,6 +1174,11 @@ function TransactionsView() {
               ? errorMessage(mutation.error)
               : null
           }
+          actionKind={
+            mutation.variables && mutation.variables.id === detailTxn.id
+              ? mutation.variables.kind
+              : null
+          }
           cardLabel={
             detailCard
               ? cardIdentityLabel(detailCard, memberNameById)
@@ -1164,6 +1199,9 @@ function TransactionsView() {
           }
           onOpenTransaction={(id) => setDetailId(id)}
           onChangeCard={(v) => changeCard(detailTxn, v)}
+          onResolveCard={(cardId) =>
+            mutation.mutate({ kind: "resolveCard", id: detailTxn.id, cardId })
+          }
           onChangeCategory={(v) => changeCategory(detailTxn, v)}
           onCreateCategory={(name) => handleCreateCategory(detailTxn, name)}
           onChangeVisibility={(v) => changeVisibility(detailTxn, v)}
@@ -1256,6 +1294,7 @@ function TransactionDetailDialog({
   busy: actionBusy,
   actionStatus,
   actionError,
+  actionKind,
   cardLabel,
   memberName,
   ownershipMismatch,
@@ -1264,6 +1303,7 @@ function TransactionDetailDialog({
   onApplyCategoryRule,
   onOpenTransaction,
   onChangeCard,
+  onResolveCard,
   onChangeCategory,
   onCreateCategory,
   onChangeVisibility,
@@ -1280,6 +1320,8 @@ function TransactionDetailDialog({
   busy: boolean;
   actionStatus: "idle" | "pending" | "success" | "error";
   actionError: string | null;
+  /** 지금(또는 방금) 처리한 동작 — 성공 토스트를 동작에 맞게 고른다. */
+  actionKind: RowActionKind | null;
   cardLabel: string;
   memberName: string;
   ownershipMismatch: boolean;
@@ -1288,6 +1330,7 @@ function TransactionDetailDialog({
   onApplyCategoryRule: (categoryId: string) => Promise<unknown>;
   onOpenTransaction: (id: string) => void;
   onChangeCard: (cardId: string) => void;
+  onResolveCard: (cardId: string) => void;
   onChangeCategory: (categoryId: string) => void;
   onCreateCategory: (name: string) => Promise<string>;
   onChangeVisibility: (visibility: string) => void;
@@ -1304,9 +1347,6 @@ function TransactionDetailDialog({
   const busy = actionBusy || editSaving;
   const isCancellation = txn.transactionType === "cancellation";
   const excluded = txn.excludedAt != null;
-  const isPending =
-    !excluded &&
-    (txn.status === "pending_review" || txn.status === "duplicate_suspected");
   const canLink = isCancellation && txn.parentTransactionId == null;
   // 금액 수정은 취소 연결이 없는 단순 거래만(서버 규칙과 일치). 날짜는 항상 가능.
   const canEditAmount =
@@ -1447,12 +1487,17 @@ function TransactionDetailDialog({
     }
   };
   // 저장 성공은 시트 어디에서 바꿨든 보이게 토스트로 알린다(오류는 위쪽 인라인).
+  // 문구는 한 일에 맞춘다 — 빼기·확인까지 '저장했어요'라 무엇이 됐는지 알 수 없었다.
   const lastStatus = useRef(actionStatus);
   useEffect(() => {
     if (lastStatus.current !== "success" && actionStatus === "success")
-      toast.success("저장했어요");
+      toast.success(
+        actionKind
+          ? rowActionToast(actionKind, txn.transactionType)
+          : "저장했어요"
+      );
     lastStatus.current = actionStatus;
-  }, [actionStatus]);
+  }, [actionStatus, actionKind, txn.transactionType]);
 
   // 인라인 '새 카테고리 만들기' 상태.
   const [creatingCategory, setCreatingCategory] = useState(false);
@@ -1503,6 +1548,35 @@ function TransactionDetailDialog({
 
   const merchant = merchantLabel(txn);
   const searchTerm = merchantSearchTerm(txn);
+  // 중복 의심이면 서버가 겹친다고 본 짝 결제를 같은 조건으로 찾는다(duplicate-pair.ts).
+  // '이 가맹점 최근 결제'(최신 5건)는 표시용이라 짝이 그 안에 있다는 보장이 없다.
+  const duplicatePair = useDuplicatePair(txn);
+  // 확인할 거래면 금액 아래에서 무엇이 의심스러운지 묻고 같은 무게의 답을 나란히 둔다(decision-copy.ts).
+  const decision = reviewDecision({
+    status: txn.status,
+    transactionType: txn.transactionType,
+    excluded,
+    hasCard: txn.cardId != null,
+    linked: txn.parentTransactionId != null,
+    canPickCard: cardOptions.length > 0,
+    duplicatePairAt: duplicatePair
+      ? formatDate(occurredAt(duplicatePair))
+      : null,
+  });
+  const decisionHandlers: Record<
+    Exclude<ReviewDecisionAction, "pickCard">,
+    () => void
+  > = {
+    markValid: onMarkValid,
+    exclude: onExclude,
+    linkCancellation: onOpenLink,
+  };
+  // 결정 블록이 이미 빼기를 물으면 메뉴에 같은 동작을 두지 않는다.
+  const menuOffersExclude =
+    !isCancellation && !excluded && !decisionOffersExclude(decision);
+  const decisionExcludeLabel = decision?.actions.find(
+    (item) => item.action === "exclude"
+  )?.label;
   const installment =
     txn.installmentMonths && txn.installmentMonths > 1
       ? txn.installmentMonths
@@ -1512,10 +1586,11 @@ function TransactionDetailDialog({
   // 자주 쓰지 않거나 되돌리기 어려운 행동은 ⋯ 메뉴에만 둔다(리뉴얼 §3.3 — 위험 행동은 메뉴 안).
   const overflowActions: OverflowAction[] = [
     { label: "금액·날짜 수정", onSelect: startEdit, disabled: busy },
-    ...(!isCancellation && !excluded
+    // 중복이 아닌 이유로 빼는 경우도 있어 '합계에서 빼기'라고만 부른다.
+    ...(menuOffersExclude
       ? [
           {
-            label: "중복이에요 · 합계에서 빼기",
+            label: "합계에서 빼기",
             onSelect: onExclude,
             disabled: busy,
           },
@@ -1694,16 +1769,77 @@ function TransactionDetailDialog({
                 <StatusChip tone="neutral">합계에서 제외됨</StatusChip>
               ) : null}
             </div>
-            {isPending ? (
-              <Button
-                className="h-11 w-full"
-                disabled={busy}
-                onClick={onMarkValid}
+            {decision ? (
+              <div
+                role="group"
+                aria-labelledby={`${inputId}-decision`}
+                className="bg-muted flex min-w-0 flex-col gap-3 rounded-card p-4"
               >
-                정상 거래로 확인하기
-              </Button>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <p
+                    id={`${inputId}-decision`}
+                    className="text-body font-semibold break-words"
+                  >
+                    {decision.question}
+                  </p>
+                  {decision.hint ? (
+                    <p className="text-caption text-muted-foreground break-words">
+                      {decision.hint}
+                    </p>
+                  ) : null}
+                  {/* 짝 결제로 가는 이동은 답이 아니라 글자 버튼이다 — 아래 두 답과 무게가 다르다. */}
+                  {decision.pairLabel && duplicatePair ? (
+                    <Button
+                      type="button"
+                      variant="link"
+                      className="h-11 gap-1 self-start px-0 has-[>svg]:px-0"
+                      disabled={busy}
+                      onClick={() => onOpenTransaction(duplicatePair.id)}
+                    >
+                      {decision.pairLabel}
+                      <ChevronRight aria-hidden="true" />
+                    </Button>
+                  ) : null}
+                </div>
+                {/* 같은 무게의 답은 같은 모양으로 나란히 둔다. 채움 버튼은 두지 않는다(§3.3). */}
+                <div
+                  className={cn(
+                    "grid gap-2",
+                    decision.actions.length > 1 && "grid-cols-2"
+                  )}
+                >
+                  {decision.actions.map(({ action, label }) => {
+                    const answer = {
+                      type: "button" as const,
+                      variant: "weak" as const,
+                      // 폭이 좁은 폰에서 답이 길면 잘리지 않고 두 줄로 내려간다.
+                      className: "h-auto min-h-11 w-full py-2 whitespace-normal",
+                      disabled: busy,
+                    };
+                    return action === "pickCard" ? (
+                      <PickerMenu
+                        key={action}
+                        label="카드"
+                        options={cardOptions}
+                        value={txn.cardId ?? null}
+                        onSelect={onResolveCard}
+                        trigger={<Button {...answer}>{label}</Button>}
+                      />
+                    ) : (
+                      <Button
+                        key={action}
+                        {...answer}
+                        onClick={decisionHandlers[action]}
+                      >
+                        {label}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
             ) : null}
-            {canLink ? (
+            {/* 확인이 필요한 취소는 위 결정 블록이 '원래 결제 고르기'를 묻는다. */}
+            {canLink && decision == null ? (
               <Button
                 variant="tint"
                 className="h-11 w-full"
@@ -1965,15 +2101,19 @@ function TransactionDetailDialog({
             <AlertDialogHeader>
               <AlertDialogTitle>거래를 삭제할까요?</AlertDialogTitle>
               <AlertDialogDescription>
-                {merchant} · {formatMoney(txn.amount, txn.currency)} 거래가 영구
-                삭제됩니다. 되돌릴 수 없어요. (합계에서만 빼려면 ⋯ 메뉴의
-                &lsquo;합계에서 빼기&rsquo;를 쓰세요.)
+                {merchant} · {formatMoney(txn.amount, txn.currency)} 거래를
+                삭제하면 되돌릴 수 없어요.
+                {menuOffersExclude
+                  ? " 합계에서만 빼려면 ⋯ 메뉴의 ‘합계에서 빼기’를 눌러 주세요."
+                  : decisionExcludeLabel
+                  ? ` 합계에서만 빼려면 ‘${decisionExcludeLabel}’를 눌러 주세요.`
+                  : null}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>취소</AlertDialogCancel>
               <AlertDialogAction
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                variant="destructive"
                 onClick={onDelete}
               >
                 삭제하기
@@ -2008,6 +2148,7 @@ function TransactionDetailDialog({
             <AlertDialogFooter>
               <AlertDialogCancel>계속 수정하기</AlertDialogCancel>
               <AlertDialogAction
+                variant="destructive"
                 onClick={() => {
                   editSession.current.invalidate();
                   setDiscardOpen(false);
@@ -2024,7 +2165,6 @@ function TransactionDetailDialog({
   );
 }
 
-/** 상세 시트의 결제 정보 한 줄(키-값). */
 /* -------------------------------------------------------------------------- */
 /* Memo modal                                                                 */
 /* -------------------------------------------------------------------------- */
@@ -2238,7 +2378,7 @@ function LinkCancellationModal({
                     type="button"
                     onClick={() => setSearch("")}
                     aria-label="검색어 지우기"
-                    className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 flex size-7 -translate-y-1/2 items-center justify-center rounded-full"
+                    className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 flex size-7 -translate-y-1/2 items-center justify-center rounded-full active:text-foreground"
                   >
                     <X className="size-4" aria-hidden />
                   </button>

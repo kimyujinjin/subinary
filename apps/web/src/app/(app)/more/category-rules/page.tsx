@@ -767,7 +767,7 @@ export default function CategoryRulesPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>닫기</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive"
               disabled={removeRule.isPending}
               onClick={(event) => {
                 event.preventDefault();
@@ -798,7 +798,7 @@ export default function CategoryRulesPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>닫기</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive"
               disabled={revert.isPending}
               onClick={(event) => {
                 event.preventDefault();

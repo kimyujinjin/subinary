@@ -8,7 +8,11 @@ import { extendTailwindMerge } from "tailwind-merge";
  */
 const twMerge = extendTailwindMerge({
   extend: {
-    theme: { text: ["display", "title", "heading", "body", "caption", "micro"] },
+    theme: {
+      text: ["display", "title", "heading", "body", "caption", "micro"],
+      // rounded-card/control을 모르면 호출부의 rounded-full 등과 합치지 않고 둘 다 남겨, 결과가 CSS 순서에 맡겨진다.
+      radius: ["card", "control"],
+    },
   },
 });
 

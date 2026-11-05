@@ -163,7 +163,7 @@ export function CardLast4CorrectionDialog({ card, ownerLabelOf, canManage, readR
         <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
           <AlertDialogContent onCloseAutoFocus={(event) => { event.preventDefault(); input.current?.focus(); }}>
             <AlertDialogHeader><AlertDialogTitle>입력을 버리고 닫을까요?</AlertDialogTitle><AlertDialogDescription>{cardLast4DiscardDescription(readRequired, readGate.current.required)}</AlertDialogDescription></AlertDialogHeader>
-            <AlertDialogFooter><AlertDialogCancel>계속 입력하기</AlertDialogCancel><AlertDialogAction onClick={() => { session.current.invalidate(); onClose(); }}>버리고 닫기</AlertDialogAction></AlertDialogFooter>
+            <AlertDialogFooter><AlertDialogCancel>계속 입력하기</AlertDialogCancel><AlertDialogAction variant="destructive" onClick={() => { session.current.invalidate(); onClose(); }}>버리고 닫기</AlertDialogAction></AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
       </DialogContent>

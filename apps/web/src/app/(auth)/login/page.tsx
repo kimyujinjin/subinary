@@ -54,19 +54,7 @@ import {
 import { getStoredRefreshToken, isNative } from "@/lib/native";
 import { safeInternalPath } from "@/lib/safe-redirect";
 
-/**
- * 로그인 화면의 '회원가입하기' 링크.
- *
- * 초대 수락(`/join?token=…`)으로 돌아갈 예정이면 가입 폼에도 그 토큰을 넘겨야 한다 —
- * 서버 가입 게이트가 초대 토큰을 요구하고, 가입 직후 수락 화면으로 되돌리는 것도
- * 같은 토큰이다. 없으면 여기서 또 여정이 끊긴다.
- */
-function registerHrefFor(returnTo: string): string {
-  const queryAt = returnTo.indexOf("?");
-  if (!returnTo.startsWith("/join") || queryAt === -1) return "/register";
-  const token = new URLSearchParams(returnTo.slice(queryAt + 1)).get("token");
-  return token ? `/register?invite=${encodeURIComponent(token)}` : "/register";
-}
+import { inviteTokenFromReturnTo, registerHrefFor } from "../invite-links";
 
 /** `useSearchParams`는 Suspense 경계를 요구한다(정적 export 포함). */
 export default function LoginPage() {
@@ -84,6 +72,9 @@ function LoginForm() {
   // 알릴 것이 없고, 알리면 어떤 값이 통과하는지 알려 주는 셈이다.
   const returnTo =
     safeInternalPath(searchParams.get("returnTo")) ?? "/dashboard";
+  // 가입은 초대받은 사람만 된다(P0-4). 초대 수락으로 돌아가는 길이 아니면 가입
+  // 링크를 숨긴다 — 초대 없이 열면 다 입력한 뒤에야 서버가 거절한다.
+  const registerHref = registerHrefFor(inviteTokenFromReturnTo(returnTo));
   const { login, status, biometricLogin } = useAuth();
 
   const form = useForm<LoginRequest>({
@@ -189,13 +180,11 @@ function LoginForm() {
       <div className="flex w-full max-w-sm flex-col gap-8">
         {/* 브랜드 마크 + 큰 제목 */}
         <div className="flex flex-col items-center gap-3 text-center">
-          <span className="bg-primary text-primary-foreground flex size-12 items-center justify-center rounded-xl">
+          <span className="bg-primary text-primary-foreground rounded-card flex size-12 items-center justify-center">
             <CreditCard className="size-6" />
           </span>
-          <h1 className="text-2xl font-bold tracking-tight">
-            다시 만나서 반가워요
-          </h1>
-          <p className="text-muted-foreground text-sm">
+          <h1 className="text-title tracking-tight">다시 만나서 반가워요</h1>
+          <p className="text-muted-foreground text-body">
             가족의 소비와 예산, 이어서 함께 관리해요.
           </p>
         </div>
@@ -280,15 +269,21 @@ function LoginForm() {
           </Button>
         )}
 
-        <p className="text-muted-foreground text-center text-sm">
-          아직 계정이 없나요?{" "}
-          <Link
-            href={registerHrefFor(returnTo)}
-            className="text-accent-foreground font-medium hover:underline"
-          >
-            회원가입하기
-          </Link>
-        </p>
+        {registerHref ? (
+          <p className="text-muted-foreground text-body flex flex-wrap items-center justify-center gap-x-1">
+            아직 계정이 없나요?
+            <Link
+              href={registerHref}
+              className="text-accent-foreground inline-flex min-h-11 items-center px-1 font-medium hover:underline"
+            >
+              회원가입하기
+            </Link>
+          </p>
+        ) : (
+          <p className="text-muted-foreground text-caption text-center">
+            가입은 가족 초대 링크로 해요
+          </p>
+        )}
       </div>
 
       {/* 로그인 직후 1회 생체인식 옵트인 제안(네이티브 전용). */}

@@ -6,7 +6,7 @@ import { HomeConsumptionCard, monthComparison, type HomeConsumptionCardProps } f
 import { ManualAssetsSummary } from "./manual-finance/asset-summary";
 
 const noExceptions = { count: 0, loading: false, error: false, truncated: false };
-const base: HomeConsumptionCardProps = { month: "2026-10", isCurrentMonth: true, loading: false, error: false, reviews: noExceptions, processing: noExceptions };
+const base: HomeConsumptionCardProps = { month: "2026-10", isCurrentMonth: true, loading: false, error: false, todo: {}, processing: noExceptions };
 const monthly: MonthlyAnalytics = {
   meta: { period: { from: "2026-09-30T15:00:00Z", to: "2026-10-31T15:00:00Z", timezone: "Asia/Seoul" }, cancellationApplied: true, includedMemberIds: [], excludedByPermission: 0, excludedManual: { count: 0, net: 0 }, excludedTransfer: { count: 0, net: 0 } },
   totalNet: 0, totalApproved: 0, totalCancelled: 0, transactionCount: 0, previousNet: 0, deltaNet: 0, deltaRate: null,
@@ -93,21 +93,65 @@ describe("quiet home transaction exceptions", () => {
     expect(html).toContain("카드 사용액을 불러오지 못했어요");
   });
 
-  it("shows a small all-time review link only after the count is known", () => {
-    const props = { reviews: { ...noExceptions, count: 2, truncated: true } };
-    expect(consumption(props)).toContain('href="/transactions?review=1"');
-    expect(consumption(props)).toContain("확인할 거래 2+건");
-    expect(consumption({ reviews: { ...props.reviews, loading: true } })).not.toContain("확인할 거래");
-    expect(consumption({ reviews: { ...props.reviews, error: true } })).not.toContain("확인할 거래");
+  it("shows a small review link to the to-do section only after the count is known", () => {
+    const reviews = { ...noExceptions, count: 2, truncated: true };
+    expect(consumption({ todo: { reviews } })).toContain('href="/todo?section=reviews"');
+    expect(consumption({ todo: { reviews } })).toContain("확인할 거래 2+건");
+    expect(consumption({ todo: { reviews: { ...reviews, loading: true } } })).not.toContain("확인할 거래");
+    expect(consumption({ todo: { reviews: { ...reviews, error: true } } })).not.toContain("확인할 거래");
   });
 
-  it("keeps processing as a neutral state instead of a user judgment notice", () => {
+  it("lists to-do rows in the to-do screen order, each linking to its section", () => {
+    const one = { ...noExceptions, count: 1 };
+    const html = consumption({ todo: { reviews: one, sms: { ...one, count: 4 }, requests: one, declines: { ...one, count: 2 } } });
+    const order = ["결제 실패 2건", "가족이 물어본 결제 1건", "확인할 거래 1건", "확인할 문자 4건"].map((text) => html.indexOf(text));
+    expect(order.every((at) => at >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    for (const section of ["declines", "requests", "sms", "reviews"]) {
+      expect(html).toContain(`href="/todo?section=${section}"`);
+    }
+  });
+
+  it("keeps processing as a gray status line, not a link the user must act on", () => {
     const html = consumption({ processing: { ...noExceptions, count: 3 } });
-    expect(html).toContain("문자·환율 확인 대기 3건");
+    expect(html).toContain("문자 3건을 거래에 반영하는 중이에요");
     expect(html).toContain('role="status"');
-    expect(html).toContain('href="/todo?section=processing"');
+    expect(html).not.toContain("section=processing");
+    expect(html).not.toContain("<a");
     expect(html).not.toContain("확인할 거래");
     expect(html).not.toContain("재처리");
+    expect(consumption({ processing: { ...noExceptions, count: 3, truncated: true } })).toContain("문자 3+건을");
+    expect(consumption({ processing: { ...noExceptions, count: 3, loading: true } })).not.toContain("반영하는 중");
+    expect(consumption({ processing: { ...noExceptions, count: 3, error: true } })).not.toContain("반영하는 중");
+  });
+
+  it("states FX-stalled SMS as stalled, with a row to the processing section, after the to-do rows", () => {
+    const html = consumption({
+      todo: { reviews: { ...noExceptions, count: 1 } },
+      processing: { ...noExceptions, count: 2, fxMissing: 3 },
+    });
+    expect(html).toContain("문자 2건을 거래에 반영하는 중이에요");
+    expect(html).toContain("문자 3건은 그날 환율이 없어 아직 반영하지 못했어요");
+    expect(html).toContain('href="/todo?section=processing"');
+    expect(html.indexOf("확인할 거래 1건")).toBeLessThan(html.indexOf("그날 환율이 없어"));
+    // 환율 대기만 있으면 '반영하는 중'이라고 말하지 않는다.
+    const fxOnly = consumption({ processing: { ...noExceptions, fxMissing: 1 } });
+    expect(fxOnly).toContain("문자 1건은 그날 환율이 없어 아직 반영하지 못했어요");
+    expect(fxOnly).not.toContain("반영하는 중");
+    expect(fxOnly).not.toContain("section=reviews");
+    expect(consumption({ processing: { ...noExceptions, fxMissing: 1, truncated: true } })).toContain("문자 1+건은");
+    for (const unknown of [{ ...noExceptions, loading: true }, { ...noExceptions, error: true }]) {
+      const hidden = consumption({ processing: { ...unknown, fxMissing: 1 } });
+      expect(hidden).not.toContain("환율");
+      expect(hidden).not.toContain("section=processing");
+    }
+  });
+
+  it("hides the cancellation footnote while the amount is loading or failed", () => {
+    expect(consumption({ monthly })).toContain("결제 취소 반영");
+    expect(consumption({ monthly, loading: true })).not.toContain("결제 취소 반영");
+    expect(consumption({ monthly, error: true })).not.toContain("결제 취소 반영");
+    expect(consumption({ monthly, loading: true, pace: "지난달 이맘때보다 1,000원 덜 썼어요" })).not.toContain("지난달 이맘때");
   });
 
   it("preserves explicit zero from a successful server response but hides failed cached values", () => {

@@ -189,7 +189,7 @@ function ScopedPlans({
                   type="button"
                   disabled={opening !== null}
                   onClick={() => void open(item.id)}
-                  className="hover:bg-muted/50 flex min-h-20 w-full min-w-0 items-center gap-3 border-b p-4 text-left last:border-0 disabled:opacity-60"
+                  className="hover:bg-muted/50 flex min-h-20 w-full min-w-0 items-center gap-3 border-b p-4 text-left last:border-0 disabled:opacity-60 active:bg-muted"
                   aria-label={`${item.label} 상세`}
                 >
                   <House className="text-muted-foreground size-5 shrink-0" />

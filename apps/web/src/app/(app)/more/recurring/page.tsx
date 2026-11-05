@@ -40,6 +40,7 @@ import type {
 import { Button } from "@/components/ui/button";
 import {
   EmptyState,
+  ErrorState,
   ListLoading,
   ListRow,
   Money,
@@ -471,14 +472,10 @@ export default function RecurringPage() {
       ) : null}
 
       {seriesQuery.isError ? (
-        <EmptyState
-          title="정기 지출을 불러오지 못했어요"
-          description="잠시 후 다시 시도해 주세요."
-          action={
-            <Button variant="weak" className="w-full" onClick={() => void seriesQuery.refetch()}>
-              다시 불러오기
-            </Button>
-          }
+        <ErrorState
+          message="정기 지출을 불러오지 못했어요"
+          retrying={seriesQuery.isFetching}
+          onRetry={() => void seriesQuery.refetch()}
         />
       ) : null}
 

@@ -97,7 +97,7 @@ export function HomeMemberSplit({
 }
 
 const UPCOMING_ROW =
-  "hover:bg-muted/50 focus-visible:outline-ring -mx-5 flex min-h-14 min-w-0 items-center gap-3 px-5 py-2 focus-visible:outline-2 focus-visible:-outline-offset-2";
+  "hover:bg-muted/50 focus-visible:outline-ring -mx-5 flex min-h-14 min-w-0 items-center gap-3 px-5 py-2 focus-visible:outline-2 focus-visible:-outline-offset-2 active:bg-muted";
 
 /** 다가오는 지출(정기 결제·카드 결제일 7일, 주택 납부 30일). 행이 없으면 그리지 않는다. */
 export function HomeUpcoming({ rows }: { rows: readonly UpcomingRow[] }) {

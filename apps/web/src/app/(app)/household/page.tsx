@@ -146,7 +146,7 @@ type ConfirmTarget =
 
 /** 접힌 목록(나간 구성원·지난 초대)의 여는 줄 — budgets 화면과 같은 모양 + 열림 화살표. */
 const FOLD_SUMMARY_CLASS =
-  "text-caption text-muted-foreground hover:text-foreground flex min-h-11 cursor-pointer list-none items-center gap-1 font-medium";
+  "text-caption text-muted-foreground hover:text-foreground flex min-h-11 cursor-pointer list-none items-center gap-1 font-medium active:text-foreground";
 const FOLD_CHEVRON = (
   <ChevronDown
     aria-hidden="true"
@@ -498,7 +498,7 @@ export default function HouseholdPage() {
                         key={key}
                         aria-label={`${MEMBER_COLOR_LABELS[key]} 색상 선택`}
                         disabled={colorMutation.isPending}
-                        className="justify-center rounded-full p-1.5"
+                        className="size-11 justify-center rounded-full p-0"
                         onSelect={() => {
                           if (m.color !== key) {
                             colorMutation.mutate({
@@ -1063,7 +1063,7 @@ export default function HouseholdPage() {
             <AlertDialogCancel>닫기</AlertDialogCancel>
             <AlertDialogAction
               onClick={runConfirm}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive"
             >
               {confirm?.type === "leave"
                 ? "나가기"

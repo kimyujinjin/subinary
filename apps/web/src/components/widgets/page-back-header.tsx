@@ -48,7 +48,7 @@ export function PageBackHeader({
             router.replace(backHref ?? parentTabHref(pathname));
           }
         }}
-        className="hover:bg-muted -ml-2.5 flex size-11 shrink-0 items-center justify-center rounded-full transition-colors"
+        className="hover:bg-muted -ml-2.5 flex size-11 shrink-0 items-center justify-center rounded-full transition-colors active:bg-muted"
       >
         <ArrowLeft className="size-5" />
       </button>

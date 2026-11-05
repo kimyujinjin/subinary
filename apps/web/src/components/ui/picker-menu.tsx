@@ -1,10 +1,11 @@
 "use client";
 /**
- * 값 고르기 드롭다운 — 거래 상세의 카테고리·카드·공개 범위와 목록 위 기간·조건 칩이 같이 쓴다.
+ * 값 고르기 드롭다운 — 거래 상세의 카테고리·카드·공개 범위와 목록 위 기간·조건 칩이 같이 쓴다
+ * (`app/(app)/transactions/detail-fields.tsx`·`transaction-filters.tsx`). 다른 화면도 값 고르기에 쓰도록 `components/ui`에 둔다.
  * 누른 줄·칩 바로 아래로 펼쳐지고 지금 값에 체크가 있다. 고르면 닫히면서 바로 반영된다(같은 값이면 그대로).
  *
  * 값 고르기는 창(시트)이 아니라 드롭다운이다. 2026-11-05 하루 동안 바텀 시트로 띄웠다가
- * "모든 걸 다 바텀 시트로 만들라고 한 건 아니었다"는 지적으로 정리했다(`components/ui/sheet-layout.ts` 표).
+ * "모든 걸 다 바텀 시트로 만들라고 한 건 아니었다"는 지적으로 정리했다(`sheet-layout.ts` 표).
  */
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { Check } from "lucide-react";
@@ -35,7 +36,7 @@ export type PickerMenuProps = {
 };
 
 const ITEM =
-  "text-body relative flex min-h-11 cursor-default items-center gap-3 rounded-control px-3 py-2 outline-hidden select-none focus:bg-muted data-[highlighted]:bg-muted data-[disabled]:pointer-events-none data-[disabled]:opacity-50";
+  "text-body relative flex min-h-11 cursor-default items-center gap-3 rounded-control px-3 py-2 outline-hidden select-none focus:bg-muted data-[highlighted]:bg-muted dark:focus:bg-foreground/10 dark:data-[highlighted]:bg-foreground/10 data-[disabled]:pointer-events-none data-[disabled]:opacity-50";
 
 export function PickerMenu({
   trigger,
