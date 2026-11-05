@@ -24,7 +24,6 @@ import {
 } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
-import { CURRENT_HOUSEHOLD_CONSENT_VERSION } from '@family/contracts';
 import type {
   AcceptInvitationRequest,
   HouseholdCreateRequest,
@@ -44,7 +43,6 @@ import { schema, type Db, type DbExecutor } from '@family/database';
 
 import { TokenService } from '../auth/token.service';
 import { DB } from '../database/database.constants';
-import { HOUSEHOLD_JOIN_CONSENT } from './household-consent';
 import { RealtimePublisherService } from '../realtime/realtime-publisher.service';
 
 /** Projection used for member listings (user profile joined onto membership). */
@@ -181,7 +179,7 @@ export class HouseholdService {
   /* Households                                                              */
   /* ---------------------------------------------------------------------- */
 
-  /** Creates a household and registers the creator as its owner (+ consent). */
+  /** Creates a household and registers the creator as its owner. */
   async create(
     userId: string,
     input: HouseholdCreateRequest,
@@ -201,17 +199,7 @@ export class HouseholdService {
         role: 'owner',
         status: 'active',
       });
-
-      await tx.insert(schema.householdConsents).values({
-        householdId: created.id,
-        userId,
-        consentType: HOUSEHOLD_JOIN_CONSENT,
-        // DB 기본값('v1')에 기대지 않고 **코드의 현재 버전**을 명시적으로 박는다.
-        // 기본값에 기대면 문구를 개정해도 새 동의가 옛 버전으로 기록되어, 개정 자체가
-        // 무의미해진다(누가 어느 문구에 동의했는지 알 수 없게 된다).
-        consentVersion: CURRENT_HOUSEHOLD_CONSENT_VERSION,
-        status: 'granted',
-      });
+      // 가족 가입 동의 절차는 2026-11-05에 없앴다(소유자 결정) — 묻지 않은 동의를 기록하지 않는다.
 
       return created;
     });
@@ -676,7 +664,6 @@ export class HouseholdService {
   /**
    * Accepts an invitation by raw token on behalf of `userId`.
    *
-   * - `consent !== true` → 400 (explicit consent required, PRD §7.3).
    * - unknown token → 404.
    * - already accepted → 409 (reuse blocked).
    * - revoked → 410; expired → status persisted as `expired` then 410.
@@ -688,10 +675,8 @@ export class HouseholdService {
     userId: string,
     input: AcceptInvitationRequest,
   ): Promise<HouseholdSummary> {
-    if (input.consent !== true) {
-      throw new BadRequestException('consent is required to join a household');
-    }
-
+    // 가족 가입 동의 절차는 2026-11-05에 없앴다(소유자 결정). 옛 앱의 `consent: true`는 무시한다.
+    void input;
     const tokenHash = this.tokenService.hashToken(rawToken);
 
     /*
@@ -796,15 +781,6 @@ export class HouseholdService {
           status: 'active',
         });
       }
-
-      await tx.insert(schema.householdConsents).values({
-        householdId: invitation.householdId,
-        userId,
-        consentType: HOUSEHOLD_JOIN_CONSENT,
-        // 위 create()와 같은 이유 — 버전은 코드가 정한다(DB 기본값 'v1' 사용 금지).
-        consentVersion: CURRENT_HOUSEHOLD_CONSENT_VERSION,
-        status: 'granted',
-      });
 
       await this.markInvitationAccepted(tx, invitation.id, userId);
 

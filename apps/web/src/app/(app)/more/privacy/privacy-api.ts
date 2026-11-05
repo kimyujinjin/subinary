@@ -7,10 +7,7 @@
  * 갈라지지 않게 한다 — 여기서 fetch를 새로 짜면 401 재시도·토큰 헤더가 두 벌이 된다.
  * IA 개편 때 다른 화면들과 함께 `queries.ts`로 올리면 된다.
  * ------------------------------------------------------------------------- */
-import type {
-  PrivacyConsentRevokeResponse,
-  PrivacyOverview,
-} from "@family/contracts";
+import type { PrivacyOverview } from "@family/contracts";
 
 import { apiFetch } from "@/lib/api-client";
 
@@ -24,26 +21,4 @@ export function fetchPrivacyOverview(
   return apiFetch<PrivacyOverview>(`/v1/households/${householdId}/privacy`, {
     accessToken,
   });
-}
-
-/** 동의·재동의. `version`은 **화면이 실제로 보여준 문구 버전**이어야 한다(서버가 대조). */
-export function grantPrivacyConsent(
-  accessToken: string | null,
-  householdId: string,
-  version: string,
-): Promise<PrivacyOverview> {
-  return apiFetch<PrivacyOverview>(
-    `/v1/households/${householdId}/privacy/consent`,
-    { method: "POST", accessToken, body: { version, consent: true } },
-  );
-}
-
-export function revokePrivacyConsent(
-  accessToken: string | null,
-  householdId: string,
-): Promise<PrivacyConsentRevokeResponse> {
-  return apiFetch<PrivacyConsentRevokeResponse>(
-    `/v1/households/${householdId}/privacy/consent/revoke`,
-    { method: "POST", accessToken, body: { confirm: true } },
-  );
 }

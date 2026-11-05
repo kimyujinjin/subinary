@@ -28,7 +28,7 @@ function count(pattern: RegExp): number {
 }
 
 // 상한은 내리기만 한다. 화면 개편 PR에서 실제 개수에 맞춰 갱신한다.
-const MAX_ARBITRARY_TEXT_SIZE = 52; // 2026-11-05 전체 메뉴 하위 화면 정리 뒤 180 → 52
+const MAX_ARBITRARY_TEXT_SIZE = 49; // 2026-11-05 동의 절차 제거 뒤 52 → 49
 const MAX_ARBITRARY_RADIUS = 1;
 
 describe("디자인 스케일 래칫", () => {

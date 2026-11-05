@@ -6,13 +6,12 @@
  * - loading: 스피너 / unauthenticated: 로그인·가입 안내 / token 없음: 유효하지 않은 초대.
  * - offline: 세션 확인 실패 → 수락 화면을 그리면 authedFetch가 확실히 실패하므로
  *   연결 안내 + 재시도로 막는다.
- * - authenticated: 동의 체크 후 수락 → POST /household-invitations/:token/accept
+ * - authenticated: 수락 → POST /household-invitations/:token/accept
  *   → refreshMemberships + 활성 가족 전환 → 대시보드.
- * consent는 계약상 z.literal(true) 필수 → 체크 안 하면 수락 버튼 비활성.
+ * 가족 가입 동의 절차는 2026-11-05에 없앴다(소유자 결정) — 체크박스 없이 수락한다.
  *
- * **어느 가족이 초대했는지 먼저 보여준 뒤 동의를 받는다**(C-1). 이전에는 가족명도
- * 초대자도 없이 "가족 데이터 공유에 동의해요"만 물었다 — 무엇에 동의하는지 모르는
- * 동의였다. 정보는 비인증 미리보기(GET /v1/household-invitations/:token)로 받는다.
+ * **어느 가족이 초대했는지 먼저 보여준다**(C-1). 정보는 비인증 미리보기
+ * (GET /v1/household-invitations/:token)로 받는다.
  * 로그인 전에도 보이므로 로그인 화면으로 갈 때 `returnTo`를 실어 여정이 끊기지 않게 한다.
  *
  * 토큰은 쿼리 파라미터(?token=)에서 읽는다. 동적 세그먼트(/join/[token])는 정적
@@ -26,15 +25,10 @@ import { Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import {
-  currentHouseholdConsentDocument,
-  type HouseholdRole,
-  type InvitationPreview,
-} from "@family/contracts";
+import type { HouseholdRole, InvitationPreview } from "@family/contracts";
 
 import { ConnectionError } from "@/components/connection-error";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { useHouseholdStore } from "@/lib/store";
@@ -121,7 +115,6 @@ function JoinInner() {
     useAuth();
   const setSelectedId = useHouseholdStore((s) => s.setSelectedId);
 
-  const [consent, setConsent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // 미리보기는 비인증 경로라 세션 상태와 무관하게 곧바로 부른다 — 로그인 화면으로
@@ -140,7 +133,7 @@ function JoinInner() {
     setSubmitting(true);
     try {
       const household = await authedFetch((t) =>
-        api.households.acceptInvite(t, token, { consent: true }),
+        api.households.acceptInvite(t, token, {}),
       );
       await refreshMemberships();
       setSelectedId(household.id);
@@ -289,44 +282,12 @@ function JoinInner() {
 
         {invitationCard}
 
-        {/*
-         * 동의 문구는 **코드가 단일 출처**다(@family/contracts). 여기에 문장을 직접
-         * 적으면 서버가 기록하는 버전과 사용자가 실제로 읽은 문구가 갈라진다 —
-         * 그러면 "누가 어느 문구에 동의했는가"를 나중에 답할 수 없다(C-3).
-         * 문구를 고치려면 contracts에서 새 버전을 만들고 상수를 올린다.
-         */}
-        <div className="bg-muted flex flex-col gap-3 rounded-xl p-4 text-sm">
-          <label className="flex cursor-pointer items-start gap-3">
-            <Checkbox
-              className="mt-0.5"
-              checked={consent}
-              onChange={(e) => setConsent(e.target.checked)}
-            />
-            <span className="font-medium">
-              {currentHouseholdConsentDocument.headline}
-            </span>
-          </label>
-          <div className="flex flex-col gap-2 pl-7">
-            {currentHouseholdConsentDocument.clauses.map((clause) => (
-              <span key={clause.title} className="flex flex-col gap-0.5">
-                <span className="text-[13px] font-medium">{clause.title}</span>
-                <span className="text-muted-foreground text-[13px] leading-relaxed">
-                  {clause.body}
-                </span>
-              </span>
-            ))}
-          </div>
-          <p className="text-muted-foreground pl-7 text-[12px]">
-            동의한 문구와 시각은 더보기 › 개인정보에서 언제든 다시 볼 수 있어요.
-          </p>
-        </div>
-
         <div className="flex flex-col gap-2">
           <Button
             size="lg"
             className="h-12 w-full"
             onClick={onAccept}
-            disabled={!consent || submitting}
+            disabled={submitting}
           >
             {submitting ? (
               <>

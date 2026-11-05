@@ -26,30 +26,18 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
     data: state.overview,
     refetch: vi.fn(),
   }),
-  useMutation: () => ({ isPending: false, mutate: vi.fn() }),
-  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
 }));
 
 import PrivacyPage from "./page";
 
 const thisYear = new Date().getFullYear();
-const consent: PrivacyOverview["history"][number] = {
-  id: "00000000-0000-4000-8000-000000000010",
-  consentType: "household_join",
-  version: CURRENT_HOUSEHOLD_CONSENT_VERSION,
-  status: "granted",
-  consentedAt: `${thisYear}-01-20T03:00:00.000Z`,
-  revokedAt: null,
-  revokedReason: null,
-  documentAvailable: true,
-};
 
 const base: PrivacyOverview = {
   householdId: "00000000-0000-4000-8000-000000000001",
   currentVersion: CURRENT_HOUSEHOLD_CONSENT_VERSION,
-  activeConsent: consent,
+  activeConsent: null,
   needsRenewal: false,
-  history: [consent],
+  history: [],
   retention: {
     policy: "none",
     smsEventCount: 1280,
@@ -67,66 +55,31 @@ beforeEach(() => {
 });
 
 describe("개인정보 화면", () => {
-  it("동의 중이면 한 줄씩만 보여 주고 저장 경로·용량·버전·개발 용어를 드러내지 않는다", () => {
+  it("기기와 보관 현황을 한 줄씩만 보여 주고 저장 경로·용량·개발 용어를 드러내지 않는다", () => {
     const html = renderToStaticMarkup(<PrivacyPage />);
     expect(html).toContain("문자 보내는 기기 2대");
+    expect(html).toContain('href="/devices"');
     expect(html).toContain("카드 문자 1,280건 보관 중 · 3월부터");
-    expect(html).toContain(
-      "동의를 철회해도 이미 보관된 문자는 지워지지 않아요"
-    );
+    expect(html).toContain("받은 문자는 자동으로 지워지지 않아요");
     expect(html).toContain(">자세히</button>");
-    for (const jargon of [
-      "card-sms/",
-      "KB",
-      "MB",
-      "데이터베이스",
-      "파일 저장소",
-      "원문",
-      CURRENT_HOUSEHOLD_CONSENT_VERSION,
-    ]) {
+    for (const jargon of ["card-sms/", "KB", "MB", "데이터베이스", "파일 저장소", "원문"]) {
       expect(html).not.toContain(jargon);
     }
-    // 동의 문구 전문은 시트로 접혀 있고, 동의 버튼도 없다.
-    expect(html).toContain("동의 내용");
-    expect(html).not.toContain(">동의하기<");
   });
 
-  it("철회는 화면에 버튼으로 두지 않는다(⋯ 메뉴 안)", () => {
+  it("가족 가입 동의 절차는 없앴다 — 동의 상태·동의 버튼·철회를 보여 주지 않는다(2026-11-05)", () => {
     const html = renderToStaticMarkup(<PrivacyPage />);
-    expect(html).not.toContain("동의 철회하기");
-    expect(html).toContain('aria-label="더보기"');
-  });
-
-  it("동의가 없으면 문구 전문을 펼치고 동의 버튼을 보여 준다", () => {
-    state.overview = { ...base, activeConsent: null };
-    const html = renderToStaticMarkup(<PrivacyPage />);
-    expect(html).toContain("동의하지 않은 상태예요");
-    expect(html).toContain("카드 문자 수집");
-    expect(html).toContain(">동의하기</button>");
+    for (const consentWord of ["동의하기", "동의 중", "동의하지 않은", "동의 내용", "동의 기록", "철회"]) {
+      expect(html).not.toContain(consentWord);
+    }
     expect(html).not.toContain('aria-label="더보기"');
-  });
-
-  it("문구가 바뀌었으면 버전 이름 없이 다시 동의를 묻는다", () => {
-    state.overview = { ...base, needsRenewal: true };
-    const html = renderToStaticMarkup(<PrivacyPage />);
-    expect(html).toContain(
-      "문구가 바뀌어 다시 동의가 필요하지만, 확인 전에도 수집은 계속돼요"
-    );
-    expect(html).toContain(">새 문구에 동의하기</button>");
-    expect(html).not.toMatch(/\(v\d\)/);
   });
 
   it("보관한 문자가 없으면 그렇게 말한다", () => {
     state.overview = {
       ...base,
-      retention: {
-        ...base.retention,
-        smsEventCount: 0,
-        oldestReceivedAt: null,
-      },
+      retention: { ...base.retention, smsEventCount: 0, oldestReceivedAt: null },
     };
-    expect(renderToStaticMarkup(<PrivacyPage />)).toContain(
-      "보관 중인 카드 문자가 없어요"
-    );
+    expect(renderToStaticMarkup(<PrivacyPage />)).toContain("보관 중인 카드 문자가 없어요");
   });
 });

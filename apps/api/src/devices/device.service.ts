@@ -36,10 +36,6 @@ import { isUniqueViolation, schema, type Db } from '@family/database';
 
 import { TokenService } from '../auth/token.service';
 import { DB } from '../database/database.constants';
-import {
-  hasActiveConsent,
-  loadConsentHistory,
-} from '../household/household-consent';
 import { DeviceSecretCipher } from './device-secret.cipher';
 
 /** Length of the raw device secret in bytes (hex-encoded → 64 chars). */
@@ -148,25 +144,14 @@ export class DeviceService {
    * Registers a smartphone under the caller's household and issues its first
    * secret and collect token. Both raw credentials are returned exactly once.
    *
-   * 동의를 철회한 사용자는 등록할 수 없다(C-3). 철회는 기존 기기를 폐기하지만, 그
-   * 직후 새 기기를 등록할 수 있으면 철회가 연극이 된다 — 사용자는 수집을 껐다고 믿는데
-   * 다음 등록 한 번으로 조용히 되살아난다. 판정은 `household-consent.ts`의 함수를
-   * 그대로 쓴다(Control Center와 같은 정의).
+   * 가족 가입 동의 절차는 2026-11-05에 없앴다(소유자 결정) — 등록 전에 동의를 확인하지 않는다.
+   * 문자 수집을 멈추려면 기기를 폐기한다.
    */
   async registerDevice(
     userId: string,
     input: DeviceRegisterRequest,
   ): Promise<DeviceSecretResponse> {
     const membership = await this.resolveMembership(input.householdId, userId);
-
-    const consentHistory = await loadConsentHistory(
-      this.db,
-      input.householdId,
-      userId,
-    );
-    if (!hasActiveConsent(consentHistory)) {
-      throw new ForbiddenException('household consent has been revoked');
-    }
 
     const rawSecret = randomBytes(SECRET_BYTES).toString('hex');
     const encrypted = this.cipher.encrypt(rawSecret);

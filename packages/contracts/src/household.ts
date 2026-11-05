@@ -54,9 +54,13 @@ export const invitationCreateRequestSchema = z.object({
 });
 export type InvitationCreateRequest = z.infer<typeof invitationCreateRequestSchema>;
 
-/** `POST /v1/household-invitations/:token/accept` — accept an invitation (consent required). */
+/**
+ * `POST /v1/household-invitations/:token/accept` — accept an invitation.
+ * 가족 가입 동의 절차는 2026-11-05에 없앴다(소유자 결정). 옛 앱 번들은 `consent: true`를
+ * 보내므로 받기만 하고 쓰지 않는다.
+ */
 export const acceptInvitationRequestSchema = z.object({
-  consent: z.literal(true),
+  consent: z.literal(true).optional(),
 });
 export type AcceptInvitationRequest = z.infer<typeof acceptInvitationRequestSchema>;
 
