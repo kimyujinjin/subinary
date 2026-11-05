@@ -28,8 +28,7 @@ export const CONNECTION_ERROR: Record<FinanceConnectionError, string> = {
     "선택한 계좌를 조회할 수 없어요. 연결 상태를 확인해 주세요.",
   operation_unknown:
     "조회 결과를 확인하지 못했어요. 연결 상태부터 다시 확인해 주세요.",
-  configuration_unavailable:
-    "운영자의 연결 설정이 필요해요. 설정을 마치면 다시 조회할 수 있어요.",
+  configuration_unavailable: "연결 준비가 끝나면 다시 조회할 수 있어요.",
 };
 
 /** Exact provider decimals: formatting must never round large values through Number. */
@@ -85,7 +84,7 @@ export function hasPreviousSnapshot(item: FinanceConnection): boolean {
   );
 }
 /**
- * 키 등록 폼을 보일지(토스·신한 공용).
+ * 키 등록 폼을 보일지.
  *
  * 앱 복귀·60초 안전망·SSE 힌트는 권한을 다시 확인하려고 목록을 다시 읽는다. 예전에는 그때마다
  * 폼을 닫아, 클라이언트 키를 넣고 다른 앱에서 시크릿 키를 복사해 오는 사이에 입력이 사라졌다
@@ -100,6 +99,22 @@ export function registrationFormVisible(state: {
 }): boolean {
   if (!state.open || !state.canManage) return false;
   return state.data ? state.data.enabled : state.busy;
+}
+
+/**
+ * 목록을 다시 읽는 동안 화면에 남길 연결 목록. 등록 폼(`registrationFormVisible`)과 같은 원칙이다.
+ *
+ * 예전에는 다시 읽기 직전마다 목록을 비워, 60초 안전망·앱 복귀·SSE 힌트 때마다 카드가 사라졌다
+ * 나타났고 열어 둔 `연결 해제` 확인 시트가 닫히고 펼친 보유 주식이 접혔다. 읽는 동안에는 마지막
+ * 목록을 그대로 두고(쓰기는 진행 중 표시로 막는다), 읽기가 실패했을 때만 비운다 — 권한이 사라졌으면
+ * 그 실패가 목록을 지운다.
+ */
+export function connectionListDuringRead<T>(
+  last: T | null,
+  read: { reading: boolean; failed: boolean; data: T | null }
+): T | null {
+  if (read.reading) return last;
+  return read.failed ? null : read.data;
 }
 
 export type ConnectionOperation = {

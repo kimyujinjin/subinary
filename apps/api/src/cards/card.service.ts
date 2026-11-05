@@ -342,7 +342,12 @@ export class CardService {
     }
     // 소유자 재지정: 같은 household의 활성 구성원만 허용. 아이콘 색이 새 소유자
     // 색으로 바뀐다. 권한은 위 isOwner/isManager 게이트를 그대로 따른다.
-    if (input.ownerMemberId !== undefined) {
+    // 지금 소유자를 그대로 다시 보낸 것은 재지정이 아니다 — 활성 검사를 하면 소유자가
+    // 가족을 떠난 카드는 별칭·결제일조차 고칠 수 없게 된다(예전 웹은 늘 소유자를 보냈다).
+    if (
+      input.ownerMemberId !== undefined &&
+      input.ownerMemberId.toLowerCase() !== card.ownerMemberId.toLowerCase()
+    ) {
       await this.assertActiveMember(card.householdId, input.ownerMemberId);
       patch.ownerMemberId = input.ownerMemberId;
     }

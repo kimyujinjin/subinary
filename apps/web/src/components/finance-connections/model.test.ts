@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { connectionFixture as item } from "./fixtures.test-support";
-import { canRefreshOnOpen, connectionDecimal, connectionMoney, connectionFailureMessage, connectionTime, createConnectionSession, hasPreviousSnapshot, reconcileConnectionOperation, registrationFormVisible, type ConnectionOperation } from "./model";
+import { canRefreshOnOpen, connectionDecimal, connectionListDuringRead, connectionMoney, connectionFailureMessage, connectionTime, createConnectionSession, hasPreviousSnapshot, reconcileConnectionOperation, registrationFormVisible, type ConnectionOperation } from "./model";
 
 describe("connection display and refresh decisions", () => {
   it("preserves large integers and fractional precision without a currency conversion", () => {
@@ -108,5 +108,22 @@ describe("등록 폼은 다시 읽기로 닫히지 않는다", () => {
     expect(registrationFormVisible({ ...open, data: null, busy: false })).toBe(false);
     expect(registrationFormVisible({ ...open, canManage: false })).toBe(false);
     expect(registrationFormVisible({ ...open, open: false })).toBe(false);
+  });
+});
+
+describe("목록은 다시 읽기로 사라지지 않는다", () => {
+  const last = { enabled: true, items: [item] };
+  it("앱 복귀·60초 안전망으로 다시 읽는 동안에는 마지막 목록을 그대로 둔다", () => {
+    // 예전에는 읽기 직전마다 비워 카드가 사라졌다 나타났고, 열어 둔 연결 해제 확인 시트가 닫혔다.
+    expect(connectionListDuringRead(last, { reading: true, failed: true, data: null })).toBe(last);
+  });
+  it("읽기가 끝나면 읽은 목록으로 바꾸고, 실패했을 때만 비운다", () => {
+    const next = { enabled: true, items: [] };
+    expect(connectionListDuringRead(last, { reading: false, failed: false, data: next })).toBe(next);
+    // 권한이 사라졌거나 읽지 못했으면 이전에 허용된 값을 남기지 않는다.
+    expect(connectionListDuringRead(last, { reading: false, failed: true, data: null })).toBeNull();
+  });
+  it("처음 읽는 동안에는 보여 줄 목록이 없다", () => {
+    expect(connectionListDuringRead(null, { reading: true, failed: true, data: null })).toBeNull();
   });
 });

@@ -6,14 +6,18 @@
  * payment_cards 행이 생기지 않아 SMS→거래 자동연결(worker resolveCard)이 항상
  * 실패해 모든 거래가 cardId=null 로 남았다. 이 페이지가 그 끊긴 UI 한 겹을 잇는다.
  *
- * - 카드 = ListRow(카드 아이콘 · alias · issuer/뒤4자리/공개범위 subtitle · 상태 배지)
- *   + 소유자 본인 또는 owner/admin 만 행 우측 ⋯(수정 / 비활성·재활성) 노출(서버 §5.1과 일치).
+ * - 카드 = ListRow(카드 아이콘 · alias + 상태 칩 · '소유자 · 카드사 •••• 1234' 한 줄 ·
+ *   이번 달 사용액 · 매월 N일 결제). 행 전체가 그 카드의 사용 내역 링크다.
+ *   소유자 본인 또는 owner/admin 만 행 끝 ⋯(수정 / 뒤 4자리 정정 / 비활성·재활성)을
+ *   본다(서버 §5.1과 일치). 비활성화는 확인을 거친다.
  * - maskedNumber '뒤 4자리'는 자동연결의 유일한 조인 키 → 강하게 유도(숫자 4자리 제한,
  *   미입력/중복 시 경고). 전체 PAN 붙여넣기는 maxLength=4+숫자필터로 UI 레벨 차단.
  * - visibility 는 이후 자동연결 거래에 '그 시점 값'으로 상속된다(소급 없음).
+ * - 소유자 선택지는 현재 구성원만이고, 수정은 소유자가 **바뀐 경우에만** ownerMemberId를
+ *   보낸다 — 소유자가 가족을 떠난 카드도 별칭·결제일을 고칠 수 있어야 한다(./card-rows.ts).
  * ------------------------------------------------------------------------- */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CreditCard, MoreHorizontal, Plus } from "lucide-react";
+import { CreditCard, Plus } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
@@ -37,12 +41,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -50,12 +48,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -66,21 +58,27 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   EmptyState,
+  ListLoading,
   ListRow,
+  Money,
+  OverflowMenu,
   PageBackHeader,
-  StatusBadge,
+  SectionHeader,
+  StatusChip,
+  type OverflowAction,
 } from "@/components/widgets";
 import { ApiError, api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { useHousehold } from "@/lib/household-context";
 import { cardOwnerLabel } from "@/lib/card-identity-label";
+import { currentMonth, formatWon } from "@/lib/format";
 import {
   invalidateTransactionScope,
   queryKeys,
   useCardList,
+  useCards,
   useHouseholdMembers,
 } from "@/lib/queries";
 import { memberColorClass } from "@/lib/member-color";
@@ -88,6 +86,18 @@ import { cn } from "@/lib/utils";
 import { canCorrectCardLast4 } from "@/lib/card-last4-correction";
 import { CardLast4CorrectionDialog } from "@/components/card-last4-correction-dialog";
 import { useCardLast4Correction } from "@/lib/queries";
+
+import {
+  billingDayLabel,
+  cardMonthSpend,
+  cardRowChips,
+  cardRowSubtitle,
+  cardUpdateBody,
+  lastFour,
+  ownerOptionsFor,
+  spendByCardId,
+  type OwnerOption,
+} from "./card-rows";
 
 /** 표준 카드사 목록 — 분석 라벨('alias · issuer') 표기 일관성을 위해 자유입력 대신 고정. */
 const ISSUER_OPTIONS = [
@@ -128,12 +138,6 @@ const VISIBILITY_OPTIONS: ReadonlyArray<{
   },
 ];
 
-const VISIBILITY_LABEL: Record<CardVisibility, string> = {
-  household: "가족 공개",
-  summary_only: "요약만 공유",
-  private: "나만 보기",
-};
-
 /** 결제일 선택지(매월 1~31일). 그 달에 없는 날은 말일로 본다. */
 const BILLING_DAYS = Array.from({ length: 31 }, (_, index) => index + 1);
 
@@ -142,12 +146,6 @@ const MANAGER_ROLES = ["owner", "admin"] as const;
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback;
-}
-
-/** 소유자 목록 항목(구성원 이름 + memberId). */
-interface OwnerOption {
-  memberId: string;
-  name: string;
 }
 
 /**
@@ -180,12 +178,16 @@ function OwnerSelect({
         <CreditCard className="size-5" />
       </span>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger id={id} className="w-full">
+        <SelectTrigger id={id} className="min-h-12 w-full">
           <SelectValue placeholder="소유자를 선택하세요" />
         </SelectTrigger>
         <SelectContent>
           {members.map((m) => (
-            <SelectItem key={m.memberId} value={m.memberId}>
+            <SelectItem
+              key={m.memberId}
+              value={m.memberId}
+              disabled={m.disabled}
+            >
               <span className="flex items-center gap-2">
                 <span
                   className={cn(
@@ -206,12 +208,6 @@ function OwnerSelect({
   );
 }
 
-/** '****1234' / '1234' 등 저장 포맷 차이를 흡수해 뒤 4자리만 뽑는다. */
-function lastFour(masked: string | null | undefined): string {
-  if (!masked) return "";
-  return masked.replace(/\D/g, "").slice(-4);
-}
-
 export default function CardsPage() {
   const { authedFetch, user } = useAuth();
   const { householdId, activeMembership } = useHousehold();
@@ -220,6 +216,14 @@ export default function CardsPage() {
 
   const cardsQuery = useCardList();
   const membersQuery = useHouseholdMembers();
+  const cards = cardsQuery.data ?? [];
+
+  // 행마다 보이는 이번 달 사용액 — 분석 화면의 카드별 집계와 같은 숫자다.
+  const spendQuery = useCards(currentMonth(), { enabled: cards.length > 0 });
+  const spendByCard = useMemo(
+    () => (spendQuery.data ? spendByCardId(spendQuery.data.items) : null),
+    [spendQuery.data],
+  );
 
   // 정확 권한 게이팅: 내 memberId 역산(activeMembership 엔 role 만 있고 memberId 는 없음).
   const myMemberId = useMemo(
@@ -234,14 +238,21 @@ export default function CardsPage() {
     for (const m of membersQuery.data ?? []) map.set(m.memberId, m.color);
     return map;
   }, [membersQuery.data]);
-
-  // 소유자 선택지(활성 구성원) + 소유자 memberId → 아이콘 색 클래스(목록과 동일 규칙).
-  const ownerOptions = useMemo<OwnerOption[]>(
+  // 이름표는 나간 구성원까지 — 그 사람이 소유한 카드의 이름은 계속 보여야 한다.
+  const memberNames = useMemo(
     () =>
-      (membersQuery.data ?? []).map((m) => ({
-        memberId: m.memberId,
-        name: m.userId === user?.id ? `${m.name} (나)` : m.name,
-      })),
+      new Map(
+        (membersQuery.data ?? []).map((member) => [
+          member.memberId,
+          member.name,
+        ]),
+      ),
+    [membersQuery.data],
+  );
+
+  // 소유자 선택지(현재 구성원만) + 소유자 memberId → 아이콘 색 클래스(목록과 동일 규칙).
+  const ownerOptions = useMemo(
+    () => ownerOptionsFor(membersQuery.data ?? [], user?.id),
     [membersQuery.data, user?.id],
   );
   const ownerColorClass = (memberId: string) =>
@@ -251,6 +262,8 @@ export default function CardsPage() {
   );
   const canManage = (card: CardSummary) =>
     isManagerRole || (myMemberId != null && card.ownerMemberId === myMemberId);
+  const canCorrect = (card: CardSummary) =>
+    canCorrectCardLast4(card, myMemberId, activeMembership?.role);
 
   // 등록 폼 상태(단순 폼 → useState + FormEvent 수동검증, devices 패턴).
   const [registerOpen, setRegisterOpen] = useState(false);
@@ -280,14 +293,20 @@ export default function CardsPage() {
   /** 매월 결제일(""=선택 안 함). 홈 '다가오는 지출'이 결제일과 지난달 사용액을 보여준다. */
   const [editBillingDay, setEditBillingDay] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
+  // 수정 창의 소유자 선택지 — 지금 소유자가 나간 사람이면 고를 수 없는 항목으로 이름만 남긴다.
+  const editOwnerOptions = useMemo(
+    () =>
+      ownerOptionsFor(membersQuery.data ?? [], user?.id, editing?.ownerMemberId),
+    [membersQuery.data, user?.id, editing?.ownerMemberId],
+  );
+  // 수정 중인 카드의 최신 값 — 수정 창에서 연 뒤 4자리 정정이 끝나면 목록이 새로 온다.
+  const editingCard = editing
+    ? (cards.find((c) => c.id === editing.id) ?? editing)
+    : null;
 
-  // 상태 전환(비활성/재활성) 확인.
-  const [confirm, setConfirm] = useState<
-    { type: "deactivate" | "reactivate"; card: CardSummary } | null
-  >(null);
-
-  const cards = cardsQuery.data ?? [];
-  const memberNames = new Map((membersQuery.data ?? []).map((member) => [member.memberId, member.name]));
+  // 비활성화 확인. 대상은 닫히는 동안에도 남겨 둔다(닫히는 애니메이션 중 제목이 비지 않게).
+  const [deactivating, setDeactivating] = useState<CardSummary | null>(null);
+  const [deactivateOpen, setDeactivateOpen] = useState(false);
 
   // 뒤 4자리 중복 감지(non-blocking 경고) — 활성 카드 대상, 자동연결이 섞일 수 있음.
   const maskedTail = lastFour(masked);
@@ -316,8 +335,10 @@ export default function CardsPage() {
       if (result.linkedTransactionCount > 0) {
         invalidateTransactionScope(queryClient);
         toast.success(
-          `과거 거래 ${result.linkedTransactionCount}건을 이 카드에 연결했어요.`,
+          `'${result.alias}' 카드를 등록하고 과거 거래 ${result.linkedTransactionCount}건을 연결했어요.`,
         );
+      } else {
+        toast.success(`'${result.alias}' 카드를 등록했어요.`);
       }
       setIssuer("");
       setAlias("");
@@ -332,11 +353,29 @@ export default function CardsPage() {
   const updateMutation = useMutation({
     mutationFn: (input: { id: string; body: CardUpdateRequest }) =>
       authedFetch((token) => api.cards.update(token, input.id, input.body)),
-    onSuccess: () => {
+    onSuccess: (updated) => {
       invalidateCards();
       setEditing(null);
-      setConfirm(null);
+      toast.success(`'${updated.alias}' 카드를 저장했어요.`);
     },
+  });
+
+  // 비활성·재활성은 수정 창과 따로 둔다 — 실패는 그 자리에서 토스트로 알린다.
+  const statusMutation = useMutation({
+    mutationFn: (input: { id: string; status: CardSummary["status"] }) =>
+      authedFetch((token) =>
+        api.cards.update(token, input.id, { status: input.status }),
+      ),
+    onSuccess: (updated) => {
+      invalidateCards();
+      toast.success(
+        updated.status === "inactive"
+          ? `'${updated.alias}' 카드를 비활성화했어요.`
+          : `'${updated.alias}' 카드를 다시 활성화했어요.`,
+      );
+    },
+    onError: (error) =>
+      toast.error(errorMessage(error, "카드 상태를 바꾸지 못했어요.")),
   });
 
   function onRegister(event: FormEvent<HTMLFormElement>) {
@@ -364,6 +403,7 @@ export default function CardsPage() {
   }
 
   function openEdit(card: CardSummary) {
+    updateMutation.reset();
     setEditing(card);
     setEditAlias(card.alias);
     setEditVisibility(card.visibility);
@@ -389,23 +429,58 @@ export default function CardsPage() {
     }
     updateMutation.mutate({
       id: editing.id,
-      body: {
-        alias: editAlias.trim(),
+      // 소유자는 바뀐 경우에만 보낸다 — 나간 구성원이 소유한 카드도 고칠 수 있게(card-rows.ts).
+      body: cardUpdateBody(editing, {
+        alias: editAlias,
         visibility: editVisibility,
-        // 소유자 변경 시 서버가 검증하고, 목록/폼 아이콘 색이 새 소유자 색으로 바뀐다.
-        ownerMemberId: editOwnerMemberId || undefined,
+        ownerMemberId: editOwnerMemberId,
         isShared: editIsShared,
-        billingDay: editBillingDay === "" ? null : Number(editBillingDay),
-      },
+        billingDay: editBillingDay,
+      }),
     });
   }
 
-  function runConfirm() {
-    if (!confirm) return;
-    updateMutation.mutate({
-      id: confirm.card.id,
-      body: { status: confirm.type === "deactivate" ? "inactive" : "active" },
-    });
+  const correctionBusy = (card: CardSummary) =>
+    updateMutation.isPending ||
+    correction.isPending ||
+    correction.cardPending(card.id, card.householdId) ||
+    cardsQuery.isFetching;
+
+  /** 행 끝 ⋯ 메뉴. 비활성화는 이 메뉴 안에만 두고 확인을 거친다(§3.3). */
+  function cardActions(card: CardSummary): OverflowAction[] {
+    const actions: OverflowAction[] = [
+      {
+        label: "수정",
+        disabled: updateMutation.isPending,
+        onSelect: () => openEdit(card),
+      },
+    ];
+    if (canCorrect(card)) {
+      actions.push({
+        label: "뒤 4자리 정정",
+        disabled: correctionBusy(card),
+        onSelect: () => setCorrecting(card),
+      });
+    }
+    actions.push(
+      card.status === "active"
+        ? {
+            label: "비활성화",
+            destructive: true,
+            disabled: statusMutation.isPending,
+            onSelect: () => {
+              setDeactivating(card);
+              setDeactivateOpen(true);
+            },
+          }
+        : {
+            label: "다시 활성화",
+            disabled: statusMutation.isPending,
+            onSelect: () =>
+              statusMutation.mutate({ id: card.id, status: "active" }),
+          },
+    );
+    return actions;
   }
 
   const isEmpty =
@@ -413,149 +488,132 @@ export default function CardsPage() {
   const selectedVisibility = VISIBILITY_OPTIONS.find(
     (o) => o.value === visibility,
   );
+  // 메뉴가 있는 행과 없는 행의 금액 칼럼이 세로로 맞도록, 하나라도 있으면 빈 자리를 둔다.
+  const hasCardMenu = cards.some(canManage);
+  const editTail = editingCard ? lastFour(editingCard.maskedNumber) : "";
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
-      <div className="pl-2.5">
-        <PageBackHeader
-          title="결제 카드"
+      <PageBackHeader title="결제 카드" />
+
+      {/* 카드 목록 — 행 전체가 그 카드의 사용 내역으로 가는 링크다. */}
+      <section
+        className="finance-panel min-w-0 px-5 pt-2 pb-5"
+        aria-label="등록된 카드"
+      >
+        <SectionHeader
+          title="등록된 카드"
+          trailing={
+            cards.length > 0 ? (
+              // 금액 칼럼 위에 맞춘다(⋯ 메뉴 44 + 간격 4 + 행 안쪽 여백).
+              <span
+                className={cn(
+                  "text-caption text-muted-foreground",
+                  hasCardMenu ? "mr-13 sm:mr-14" : "mr-1 sm:mr-2",
+                )}
+              >
+                이번 달 사용
+              </span>
+            ) : undefined
+          }
         />
-      </div>
-
-      {/* 카드 목록 */}
-      <Card>
-        <CardHeader>
-          <CardTitle>등록된 카드</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {cardsQuery.isLoading ? (
-            <div className="flex flex-col gap-3 py-2">
-              <Skeleton className="h-14 w-full rounded-lg" />
-              <Skeleton className="h-14 w-full rounded-lg" />
-            </div>
-          ) : cardsQuery.isError ? (
-            <p className="text-destructive text-sm" role="alert">
-              {errorMessage(cardsQuery.error, "카드를 불러오지 못했어요.")}
-            </p>
-          ) : cards.length === 0 ? (
-            <EmptyState
-              icon={<CreditCard />}
-              title="아직 등록된 카드가 없어요"
-              description="카드를 등록하면 문자 내역이 자동으로 연결돼요"
-              action={
-                <Button
-                  type="button"
-                  className="w-full"
-                  onClick={() => setRegisterOpen(true)}
-                >
-                  <Plus /> 카드 등록하기
-                </Button>
-              }
-            />
-          ) : (
-            <div className="flex flex-col">
-              {cards.map((c) => {
-                const tail = lastFour(c.maskedNumber);
-                const owner = cardOwnerLabel(c, memberNames);
-                return (
-                  <div key={c.id} className="flex items-center gap-1">
-                    <ListRow
-                      className="min-w-0 flex-1"
-                      href={`/transactions?cardId=${encodeURIComponent(c.id)}`}
-                      ariaLabel={`${c.alias} ${owner} ${tail ?? ""} 사용 내역`}
-                      icon={<CreditCard />}
-                      iconClassName={memberColorClass(
-                        c.ownerMemberId,
-                        memberColorById.get(c.ownerMemberId),
-                      )}
-                      title={c.alias}
-                      subtitle={
-                        <>
-                          <span className="block">{owner}</span>
-                          <span className="block">{c.issuer} · {tail ? `•••• ${tail}` : "뒤 4자리 미등록"}</span>
-                          <span className="block">{VISIBILITY_LABEL[c.visibility]}</span>
-                        </>
-                      }
-                      subtitleClassName="whitespace-normal break-words"
-                      valueSub={<span className="flex flex-col items-end gap-2"><StatusBadge status={c.status} /><span className="text-primary font-medium">사용 내역 ›</span></span>}
+        {cardsQuery.isLoading ? (
+          <ListLoading rows={2} label="카드를 불러오는 중이에요." />
+        ) : cardsQuery.isError ? (
+          <p className="text-destructive text-caption py-2" role="alert">
+            {errorMessage(cardsQuery.error, "카드를 불러오지 못했어요.")}
+          </p>
+        ) : cards.length === 0 ? (
+          <EmptyState
+            icon={<CreditCard />}
+            title="아직 등록된 카드가 없어요"
+            description="카드를 등록하면 문자 내역이 자동으로 연결돼요"
+            action={
+              <Button
+                type="button"
+                className="w-full"
+                onClick={() => setRegisterOpen(true)}
+              >
+                <Plus /> 카드 등록하기
+              </Button>
+            }
+          />
+        ) : (
+          <div className="flex flex-col">
+            {cards.map((c) => {
+              const subtitle = cardRowSubtitle(c, memberNames);
+              const chips = cardRowChips(c);
+              const spend = cardMonthSpend(c, spendByCard, myMemberId);
+              const billing = billingDayLabel(c);
+              return (
+                <div key={c.id} className="flex items-center gap-1">
+                  <ListRow
+                    className="min-w-0 flex-1"
+                    href={`/transactions?cardId=${encodeURIComponent(c.id)}`}
+                    ariaLabel={[
+                      `${c.alias} 사용 내역`,
+                      ...chips.map((chip) => chip.label),
+                      subtitle,
+                      spend != null ? `이번 달 ${formatWon(spend)}` : null,
+                      billing,
+                    ]
+                      .filter(Boolean)
+                      .join(", ")}
+                    icon={<CreditCard />}
+                    iconClassName={memberColorClass(
+                      c.ownerMemberId,
+                      memberColorById.get(c.ownerMemberId),
+                    )}
+                    title={
+                      chips.length > 0 ? (
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span className="truncate">{c.alias}</span>
+                          {chips.map((chip) => (
+                            <StatusChip key={chip.label} tone={chip.tone}>
+                              {chip.label}
+                            </StatusChip>
+                          ))}
+                        </span>
+                      ) : (
+                        c.alias
+                      )
+                    }
+                    subtitle={subtitle}
+                    value={
+                      spend != null ? (
+                        <Money amount={spend} muted={spend === 0} />
+                      ) : undefined
+                    }
+                    valueSub={billing ?? undefined}
+                  />
+                  {canManage(c) ? (
+                    <OverflowMenu
+                      label={`${c.alias} ${subtitle} 관리 메뉴`}
+                      actions={cardActions(c)}
+                      className="shrink-0"
                     />
-                    {canManage(c) ? (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="shrink-0"
-                            aria-label={`${c.alias} ${owner} ${tail} 관리 메뉴`}
-                          >
-                            <MoreHorizontal />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            disabled={updateMutation.isPending}
-                            onSelect={() => openEdit(c)}
-                          >
-                            수정
-                          </DropdownMenuItem>
-                          {canCorrectCardLast4(c, myMemberId, activeMembership?.role) ? (
-                            <DropdownMenuItem
-                              disabled={updateMutation.isPending || correction.isPending || correction.cardPending(c.id, c.householdId) || cardsQuery.isFetching}
-                              onSelect={() => setCorrecting(c)}
-                            >
-                              뒤 4자리 정정
-                            </DropdownMenuItem>
-                          ) : null}
-                          {c.status === "active" ? (
-                            <DropdownMenuItem
-                              variant="destructive"
-                              disabled={updateMutation.isPending}
-                              onSelect={() =>
-                                setConfirm({ type: "deactivate", card: c })
-                              }
-                            >
-                              비활성화
-                            </DropdownMenuItem>
-                          ) : (
-                            <DropdownMenuItem
-                              disabled={updateMutation.isPending}
-                              onSelect={() =>
-                                setConfirm({ type: "reactivate", card: c })
-                              }
-                            >
-                              다시 활성화
-                            </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {updateMutation.isError ? (
-            <p className="text-destructive mt-3 text-sm" role="alert">
-              {errorMessage(updateMutation.error, "카드를 수정하지 못했어요.")}
-            </p>
-          ) : null}
-        </CardContent>
-      </Card>
+                  ) : hasCardMenu ? (
+                    <span aria-hidden="true" className="size-11 shrink-0" />
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {/* 주 CTA — 빈 상태에서는 빈 상태 안의 CTA 하나만 노출 */}
+        {!isEmpty ? (
+          <Button
+            type="button"
+            size="lg"
+            className="mt-3 w-full"
+            onClick={() => setRegisterOpen(true)}
+          >
+            <Plus /> 카드 등록
+          </Button>
+        ) : null}
+      </section>
 
-      {/* 주 CTA — 빈 상태에서는 빈 상태 안의 CTA 하나만 노출 */}
-      {!isEmpty ? (
-        <Button
-          type="button"
-          size="lg"
-          className="w-full"
-          onClick={() => setRegisterOpen(true)}
-        >
-          <Plus /> 카드 등록
-        </Button>
-      ) : null}
-
-      {/* 등록 Dialog */}
+      {/* 뒤 4자리 정정 — 행 메뉴 또는 수정 창의 '정정'에서 연다(수정 창 위에 겹쳐 열린다). */}
       {correcting && correcting.householdId === householdId && canCorrectCardLast4(correcting, myMemberId, activeMembership?.role) ? (
         <CardLast4CorrectionDialog
           key={`${householdId}:${correcting.id}`}
@@ -569,6 +627,8 @@ export default function CardsPage() {
           onClose={() => setCorrecting(null)}
         />
       ) : null}
+
+      {/* 등록 Dialog */}
       <Dialog open={registerOpen} onOpenChange={setRegisterOpen}>
         <DialogContent>
           <DialogHeader>
@@ -581,7 +641,7 @@ export default function CardsPage() {
             <div className="flex flex-col gap-2">
               <Label htmlFor="card-issuer">카드사</Label>
               <Select value={issuer} onValueChange={setIssuer}>
-                <SelectTrigger id="card-issuer" className="w-full">
+                <SelectTrigger id="card-issuer" className="min-h-12 w-full">
                   <SelectValue placeholder="카드사를 선택하세요" />
                 </SelectTrigger>
                 <SelectContent>
@@ -616,8 +676,8 @@ export default function CardsPage() {
                 onChange={setOwnerMemberId}
                 colorClassOf={ownerColorClass}
               />
-              <p className="text-muted-foreground text-[13px]">
-                같은 카드 상품을 각자 사용한다면 소유자와 뒤 4자리를 각각 등록해 주세요.
+              <p className="text-muted-foreground text-caption">
+                같은 카드 상품을 각자 쓰면 소유자와 뒤 4자리를 각각 등록해 주세요.
               </p>
             </div>
 
@@ -636,16 +696,16 @@ export default function CardsPage() {
                 }
               />
               {maskedTail.length > 0 && maskedTail.length < 4 ? (
-                <p className="text-muted-foreground text-[13px]">
+                <p className="text-muted-foreground text-caption">
                   숫자 4자리를 모두 입력해 주세요.
                 </p>
               ) : maskedTail.length === 0 ? (
-                <p className="text-muted-foreground text-[13px]">
-                  카드 식별에 사용해요. 등록하지 않으면 다른 카드와 구분하지 못할 수 있어요.
+                <p className="text-muted-foreground text-caption">
+                  적지 않으면 다른 카드와 구분하지 못할 수 있어요.
                 </p>
               ) : duplicateTail ? (
-                <p className="text-warning-strong text-[13px]">
-                  뒤 4자리가 같은 카드가 있어요. 소유자를 확인해 주세요. 구분이 안 되는 문자는 자동 연결하지 않아요.
+                <p className="text-warning-strong text-caption">
+                  뒤 4자리가 같은 카드가 있으니 소유자를 꼭 확인해 주세요.
                 </p>
               ) : null}
             </div>
@@ -656,7 +716,7 @@ export default function CardsPage() {
                 value={visibility}
                 onValueChange={(v) => setVisibility(v as CardVisibility)}
               >
-                <SelectTrigger id="card-visibility" className="w-full">
+                <SelectTrigger id="card-visibility" className="min-h-12 w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -668,20 +728,19 @@ export default function CardsPage() {
                 </SelectContent>
               </Select>
               {selectedVisibility ? (
-                <p className="text-muted-foreground text-[13px]">
-                  {selectedVisibility.description} 앞으로 들어올 거래에
-                  적용되며, 나중에 바꿔도 기존 거래엔 반영되지 않아요.
+                <p className="text-muted-foreground text-caption">
+                  {selectedVisibility.description}
                 </p>
               ) : null}
             </div>
 
             {formError ? (
-              <p className="text-destructive text-sm" role="alert">
+              <p className="text-destructive text-caption" role="alert">
                 {formError}
               </p>
             ) : null}
             {createMutation.isError ? (
-              <p className="text-destructive text-sm" role="alert">
+              <p className="text-destructive text-caption" role="alert">
                 {errorMessage(createMutation.error, "카드를 등록하지 못했어요.")}
               </p>
             ) : null}
@@ -699,7 +758,7 @@ export default function CardsPage() {
                 className="h-11 w-full"
                 onClick={() => setRegisterOpen(false)}
               >
-                다음에 할게요
+                닫기
               </Button>
             </DialogFooter>
           </form>
@@ -711,8 +770,27 @@ export default function CardsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>카드 수정</DialogTitle>
+            {/* 뒤 4자리는 일반 수정이 아니라 전용 정정 흐름으로만 바꾼다(낙관적 확인 필요). */}
             <DialogDescription>
-              별칭·소유자·공동사용 여부·결제일을 바꿀 수 있어요. 뒤 4자리는 카드 관리 메뉴의 ‘뒤 4자리 정정’에서 따로 확인해 주세요.
+              {editingCard ? (
+                <>
+                  {editingCard.issuer}{" "}
+                  {editTail ? `•••• ${editTail}` : "뒤 4자리 미등록"}
+                  {canCorrect(editingCard) ? (
+                    <>
+                      {" · "}
+                      <button
+                        type="button"
+                        className="text-primary -my-2 inline-block py-2 font-semibold disabled:opacity-40"
+                        disabled={correctionBusy(editingCard)}
+                        onClick={() => setCorrecting(editingCard)}
+                      >
+                        정정
+                      </button>
+                    </>
+                  ) : null}
+                </>
+              ) : null}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onEditSubmit} className="flex flex-col gap-4" noValidate>
@@ -731,13 +809,13 @@ export default function CardsPage() {
               <Label htmlFor="edit-owner">소유자</Label>
               <OwnerSelect
                 id="edit-owner"
-                members={ownerOptions}
+                members={editOwnerOptions}
                 value={editOwnerMemberId}
                 onChange={setEditOwnerMemberId}
                 colorClassOf={ownerColorClass}
               />
-              <p className="text-muted-foreground text-[13px]">
-                카드 소유자와 거래에 기록된 구성원은 별도예요. 거래가 다른 사람으로 보이면 연결 카드도 확인해 주세요.
+              <p className="text-muted-foreground text-caption">
+                소유자를 바꿔도 거래에 기록된 구성원은 그대로예요.
               </p>
             </div>
             <div className="flex flex-col gap-2">
@@ -746,7 +824,7 @@ export default function CardsPage() {
                 value={editVisibility}
                 onValueChange={(v) => setEditVisibility(v as CardVisibility)}
               >
-                <SelectTrigger id="edit-visibility" className="w-full">
+                <SelectTrigger id="edit-visibility" className="min-h-12 w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -757,7 +835,7 @@ export default function CardsPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-muted-foreground text-[13px]">
+              <p className="text-muted-foreground text-caption">
                 공개 범위 변경은 앞으로 들어올 거래에만 적용돼요.
               </p>
             </div>
@@ -776,10 +854,10 @@ export default function CardsPage() {
                 집계가 카드 플래그를 읽기 때문이다 — 그래서 켜고 끄는 것으로 되돌린다.
                 사용자가 "앞으로만 적용되겠지"라고 오해하지 않게 그 차이를 적는다.
               */}
-              <p className="text-muted-foreground text-[13px]">
+              <p className="text-muted-foreground text-caption">
                 {editVisibility === "private"
                   ? "나만 보기 카드는 함께 쓰는 카드로 표시할 수 없어요."
-                  : "구성원별 지출에서 이 카드 결제를 '공용'으로 묶어요. 지난 달 기록에도 바로 적용되고, 끄면 되돌아가요."}
+                  : "구성원별 지출에서 이 카드 결제를 지난 기록까지 '공용'으로 묶어요."}
               </p>
             </div>
             <div className="flex flex-col gap-2">
@@ -788,7 +866,7 @@ export default function CardsPage() {
                 value={editBillingDay === "" ? "none" : editBillingDay}
                 onValueChange={(v) => setEditBillingDay(v === "none" ? "" : v)}
               >
-                <SelectTrigger id="edit-billing-day" className="w-full">
+                <SelectTrigger id="edit-billing-day" className="min-h-12 w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -801,16 +879,16 @@ export default function CardsPage() {
                 </SelectContent>
               </Select>
               <p className="text-muted-foreground text-caption">
-                홈의 &lsquo;다가오는 지출&rsquo;에 결제일과 지난달 사용액을 보여줘요. 청구 금액은 카드사 이용기간에 따라 달라요.
+                홈 &lsquo;다가오는 지출&rsquo;에 결제일과 지난달 사용액(실제 청구액과 다를 수 있음)을 보여줘요.
               </p>
             </div>
             {editError ? (
-              <p className="text-destructive text-sm" role="alert">
+              <p className="text-destructive text-caption" role="alert">
                 {editError}
               </p>
             ) : null}
             {updateMutation.isError ? (
-              <p className="text-destructive text-sm" role="alert">
+              <p className="text-destructive text-caption" role="alert">
                 {errorMessage(updateMutation.error, "카드를 수정하지 못했어요.")}
               </p>
             ) : null}
@@ -828,44 +906,40 @@ export default function CardsPage() {
                 className="h-11 w-full"
                 onClick={() => setEditing(null)}
               >
-                취소
+                닫기
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
-      {/* 상태 전환 확인 */}
-      <AlertDialog
-        open={confirm !== null}
-        onOpenChange={(o) => !o && setConfirm(null)}
-      >
+      {/* 비활성화 확인 — 메뉴(⋯)에서만 열린다. 다시 활성화는 위험하지 않아 바로 한다. */}
+      <AlertDialog open={deactivateOpen} onOpenChange={setDeactivateOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirm?.type === "deactivate"
-                ? "이 카드를 비활성화할까요?"
-                : "이 카드를 다시 활성화할까요?"}
+              {deactivating
+                ? `'${deactivating.alias}' 카드를 비활성화할까요?`
+                : "카드를 비활성화할까요?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {confirm?.type === "deactivate"
-                ? `'${confirm.card.alias}' 카드를 비활성화하면 새로 도착하는 문자가 이 카드에 더 이상 자동 연결되지 않아요. 기존 거래는 그대로 남아요.`
-                : confirm
-                  ? `'${confirm.card.alias}' 카드를 다시 활성화하면 뒤 4자리가 맞는 문자가 다시 이 카드에 연결돼요.`
-                  : ""}
+              새로 오는 문자는 이 카드에 연결하지 않고, 기존 거래는 그대로 남아요.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogCancel>닫기</AlertDialogCancel>
             <AlertDialogAction
-              onClick={runConfirm}
-              className={
-                confirm?.type === "deactivate"
-                  ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                  : undefined
-              }
+              onClick={() => {
+                if (deactivating) {
+                  statusMutation.mutate({
+                    id: deactivating.id,
+                    status: "inactive",
+                  });
+                }
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {confirm?.type === "deactivate" ? "비활성화" : "다시 활성화"}
+              비활성화
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

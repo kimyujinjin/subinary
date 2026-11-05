@@ -23,7 +23,6 @@ import { connectedAccountsKey, useConnectedAccounts } from "@/lib/connected-acco
 import { ConnectedSharingPrompt } from "@/components/connected-sharing";
 import { RefreshAllConnections } from "@/components/refresh-all-connections";
 import { useQueryClient } from "@tanstack/react-query";
-import { BankConnectionScreen } from "@/components/finance-connections/bank-screen";
 import {
   ASSET_LABELS,
   createManualSaveSession,
@@ -424,15 +423,6 @@ function ScopedAssets({
           canManage={canCreate}
           presentation="headless"
           onSnapshot={onConnections}
-        />
-      ) : null}
-      {scope === "household" && user ? (
-        <BankConnectionScreen
-          key={`bank/${user.id}/${householdId}/${canCreate}`}
-          householdId={householdId}
-          userId={user.id}
-          canManage={canCreate}
-          summary
         />
       ) : null}
       <nav className="finance-panel overflow-hidden" aria-label="자산 관리">

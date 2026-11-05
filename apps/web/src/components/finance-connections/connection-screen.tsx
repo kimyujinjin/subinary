@@ -6,16 +6,15 @@ import type { FinanceConnection, FinanceConnectionList, FinanceConnectionResult 
 import { Button } from "@/components/ui/button";
 import { StatusChip } from "@/components/widgets/status-chip";
 import { FinanceLoading } from "@/components/manual-finance/shared";
-import { PageBackHeader } from "@/components/widgets/page-back-header";
 import { useAuth } from "@/lib/auth-context";
 import { financeConnectionsApi, useOwnedFinanceConnections } from "@/lib/finance-connections-client";
 import { ConnectionCard } from "./connection-card";
 import { ConnectionRegistrationForm, type ConnectionCredentials } from "./registration-form";
-import { AssetConnectionsSummary } from "./asset-connections-summary";
-import { canRefreshOnOpen, connectionFailureMessage, connectionFailureStatus, createConnectionSession, reconcileConnectionOperation, registrationFormVisible, type ConnectionOperation } from "./model";
+import { canRefreshOnOpen, connectionFailureMessage, connectionFailureStatus, connectionListDuringRead, createConnectionSession, reconcileConnectionOperation, registrationFormVisible, type ConnectionOperation } from "./model";
 
 /** headless 모드에서 부모(자산 목록)가 받는 값. 읽기·권한 확인·열 때 조회는 여전히 이 화면이 소유한다. */
 export interface ConnectionSnapshot {
+  /** 확인이 끝난 목록. 다시 읽거나 새로 조회하는 동안(busy)은 null이다 — 부모는 새 값이 왔을 때만 반응하면 된다. */
   data: FinanceConnectionList | null;
   loading: boolean;
   busy: boolean;
@@ -23,8 +22,9 @@ export interface ConnectionSnapshot {
   uncertainId: string | null;
 }
 
-export function ConnectionScreen({ householdId, userId, canManage, presentation = "full", onSnapshot }: {
-  householdId: string; userId: string; canManage: boolean; presentation?: "full" | "asset-summary" | "embedded" | "headless";
+/** `embedded`는 기관 상세(토스증권) 본문, `headless`는 자산 화면이 열 때 조회만 맡기는 모드다. */
+export function ConnectionScreen({ householdId, userId, canManage, presentation = "embedded", onSnapshot }: {
+  householdId: string; userId: string; canManage: boolean; presentation?: "embedded" | "headless";
   onSnapshot?: (snapshot: ConnectionSnapshot) => void;
 }) {
   const { authedFetch } = useAuth();
@@ -39,17 +39,15 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
   const firstRead = useRef(true);
 
   const beforeRead = useCallback(() => {
-    // Invalidation must discard visible values immediately, even if the GET fails offline.
-    // 열린 등록 폼은 닫지 않는다 — 읽는 동안 비활성화하고, 결과가 등록을 막을 때만 닫는다(registrationFormVisible).
+    // 목록·안내·열린 등록 폼은 그대로 둔다 — 읽는 동안에는 쓰기만 막고(busy), 읽기가 실패하면 그때
+    // 비운다(connectionListDuringRead·registrationFormVisible). 진행 중이던 요청은 결과 미확인으로 남긴다.
     if (activeOperation.current) {
       uncertainRef.current = activeOperation.current;
       setUncertain(activeOperation.current);
     }
     activeOperation.current = null;
     session.invalidate();
-    setData(null);
     setBusy(true);
-    setNotice(null);
   }, [session]);
   const owned = useOwnedFinanceConnections(householdId, userId, beforeRead);
 
@@ -93,24 +91,25 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
   }, [authedFetch, canManage, householdId, owned.reread, session, userId]);
 
   useEffect(() => {
-    if (owned.isFetching || owned.isPending) return;
+    const list = owned.error ? undefined : owned.data;
+    const reading = owned.isFetching || owned.isPending;
+    setData((last) => connectionListDuringRead(last, { reading, failed: !list, data: list ?? null }));
+    if (reading) return;
     const opening = firstRead.current;
     firstRead.current = false;
-    if (owned.error || !owned.data) {
-      setData(null);
+    if (!list) {
       setShowForm(false);
       setNotice(connectionFailureMessage(owned.error));
       setBusy(false);
       return;
     }
-    const next = reconcileConnectionOperation(uncertainRef.current, owned.data.items);
+    const next = reconcileConnectionOperation(uncertainRef.current, list.items);
     uncertainRef.current = next;
     setUncertain(next);
-    setData(owned.data);
-    if (!owned.data.enabled || next) setShowForm(false);
+    if (!list.enabled || next) setShowForm(false);
     setNotice(next ? "아직 요청 결과를 확인하지 못했어요. 연결 상태를 다시 확인해 주세요. 새로 연결하지 않아도 돼요." : null);
     setBusy(false);
-    if (opening && !next) void refreshOnOpening(owned.data);
+    if (opening && !next) void refreshOnOpening(list);
   }, [owned.data, owned.dataUpdatedAt, owned.error, owned.isFetching, owned.isPending, refreshOnOpening]);
   useEffect(() => () => { session.invalidate(); }, [session]);
 
@@ -177,20 +176,18 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
         householdId, expectedVersion: item.version,
       }, userId, signal)));
   }
-  const snapshotLoading = !data && (busy || owned.isPending);
+  const settled = busy ? null : data;
+  const snapshotLoading = !settled && (busy || owned.isPending);
   const uncertainId = uncertain?.id ?? null;
   useEffect(() => {
-    if (presentation === "headless") onSnapshot?.({ data, loading: snapshotLoading, busy, notice, uncertainId });
-  }, [presentation, onSnapshot, data, snapshotLoading, busy, notice, uncertainId]);
+    if (presentation === "headless") onSnapshot?.({ data: settled, loading: snapshotLoading, busy, notice, uncertainId });
+  }, [presentation, onSnapshot, settled, snapshotLoading, busy, notice, uncertainId]);
   if (presentation === "headless") return null;
   const items = data?.items.filter((item) => item.status !== "disconnected") ?? [];
   const pendingRegistration = items.some((item) => item.status === "connecting");
-  if (presentation === "asset-summary") return <AssetConnectionsSummary data={data} busy={busy}
-    loading={!data && (busy || owned.isPending)} notice={notice} uncertainId={uncertain?.id ?? null} />;
   const reread = <Button variant="weak" size="sm" disabled={busy || owned.isFetching} onClick={() => { void owned.reread(); }}>{busy ? "확인 중…" : "다시 확인"}</Button>;
   return (
-    <div className="mx-auto flex w-full max-w-2xl min-w-0 flex-col gap-5 pb-8">
-      {presentation !== "embedded" ? <PageBackHeader title="연결 관리" backHref="/more" /> : null}
+    <div className="flex min-w-0 flex-col gap-5">
       {notice ? <section role="alert" className="flex items-center justify-between gap-3">
         <p className="text-caption text-muted-foreground">{notice}{uncertain ? " 결과가 확인될 때까지 새 요청은 보내지 않아요." : ""}</p>
         {reread}
@@ -199,7 +196,7 @@ export function ConnectionScreen({ householdId, userId, canManage, presentation 
       {data && !data.enabled ? <section role="status" className="finance-panel flex items-center justify-between gap-3 p-5">
         <div className="min-w-0">
           <h2 className="text-heading">연결 준비 중이에요</h2>
-          <p className="text-caption text-muted-foreground mt-1">운영자 설정이 끝나면 연결할 수 있어요.</p>
+          <p className="text-caption text-muted-foreground mt-1">준비가 끝나면 여기서 연결할 수 있어요.</p>
         </div>
         <StatusChip tone="pending">준비 중</StatusChip>
       </section> : null}

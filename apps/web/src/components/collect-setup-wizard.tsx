@@ -12,12 +12,13 @@
  *   3) 첫 문자 대기 — firstEventAt이 생기면 자동으로 성공 화면.
  *
  * 왜 '연결 테스트'와 '첫 문자'를 나누는가: 인증 성공(lastSeenAt)과 문자 수신
- * (firstEventAt)은 **다른 실패**다. 둘을 한 덩어리로 보여주면 사용자는 토큰을
+ * (firstEventAt)은 **다른 실패**다. 둘을 한 덩어리로 보여주면 사용자는 연결 열쇠를
  * 계속 다시 넣으며 엉뚱한 곳을 고친다. 60초가 지나도 문자가 없으면 Signal Doctor가
  * 지금 관측된 신호로 원인을 하나로 좁힌다(device-signal.ts).
  *
- * 보안: collect token은 Bearer 자격증명이라 등록/회전 응답에서 **한 번만** 나온다.
- * 화면을 닫으면 복구가 불가능(재발급만 가능)하므로 그 사실을 계속 보이게 둔다.
+ * 보안: 연결 열쇠(collect token)는 Bearer 자격증명이라 등록/회전 응답에서 **한 번만**
+ * 나온다. 화면을 닫으면 복구가 불가능(재발급만 가능)하므로 그 사실을 계속 보이게 둔다.
+ * 서명용 값(HMAC secret 등)은 화면에 내지 않는다 — 연결 열쇠만으로 수집이 동작한다.
  * ------------------------------------------------------------------------- */
 import {
   ArrowLeft,
@@ -53,7 +54,7 @@ import { FIRST_EVENT_WAIT_MS, diagnoseDeviceSignal } from "@/lib/device-signal";
 import { formatDate } from "@/lib/format";
 import { useDevices } from "@/lib/queries";
 
-/** 첫 문자 대기 중 장치 목록을 다시 읽는 주기. */
+/** 첫 문자 대기 중 기기 목록을 다시 읽는 주기. */
 const WAIT_POLL_MS = 5_000;
 
 type WizardStep = 1 | 2 | 3;
@@ -61,22 +62,24 @@ type WizardStep = 1 | 2 | 3;
 interface CollectSetupWizardProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** 설정 대상 장치(목록에서 온 최신 신호). */
+  /** 설정 대상 기기(목록에서 온 최신 신호). */
   device: DeviceSummary;
   /**
-   * 방금 등록/재발급해서 **딱 한 번** 받은 자격증명. 나중에 '설정 계속하기'로
-   * 들어오면 null이다 — 그때는 토큰을 다시 보여줄 수 없고 재발급만 가능하다.
+   * 방금 등록/재발급해서 **딱 한 번** 받은 연결 열쇠. 나중에 '설정 계속하기'로
+   * 들어오면 null이다 — 그때는 열쇠를 다시 보여줄 수 없고 재발급만 가능하다.
    */
   issued: DeviceSecretResponse | null;
   /**
-   * 토큰을 잃어버렸을 때 재발급(rotate) 시키기.
+   * 열쇠를 잃어버렸을 때 재발급(rotate) 시키기.
    *
-   * **재발급 권한이 없으면 넘기지 않는다**(undefined) — 서버가 owner 또는 장치를
+   * **재발급 권한이 없으면 넘기지 않는다**(undefined) — 서버가 owner 또는 기기를
    * 등록한 본인만 통과시키므로, 그 밖의 구성원에게 버튼을 보여 주면 누를 때마다
    * 실패한다(lib/device-permission.ts).
    */
   onReissue?: () => void;
   reissuePending?: boolean;
+  /** 재발급 실패 문구. 마법사가 화면을 덮고 있으므로 페이지가 아니라 여기서 보여 준다. */
+  reissueError?: string | null;
   /**
    * 열릴 때 시작할 단계. 재발급·설정 이어가기로 들어오면 앱은 이미 깔려 있으므로
    * 2단계부터 시작한다 — 이미 한 일을 다시 시키면 사용자는 화면을 닫는다.
@@ -88,12 +91,10 @@ interface CollectSetupWizardProps {
 function SettingRow({ entry }: { entry: SetupEntry }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-muted-foreground text-xs">{entry.label}</span>
-      <code className="font-mono text-xs break-all">{entry.value}</code>
+      <span className="text-caption text-muted-foreground">{entry.label}</span>
+      <code className="text-caption font-mono break-all">{entry.value}</code>
       {entry.note ? (
-        <span className="text-muted-foreground text-[11px] leading-relaxed">
-          {entry.note}
-        </span>
+        <span className="text-micro text-muted-foreground">{entry.note}</span>
       ) : null}
     </div>
   );
@@ -106,6 +107,7 @@ export function CollectSetupWizard({
   issued,
   onReissue,
   reissuePending = false,
+  reissueError = null,
   initialStep = 1,
 }: CollectSetupWizardProps) {
   const [step, setStep] = useState<WizardStep>(initialStep);
@@ -129,9 +131,9 @@ export function CollectSetupWizard({
     () =>
       buildCollectSetup({
         platform: device.platform,
-        // 토큰이 없는 '이어가기' 모드에서도 절차는 보여줘야 한다. 값 자리에는
-        // 실제 토큰 대신 무엇을 넣어야 하는지를 적는다(추측 값을 인쇄하지 않는다).
-        collectToken: collectToken ?? "(등록할 때 받은 수집 토큰)",
+        // 열쇠가 없는 '이어가기' 모드에서도 절차는 보여줘야 한다. 값 자리에는
+        // 실제 열쇠 대신 무엇을 넣어야 하는지를 적는다(추측 값을 인쇄하지 않는다).
+        collectToken: collectToken ?? "(등록할 때 받은 연결 열쇠)",
         apiBaseUrl: API_BASE_URL,
         deviceName: device.name,
       }),
@@ -143,7 +145,7 @@ export function CollectSetupWizard({
   const waiting = open && step === 3 && device.firstEventAt == null;
   useDevices({ refetchInterval: waiting ? WAIT_POLL_MS : false });
 
-  // 열릴 때마다, 그리고 **토큰이 새로 발급될 때마다** 처음 상태로 되돌린다.
+  // 열릴 때마다, 그리고 **열쇠가 새로 발급될 때마다** 처음 상태로 되돌린다.
   // 재발급 직후에도 '복사했어요'/'연결됐어요'가 남아 있으면 사용자는 옛 값을 이미
   // 넣었다고 믿고 그대로 나간다 — 그 순간부터 수집이 조용히 멈춘다.
   useEffect(() => {
@@ -200,7 +202,7 @@ export function CollectSetupWizard({
       setPingState("failed");
       setPingError(
         error instanceof ApiError && error.status === 401
-          ? "토큰이 맞지 않아요. 복사한 값을 다시 붙여넣어 주세요."
+          ? "연결 열쇠가 맞지 않아요. 복사한 값을 다시 붙여넣어 주세요."
           : "연결하지 못했어요. 인터넷 연결과 주소를 확인해 주세요.",
       );
     }
@@ -244,27 +246,25 @@ export function CollectSetupWizard({
             <span className="bg-accent text-accent-foreground flex size-14 items-center justify-center rounded-full">
               <CircleCheck className="size-7" />
             </span>
-            <p className="text-[15px] font-semibold">
-              첫 문자를 받았어요
-            </p>
-            <p className="text-muted-foreground text-[13px]">
+            <p className="text-body font-semibold">첫 문자를 받았어요</p>
+            <p className="text-caption text-muted-foreground">
               {formatDate(device.firstEventAt)}에 이 휴대폰에서 카드 문자가
               도착했어요. 앞으로는 따로 할 일이 없어요.
             </p>
           </div>
         ) : step === 1 ? (
           /* --- 1단계: 앱 설치 ------------------------------------------ */
-          <div className="flex flex-col gap-4 text-sm">
+          <div className="text-body flex flex-col gap-4">
             <div className="flex flex-col gap-1">
-              <p className="text-[15px] font-semibold">
+              <p className="text-body font-semibold">
                 ① {plan.appName} 앱을 준비해 주세요
               </p>
-              <p className="text-muted-foreground text-[13px]">
+              <p className="text-caption text-muted-foreground">
                 {plan.appDescription}
               </p>
             </div>
             {plan.appStoreUrl ? (
-              <Button asChild variant="tint" className="w-full">
+              <Button asChild variant="weak" className="w-full">
                 <a
                   href={plan.appStoreUrl}
                   target="_blank"
@@ -274,47 +274,47 @@ export function CollectSetupWizard({
                 </a>
               </Button>
             ) : null}
-            <div className="bg-muted flex flex-col gap-2 rounded-lg p-3 text-[13px]">
+            <div className="bg-muted text-caption flex flex-col gap-2 rounded-control p-3">
               <span className="font-medium">앱에서 만들 것</span>
               <span className="text-muted-foreground">{plan.triggerSummary}</span>
               <span className="text-muted-foreground">{plan.actionSummary}</span>
-              <span className="text-muted-foreground text-[11px]">
+              <span className="text-micro text-muted-foreground">
                 메뉴 이름은 앱 버전에 따라 조금씩 달라요. 비슷한 이름을 찾으면 돼요.
               </span>
             </div>
           </div>
         ) : step === 2 ? (
           /* --- 2단계: 설정 복사 ---------------------------------------- */
-          <div className="flex flex-col gap-4 text-sm">
+          <div className="text-body flex flex-col gap-4">
             <div className="flex flex-col gap-1">
-              <p className="text-[15px] font-semibold">
+              <p className="text-body font-semibold">
                 ② 아래 설정을 그대로 옮겨 적어 주세요
               </p>
-              <p className="text-muted-foreground text-[13px]">
+              <p className="text-caption text-muted-foreground">
                 {plan.actionSummary}
               </p>
             </div>
 
             {collectToken ? (
               <p
-                className="text-destructive flex items-start gap-1.5 text-[13px] font-medium"
+                className="text-caption text-destructive flex items-start gap-1.5 font-medium"
                 role="alert"
               >
                 <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-                이 화면을 닫으면 열쇠 값을 다시 볼 수 없어요. 먼저 복사해 주세요.
+                이 화면을 닫으면 연결 열쇠를 다시 볼 수 없으니 먼저 복사해 주세요.
               </p>
             ) : (
-              <div className="bg-muted flex flex-col gap-2 rounded-lg p-3">
-                <p className="text-[13px]">
-                  열쇠 값은 등록할 때 한 번만 보여드려요.{" "}
+              <div className="bg-muted flex flex-col gap-2 rounded-control p-3">
+                <p className="text-caption">
+                  연결 열쇠는 등록할 때 한 번만 보여드려요.{" "}
                   {onReissue
                     ? "적어둔 값이 없다면 새로 발급받아 다시 넣어 주세요."
-                    : "적어둔 값이 없다면 이 장치를 등록한 사람이나 가족의 소유자가 새로 발급해 줄 수 있어요."}
+                    : "적어둔 값이 없다면 이 기기를 등록한 사람이나 가족의 소유자가 새로 발급해 줄 수 있어요."}
                 </p>
                 {onReissue ? (
                   <Button
                     type="button"
-                    variant="outline"
+                    variant="weak"
                     size="sm"
                     onClick={onReissue}
                     disabled={reissuePending}
@@ -323,15 +323,20 @@ export function CollectSetupWizard({
                     {reissuePending ? "발급 중…" : "새로 발급받기"}
                   </Button>
                 ) : null}
+                {reissueError ? (
+                  <p className="text-caption text-destructive" role="alert">
+                    {reissueError}
+                  </p>
+                ) : null}
               </div>
             )}
 
-            <div className="bg-muted flex flex-col gap-3 rounded-lg p-3">
+            <div className="bg-muted flex flex-col gap-3 rounded-control p-3">
               <div className="flex flex-col gap-1">
-                <span className="text-muted-foreground text-xs">
+                <span className="text-caption text-muted-foreground">
                   요청 방식 · 주소
                 </span>
-                <code className="font-mono text-xs break-all">
+                <code className="text-caption font-mono break-all">
                   {plan.method} {plan.endpoint}
                 </code>
               </div>
@@ -339,10 +344,10 @@ export function CollectSetupWizard({
                 <SettingRow key={header.label} entry={header} />
               ))}
               <div className="flex flex-col gap-1">
-                <span className="text-muted-foreground text-xs">
+                <span className="text-caption text-muted-foreground">
                   {plan.bodyLabel}
                 </span>
-                <code className="font-mono text-xs break-all whitespace-pre-wrap">
+                <code className="text-caption font-mono break-all whitespace-pre-wrap">
                   {plan.body}
                 </code>
               </div>
@@ -351,7 +356,7 @@ export function CollectSetupWizard({
               ))}
             </div>
 
-            <Button type="button" variant="tint" className="w-full" onClick={copyAll}>
+            <Button type="button" variant="weak" className="w-full" onClick={copyAll}>
               {copied ? (
                 <>
                   <Check /> 복사했어요
@@ -363,18 +368,18 @@ export function CollectSetupWizard({
               )}
             </Button>
             {copyFailed ? (
-              <p className="text-destructive text-[13px]" role="alert">
+              <p className="text-caption text-destructive" role="alert">
                 복사하지 못했어요. 위 값을 직접 눌러 선택해 복사해 주세요.
               </p>
             ) : null}
 
-            <div className="bg-muted/60 flex flex-col gap-1 rounded-lg p-3 text-[13px]">
+            <div className="bg-muted/60 text-caption flex flex-col gap-1 rounded-control p-3">
               <span className="font-medium">문자를 구분하는 값</span>
               <span className="text-muted-foreground">{plan.eventIdHint}</span>
             </div>
 
             {plan.cautions.length > 0 ? (
-              <ul className="text-muted-foreground flex list-disc flex-col gap-1 pl-4 text-[13px]">
+              <ul className="text-caption text-muted-foreground flex list-disc flex-col gap-1 pl-4">
                 {plan.cautions.map((caution) => (
                   <li key={caution}>{caution}</li>
                 ))}
@@ -385,7 +390,7 @@ export function CollectSetupWizard({
             <div className="flex flex-col gap-2">
               <Button
                 type="button"
-                variant="outline"
+                variant="weak"
                 className="w-full"
                 onClick={runPing}
                 disabled={pingState === "pending" || !collectToken}
@@ -399,88 +404,60 @@ export function CollectSetupWizard({
                 )}
               </Button>
               {!collectToken ? (
-                <p className="text-muted-foreground text-[13px]">
-                  연결 테스트는 열쇠 값이 있어야 할 수 있어요.
+                <p className="text-caption text-muted-foreground">
+                  연결 테스트는 연결 열쇠가 있어야 할 수 있어요.
                 </p>
               ) : pingState === "ok" ? (
-                <p className="text-[13px] font-medium text-emerald-600 dark:text-emerald-400">
+                <p className="text-caption text-success-strong font-medium">
                   연결됐어요. 이제 문자만 들어오면 돼요.
                 </p>
               ) : pingState === "failed" ? (
-                <p className="text-destructive text-[13px]" role="alert">
+                <p className="text-caption text-destructive" role="alert">
                   {pingError}
                 </p>
               ) : (
-                <p className="text-muted-foreground text-[13px]">
-                  문자 없이 열쇠 값이 맞는지만 먼저 확인해 볼 수 있어요.
+                <p className="text-caption text-muted-foreground">
+                  문자 없이 연결 열쇠가 맞는지만 먼저 확인해 볼 수 있어요.
                 </p>
               )}
             </div>
-
-            {/* 개발자용 고급 설정 — 기본 접힘. 1단계 화면에는 절대 노출하지 않는다. */}
-            {issued ? (
-              <details className="border-border rounded-lg border p-3">
-                <summary className="cursor-pointer text-[13px] font-medium">
-                  개발자용 고급 설정 (HMAC 서명)
-                </summary>
-                <div className="mt-3 flex flex-col gap-3">
-                  <p className="text-muted-foreground text-[11px]">
-                    서명을 직접 계산하는 앱을 쓸 때만 필요해요. 위 설정만으로도
-                    수집은 동작합니다.
-                  </p>
-                  <SettingRow
-                    entry={{ label: "deviceId", value: issued.deviceId }}
-                  />
-                  <SettingRow entry={{ label: "secret", value: issued.secret }} />
-                  <SettingRow
-                    entry={{ label: "algorithm", value: issued.algorithm }}
-                  />
-                  <SettingRow
-                    entry={{
-                      label: "signingRecipe",
-                      value: issued.signingRecipe,
-                    }}
-                  />
-                </div>
-              </details>
-            ) : null}
           </div>
         ) : (
           /* --- 3단계: 첫 문자 대기 ------------------------------------- */
-          <div className="flex flex-col gap-4 text-sm">
+          <div className="text-body flex flex-col gap-4">
             <div className="flex flex-col gap-1">
-              <p className="text-[15px] font-semibold">
+              <p className="text-body font-semibold">
                 ③ 카드로 한 번 결제해 보세요
               </p>
-              <p className="text-muted-foreground text-[13px]">
+              <p className="text-caption text-muted-foreground">
                 카드사에서 온 결제 문자가 이 휴대폰에 도착하면 자동으로 알아채요.
               </p>
             </div>
 
-            <div className="bg-muted flex items-center gap-3 rounded-lg p-4">
+            <div className="bg-muted flex items-center gap-3 rounded-control p-4">
               <LoaderCircle className="text-muted-foreground size-5 shrink-0 animate-spin" />
-              <span className="text-[13px]">첫 문자를 기다리고 있어요…</span>
+              <span className="text-caption">첫 문자를 기다리고 있어요…</span>
             </div>
 
             {device.lastSeenAt ? (
-              <p className="text-muted-foreground text-[13px]">
+              <p className="text-caption text-muted-foreground">
                 연결 확인 {formatDate(device.lastSeenAt)}
               </p>
             ) : null}
 
             {/* Signal Doctor — 60초가 지나도 안 오면 관측된 신호로 원인을 좁힌다. */}
             {waitedEnough ? (
-              <div className="border-border flex flex-col gap-2 rounded-lg border p-3">
+              <div className="bg-muted/60 flex flex-col gap-2 rounded-control p-3">
                 <div className="flex items-center gap-2">
                   <Stethoscope className="size-4 shrink-0" />
-                  <span className="text-[13px] font-semibold">
+                  <span className="text-caption font-semibold">
                     {diagnosis.title}
                   </span>
                 </div>
-                <p className="text-muted-foreground text-[13px]">
+                <p className="text-caption text-muted-foreground">
                   {diagnosis.detail}
                 </p>
-                <ul className="text-muted-foreground flex list-disc flex-col gap-1 pl-4 text-[13px]">
+                <ul className="text-caption text-muted-foreground flex list-disc flex-col gap-1 pl-4">
                   {diagnosis.hints.map((hint) => (
                     <li key={hint}>{hint}</li>
                   ))}

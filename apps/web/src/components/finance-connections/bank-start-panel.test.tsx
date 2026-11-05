@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { MacBankJob } from "@family/contracts";
-import { BankMacJob, BankStartPanel } from "./bank-start-panel";
+import type { MacBankJob, MacBankRunnerState } from "@family/contracts";
+import { BankMacJob, BankStartPanel, firstConnectionSteps } from "./bank-start-panel";
 
 const search = vi.hoisted(() => ({ value: "" }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(search.value) }));
@@ -50,5 +50,34 @@ describe("모아 버튼에서 Mac 자동 실행 상태 표시", () => {
     const job: MacBankJob = { ...fixture, state: "succeeded", logoutConfirmed: true, observations: [{ formatVersion: 1, provider: "shinhan", source: "browser_assisted", origin: "https://bank.shinhan.com", pageKind: "deposit_account_list", capturedAt: fixture.createdAt, accountFingerprint: "a".repeat(64), accountLast4: "1234", currency: "KRW", balanceKind: "ledger", balanceKrw: "0", bankAsOfDate: null }] };
     const html = renderToStaticMarkup(<BankMacJob job={job} />);
     expect(html).toContain("모아에 저장 완료"); expect(html).toContain("0원"); expect(html).toContain("끝 1234"); expect(html).toContain("자산 합계에 반영돼요"); expect(html).not.toContain("a".repeat(64));
+  });
+});
+
+describe("처음 연결 3단계 안내", () => {
+  const none: MacBankRunnerState = { runner: null, job: null, previousResult: null, credentials: null, credentialStorageAvailable: true };
+  const runner = { id: fixture.runnerId, label: "이 Mac", online: true, lastSeenAt: fixture.createdAt, expiresAt: null };
+  const stored = { stored: true, runnerId: fixture.runnerId, version: 1, updatedAt: fixture.createdAt };
+  const current = (state: MacBankRunnerState) => firstConnectionSteps(state)?.findIndex((step) => !step.done);
+  it("Mac이 없으면 막다른 안내 대신 1) Mac 연결 2) 로그인 정보 3) 첫 조회를 보여 준다", () => {
+    expect(firstConnectionSteps(none)?.map((step) => step.label)).toEqual(["Mac 연결", "로그인 정보", "첫 조회"]);
+    expect(current(none)).toBe(0);
+  });
+  it("서버 상태만으로 다음 단계로 넘어간다", () => {
+    expect(current({ ...none, runner })).toBe(1);
+    expect(current({ ...none, runner, credentials: stored })).toBe(2);
+    expect(current({ ...none, runner, credentials: stored, job: { ...fixture, state: "running" } })).toBe(2);
+  });
+  it("한 번이라도 조회에 성공했으면 안내를 그리지 않는다", () => {
+    expect(firstConnectionSteps({ ...none, runner, credentials: stored, job: { ...fixture, state: "succeeded" } })).toBeNull();
+  });
+  it("Mac 연결을 해제했으면 이전 조회가 있어도 다시 1단계부터 안내한다", () => {
+    const previousResult = { jobId: fixture.id, completedAt: fixture.createdAt, observations: [{ formatVersion: 1 as const, provider: "shinhan" as const, source: "browser_assisted" as const, origin: "https://bank.shinhan.com" as const, pageKind: "deposit_account_list" as const, capturedAt: fixture.createdAt, accountFingerprint: "a".repeat(64), accountLast4: "1234", currency: "KRW" as const, balanceKind: "ledger" as const, balanceKrw: "0", bankAsOfDate: null }] };
+    expect(current({ ...none, previousResult })).toBe(0);
+  });
+  it("단계 설명은 한 문장이고 내부 용어를 쓰지 않는다", () => {
+    for (const step of firstConnectionSteps(none) ?? []) {
+      expect(step.detail.split(/(?<=[.?!])\s+/)).toHaveLength(1);
+      expect(step.detail).not.toMatch(/실행기|Codex|토큰|HMAC|secret|운영자/);
+    }
   });
 });

@@ -11,6 +11,7 @@ import type { DeviceSummary } from "@family/contracts";
 
 import {
   COLLECTION_GAP_HOURS,
+  deviceSignalChip,
   diagnoseDeviceSignal,
   isSetupComplete,
 } from "./device-signal";
@@ -105,5 +106,19 @@ describe("isSetupComplete", () => {
   it("문자를 한 번이라도 받아야 완주다(인증만으로는 아니다)", () => {
     expect(isSetupComplete(device({ lastSeenAt: hoursAgo(1) }))).toBe(false);
     expect(isSetupComplete(device({ firstEventAt: hoursAgo(1) }))).toBe(true);
+  });
+});
+
+describe("deviceSignalChip", () => {
+  const received = { lastSeenAt: hoursAgo(0.1), firstEventAt: hoursAgo(200) };
+  it("받다가 공백 임계를 넘기면 '끊김' — 인증이 계속 성공해도 정상으로 보이지 않는다", () => {
+    expect(deviceSignalChip(device({ ...received, lastEventAt: hoursAgo(COLLECTION_GAP_HOURS + 1) }), NOW)).toBe("끊김");
+  });
+  it("최근에 받았으면 칩을 그리지 않는다", () => {
+    expect(deviceSignalChip(device({ ...received, lastEventAt: hoursAgo(COLLECTION_GAP_HOURS - 1) }), NOW)).toBeNull();
+  });
+  it("첫 문자 전이면 연결 확인 여부와 상관없이 '설정 미완료'", () => {
+    expect(deviceSignalChip(device({}), NOW)).toBe("설정 미완료");
+    expect(deviceSignalChip(device({ lastSeenAt: hoursAgo(0.1) }), NOW)).toBe("설정 미완료");
   });
 });

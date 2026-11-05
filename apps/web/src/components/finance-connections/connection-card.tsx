@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { FinanceConnection } from "@family/contracts";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BottomSheet } from "@/components/widgets/bottom-sheet";
 import { OverflowMenu } from "@/components/widgets/overflow-menu";
 import { StatusChip, type ChipTone } from "@/components/widgets/status-chip";
@@ -46,13 +47,16 @@ export function ConnectionCard({ item, disabled, unconfirmed = false, canManage,
         <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); if (!disabled && item.accountOptions.some((option) => option.id === selection)) onSelect(selection); }}>
           <p className="text-body">조회할 계좌를 선택해 주세요.</p>
           {item.accountOptions.length === 0 ? <p className="text-caption text-muted-foreground">조회할 수 있는 종합매매 계좌가 없어요.</p> : null}
-          <label className="block">
-            <span className="sr-only">조회할 계좌</span>
-            <select value={selection} onChange={(event) => setSelection(event.target.value)} required disabled={disabled || !canManage || !enabled} className="text-body min-h-12 w-full min-w-0 rounded-control border bg-background px-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
-              <option value="">계좌 선택</option>
-              {item.accountOptions.map((account) => <option key={account.id} value={account.id}>{account.label}</option>)}
-            </select>
-          </label>
+          {/* 공용 Select(채움형)를 그대로 쓴다. 다시 읽는 동안(disabled)에도 고르는 칸은 막지 않는다 — 막으면 열어 둔
+              목록이 닫힌다. 제출만 막는다(고르기 전에는 제출 버튼이 꺼져 있다). */}
+          <Select value={selection} onValueChange={setSelection} disabled={!canManage || !enabled || item.accountOptions.length === 0}>
+            <SelectTrigger aria-label="조회할 계좌" className="min-h-12 w-full min-w-0 [&>[data-slot=select-value]]:min-w-0">
+              <SelectValue placeholder="계좌 선택" />
+            </SelectTrigger>
+            <SelectContent>
+              {item.accountOptions.map((account) => <SelectItem key={account.id} value={account.id}>{account.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
           <Button type="submit" size="lg" disabled={disabled || !canManage || !enabled || !selection} className="w-full">이 계좌 조회하기</Button>
         </form>
       ) : null}

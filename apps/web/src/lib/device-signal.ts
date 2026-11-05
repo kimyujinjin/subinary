@@ -77,7 +77,7 @@ export function diagnoseDeviceSignal(
       detail:
         "자동화 앱이 요청을 보내지 못했거나, 보낸 요청이 우리 서버에 닿지 못했어요.",
       hints: [
-        "주소와 토큰을 다시 붙여넣어 주세요. 한 글자만 달라도 연결되지 않아요.",
+        "주소와 연결 열쇠를 다시 붙여넣어 주세요. 한 글자만 달라도 연결되지 않아요.",
         "자동화 앱에 인터넷 사용 권한이 켜져 있는지 확인해 주세요.",
         "'연결 테스트'를 눌러 인증만 먼저 확인해 볼 수 있어요.",
       ],
@@ -118,4 +118,18 @@ export function diagnoseDeviceSignal(
     detail: "이 휴대폰에서 카드 문자가 정상적으로 들어오고 있어요.",
     hints: [],
   };
+}
+
+/**
+ * 기기 행의 상태 칩(문자 연동 화면). 정상은 칩을 그리지 않는다(§8 기본 상태 배지 없음).
+ *
+ * `끊김`은 위 판정의 stalled 그대로다 — 워커의 수집 공백 알림과 같은 36시간 기준이라, 알림이
+ * 왔는데 화면은 정상이라고 말하는 일이 없다.
+ */
+export function deviceSignalChip(
+  device: DeviceSummary,
+  now: number = Date.now(),
+): "설정 미완료" | "끊김" | null {
+  if (!isSetupComplete(device)) return "설정 미완료";
+  return diagnoseDeviceSignal(device, now).state === "stalled" ? "끊김" : null;
 }

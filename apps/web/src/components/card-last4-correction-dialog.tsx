@@ -119,14 +119,14 @@ export function CardLast4CorrectionDialog({ card, ownerLabelOf, canManage, readR
           <DialogTitle>카드 뒤 4자리 정정</DialogTitle>
           <DialogDescription className="break-words">아래 카드가 맞는지 확인해 주세요. 별칭이나 소유자는 함께 변경하지 않아요.</DialogDescription>
         </DialogHeader>
-        <dl className="bg-muted grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-2 rounded-lg p-3 text-sm">
+        <dl className="bg-muted grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-2 rounded-control p-3 text-body">
           <dt className="text-muted-foreground">소유자</dt><dd className="min-w-0 break-words">{ownerLabelOf(current)}</dd>
           <dt className="text-muted-foreground">별칭</dt><dd className="min-w-0 break-words">{current.alias}</dd>
           <dt className="text-muted-foreground">카드사</dt><dd className="min-w-0 break-words">{current.issuer}</dd>
           <dt className="text-muted-foreground">현재 뒤 4자리</dt><dd>{expected ? `•••• ${expected}` : unknownCurrent ? "형식 확인 필요" : "미등록"}</dd>
         </dl>
-        <p className="text-muted-foreground text-sm">기존 거래와 카드 소유자는 그대로 남아요. 활성 카드는 이후 새로 도착하는 문자의 자동 연결에 새 뒤 4자리를 사용해요.</p>
-        {unknownCurrent ? <p role="alert" className="text-destructive text-sm">현재 카드 식별 정보의 형식을 확인할 수 없어 정정할 수 없어요. 전체 카드번호를 입력하거나 보내지 말고 관리자에게 확인해 주세요.</p> : null}
+        <p className="text-muted-foreground text-caption">지난 거래는 그대로 두고, 앞으로 오는 문자부터 새 뒤 4자리로 연결해요.</p>
+        {unknownCurrent ? <p role="alert" className="text-destructive text-caption">지금 카드 정보를 읽을 수 없어 정정할 수 없어요. 가족 관리자에게 확인해 주세요.</p> : null}
         <form onSubmit={(event) => void submit(event)} noValidate className="flex min-w-0 flex-col gap-3" aria-busy={pending}>
           <Label htmlFor={inputId}>새 뒤 4자리</Label>
           <Input ref={input} id={inputId} type="text" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} autoComplete="off" autoCorrect="off" spellCheck={false}
@@ -149,15 +149,15 @@ export function CardLast4CorrectionDialog({ card, ownerLabelOf, canManage, readR
               if (!/^[0-9]{0,4}$/.test(event.target.value)) { rejectInput(); return; }
               setDraft(event.target.value); if (!readRequired && !readGate.current.required) setError(null); setNotice(null);
             }} />
-          <p id={`${inputId}-hint`} className="text-muted-foreground text-xs">전체 카드번호는 입력하지 마세요. 앞자리 0도 그대로 입력해 주세요.</p>
-          {error ? <p id={`${inputId}-error`} role="alert" className="text-destructive text-sm break-words">{error.message}</p> : null}
-          {readRequired && !error ? <p role="status" className="text-muted-foreground text-sm">이전 정정 결과가 아직 확인되지 않았어요. 다시 보내기 전에 현재 카드 정보를 확인해 주세요.</p> : null}
+          <p id={`${inputId}-hint`} className="text-muted-foreground text-caption">전체 카드번호 말고 뒤 4자리만, 앞자리 0도 그대로 입력해 주세요.</p>
+          {error ? <p id={`${inputId}-error`} role="alert" className="text-destructive text-caption break-words">{error.message}</p> : null}
+          {readRequired && !error ? <p role="status" className="text-muted-foreground text-caption">이전 정정 결과를 아직 확인하지 못했어요. 현재 카드 정보를 먼저 확인해 주세요.</p> : null}
           {error?.refresh || readRequired || readGate.current.required ? <Button type="button" variant="outline" className="min-h-11 h-auto whitespace-normal" disabled={pending} onClick={() => void refresh()}>현재 카드 정보 다시 확인</Button> : null}
-          {notice ? <p role="status" className="text-muted-foreground text-sm">{notice}</p> : null}
-          {pending ? <p role="status" className="text-muted-foreground text-sm">{phase === "saving" || attemptPending ? "정정 중이에요. 완료될 때까지 잠시 기다려 주세요." : "현재 카드 정보를 확인하고 있어요."}</p> : null}
+          {notice ? <p role="status" className="text-muted-foreground text-caption">{notice}</p> : null}
+          {pending ? <p role="status" className="text-muted-foreground text-caption">{phase === "saving" || attemptPending ? "정정 중이에요. 완료될 때까지 잠시 기다려 주세요." : "현재 카드 정보를 확인하고 있어요."}</p> : null}
           <DialogFooter className="flex-col gap-2 sm:flex-col">
             <Button type="submit" className="min-h-11 w-full" disabled={pending || readRequired || readGate.current.required || unknownCurrent || !canManage(current) || draft === expected}>{phase === "saving" ? "정정 중…" : "뒤 4자리 정정하기"}</Button>
-            <Button type="button" variant="ghost" className="min-h-11 w-full" disabled={pending} onClick={requestClose}>취소</Button>
+            <Button type="button" variant="ghost" className="min-h-11 w-full" disabled={pending} onClick={requestClose}>닫기</Button>
           </DialogFooter>
         </form>
         <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>

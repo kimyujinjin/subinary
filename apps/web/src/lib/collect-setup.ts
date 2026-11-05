@@ -271,7 +271,7 @@ export function buildCollectSetup(input: CollectSetupInput): CollectSetupPlan {
     bodyFields: [],
     eventIdHint: EVENT_ID_HINT.other,
     cautions: [
-      "토큰은 Authorization 헤더로만 보내 주세요. 주소(URL)에 넣으면 기록에 남아요.",
+      "연결 열쇠는 Authorization 헤더로만 보내 주세요. 주소(URL)에 넣으면 기록에 남아요.",
       "같은 문자를 다시 보낼 때 eventId가 같으면 중복으로 저장되지 않아요.",
     ],
   };

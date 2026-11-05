@@ -40,6 +40,7 @@ import type {
   DeviceSummary,
   HouseholdCreateRequest,
   HouseholdSummary,
+  HouseholdUpdateRequest,
   InvitationCreateRequest,
   InvitationCreated,
   InvitationPreview,
@@ -429,6 +430,17 @@ export const api = {
       }),
     get: (accessToken: AccessToken, id: string) =>
       apiFetch<HouseholdSummary>(`/v1/households/${id}`, { accessToken }),
+    /** 가족 이름 바꾸기(소유자·관리자). */
+    rename: (
+      accessToken: AccessToken,
+      id: string,
+      body: HouseholdUpdateRequest,
+    ) =>
+      apiFetch<HouseholdSummary>(`/v1/households/${id}`, {
+        method: "PATCH",
+        body,
+        accessToken,
+      }),
     members: (accessToken: AccessToken, id: string) =>
       apiFetch<MemberSummary[]>(`/v1/households/${id}/members`, { accessToken }),
     invitations: (accessToken: AccessToken, id: string) =>
@@ -554,11 +566,6 @@ export const api = {
       apiFetch<NotificationUnreadCount>("/v1/notifications/unread-count", {
         accessToken,
       }),
-    markRead: (accessToken: AccessToken, id: string) =>
-      apiFetch<{ success: true }>(
-        `/v1/notifications/${encodeURIComponent(id)}/read`,
-        { method: "POST", accessToken },
-      ),
     markAllRead: (accessToken: AccessToken) =>
       apiFetch<{ success: true }>("/v1/notifications/read-all", {
         method: "POST",

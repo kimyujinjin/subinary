@@ -1,7 +1,11 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   assetConnectionCatalogSchema,
   assetConnectionProviderSchema,
+  type MacBankJob,
+  type MacBankRunnerState,
 } from "@family/contracts";
 
 import {
@@ -11,7 +15,7 @@ import {
   isConnectableProvider,
   selectedProvider,
 } from "./providers";
-import { providerStatusLabel } from "./provider-hub";
+import { CONNECTIONS_TITLE, shinhanRunnerStatus, tossCatalogStatus } from "./provider-hub";
 
 const catalog = (
   shinhan: "available" | "runtime_required",
@@ -98,38 +102,69 @@ describe("진입점 문구", () => {
   });
 });
 
-describe("선택 카드 상태 한 줄", () => {
-  it("연결 준비가 끝나면 둘 다 '연결 가능'이다", () => {
-    const ready = assetConnectionCatalogSchema.parse(
-      catalog("available", "available")
-    );
-    expect(providerStatusLabel("shinhan_bank", ready, false)).toBe("연결 가능");
-    expect(providerStatusLabel("toss_securities", ready, false)).toBe(
-      "연결 가능"
-    );
-  });
-
-  it("runtime_required의 뜻을 금융사별로 구분한다", () => {
-    // 신한은 사용자가 할 수 있는 일(Mac 켜기)이고 토스증권은 운영자 대기다.
-    // 같은 문구로 뭉뚱그리면 사용자가 기다려야 하는지 조치해야 하는지 알 수 없다.
-    const waiting = assetConnectionCatalogSchema.parse(
-      catalog("runtime_required", "runtime_required")
-    );
-    expect(providerStatusLabel("shinhan_bank", waiting, false)).toBe(
-      "연결한 Mac 확인 필요"
-    );
-    expect(providerStatusLabel("toss_securities", waiting, false)).toBe(
-      "운영자 설정 대기"
-    );
+describe("기관 행 상태 한 줄", () => {
+  it("토스증권: 연결 준비가 끝나면 '연결 가능', 아니면 '준비 중'이다", () => {
+    const ready = assetConnectionCatalogSchema.parse(catalog("available", "available"));
+    const waiting = assetConnectionCatalogSchema.parse(catalog("available", "runtime_required"));
+    expect(tossCatalogStatus(ready, false)).toEqual({ tone: "ok", label: "연결 가능" });
+    expect(tossCatalogStatus(waiting, false)).toEqual({ tone: "pending", label: "준비 중" });
   });
 
   it("조회 전과 조회 실패를 '연결 가능'으로 쓰지 않는다", () => {
-    const ready = assetConnectionCatalogSchema.parse(
-      catalog("available", "available")
-    );
-    expect(providerStatusLabel("shinhan_bank", null, false)).toBe("확인 중…");
-    expect(providerStatusLabel("shinhan_bank", ready, true)).toBe(
-      "상태 확인 필요"
-    );
+    const ready = assetConnectionCatalogSchema.parse(catalog("available", "available"));
+    expect(tossCatalogStatus(null, false).label).toBe("확인 중…");
+    expect(tossCatalogStatus(ready, true).label).toBe("상태 확인 필요");
+    expect(shinhanRunnerStatus(null, false).label).toBe("확인 중…");
+    expect(shinhanRunnerStatus(mac(), true).label).toBe("상태 확인 필요");
+  });
+
+  it("신한: 정상이면 칩 없이 `연결됨 · N분 전` 메타로 쓴다", () => {
+    // 기본 상태는 배지로 그리지 않는다(§8) — 상태는 칩 + 메타(§3.5).
+    expect(shinhanRunnerStatus(mac(), false)).toEqual({ tone: null, label: "연결됨 · 3분 전" });
+    expect(shinhanRunnerStatus(mac({ previousResult: null }), false)).toEqual({ tone: null, label: "연결됨 · 조회 전" });
+  });
+
+  it("신한: 문제는 원인에 가까운 것부터 칩으로 쓴다", () => {
+    const failed = { ...job, state: "failed" as const, errorCode: "credentials_invalid" as const };
+    expect(shinhanRunnerStatus(mac({ runner: null }), false)).toEqual({ tone: "neutral", label: "연결 전" });
+    // Mac이 꺼져 있으면 조회 실패보다 그것이 먼저다.
+    expect(shinhanRunnerStatus(mac({ runner: { ...runner, online: false }, job: failed }), false).label).toBe("Mac 꺼짐");
+    expect(shinhanRunnerStatus(mac({ job: { ...job, state: "authentication_required" } }), false).label).toBe("인증 필요");
+    expect(shinhanRunnerStatus(mac({ job: { ...job, state: "running" } }), false)).toEqual({ tone: "pending", label: "조회 중" });
+    expect(shinhanRunnerStatus(mac({ job: failed }), false)).toEqual({ tone: "attention", label: "확인 필요" });
+    expect(shinhanRunnerStatus(mac({ credentials: null }), false).label).toBe("로그인 정보 필요");
+  });
+
+  it("화면 제목은 전체 메뉴의 항목 이름과 같다", () => {
+    // 메뉴에서 '은행·증권 연결'을 눌렀는데 '자동 연결'이 뜨면 다른 화면으로 읽힌다.
+    const more = readFileSync(join(process.cwd(), "src/app/(app)/more/page.tsx"), "utf8");
+    const menuTitle = /href:\s*"\/more\/connections"[^}]*?title:\s*"([^"]+)"/.exec(more)?.[1];
+    expect(menuTitle).toBe(CONNECTIONS_TITLE);
   });
 });
+
+const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+const runner: NonNullable<MacBankRunnerState["runner"]> = {
+  id: "00000000-0000-4000-8000-000000000004", label: "이 Mac", online: true, lastSeenAt: ago(0), expiresAt: null,
+};
+const job: MacBankJob = {
+  id: "00000000-0000-4000-8000-000000000001", householdId: "00000000-0000-4000-8000-000000000002",
+  ownerUserId: "00000000-0000-4000-8000-000000000003", runnerId: runner.id,
+  state: "queued", claimId: null, credentialVersion: null, consentVersion: 3, continueVersion: 0, errorCode: null, logoutConfirmed: false, observations: [],
+  createdAt: ago(0), updatedAt: ago(0), expiresAt: ago(-600_000), claimedAt: null, completedAt: null,
+};
+/** 정상 상태: 온라인 Mac, 저장한 로그인 정보, 3분 전 성공한 조회. */
+function mac(patch: Partial<MacBankRunnerState> = {}): MacBankRunnerState {
+  return {
+    runner,
+    job: null,
+    previousResult: {
+      jobId: "00000000-0000-4000-8000-000000000005",
+      completedAt: ago(3 * 60_000 + 5_000),
+      observations: [{ formatVersion: 1, provider: "shinhan", source: "browser_assisted", origin: "https://bank.shinhan.com", pageKind: "deposit_account_list", capturedAt: ago(0), accountFingerprint: "a".repeat(64), accountLast4: "1234", currency: "KRW", balanceKind: "ledger", balanceKrw: "0", bankAsOfDate: null }],
+    },
+    credentials: { stored: true, runnerId: runner.id, version: 1, updatedAt: ago(0) },
+    credentialStorageAvailable: true,
+    ...patch,
+  };
+}

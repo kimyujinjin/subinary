@@ -78,7 +78,7 @@ export function ConnectionRegistrationForm({ busy, onSubmit, onClose }: {
         <p className="pb-3">국내·미국 보유 주식을 조회해요. 은행 잔액은 포함하지 않아요. 앱을 닫아 둔 동안에는 자동 조회하지 않아요.</p>
         <p>이전에 조회한 기록은 보관되며, 연결 해제 뒤 이 화면에 표시되지 않아요.</p>
       </details>
-      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+      {error ? <p role="alert" className="text-caption text-destructive">{error}</p> : null}
       <div className="flex flex-wrap gap-2">
         <Button type="submit" size="lg" disabled={busy} className="flex-1">{busy ? "연결 확인 중…" : "동의하고 연결"}</Button>
         <Button type="button" variant="ghost" size="lg" onClick={() => { formRef.current?.reset(); onClose(); }}>닫기</Button>

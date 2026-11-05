@@ -11,6 +11,10 @@ describe("본인 Mac의 신한 자동 로그인 설정", () => {
     expect(html).toContain('type="password"'); expect(html).toContain('name="consent"'); expect(html).toContain("암호화"); expect(html).toContain("본인 Mac");
     expect(html).toContain('method="post"');
     expect(html).not.toContain('value="'); expect(html).not.toContain(">로그인 정보 삭제</button>");
+    // 흰 시트 위 입력칸은 공용 채움형(bg-muted)이다 — 흰 배경·테두리로 덮으면 칸이 보이지 않는다.
+    const inputs = html.match(/<input[^>]*name="(loginId|password)"[^>]*>/g) ?? [];
+    expect(inputs).toHaveLength(2);
+    for (const input of inputs) { expect(input).toContain("bg-muted"); expect(input).not.toMatch(/bg-(background|card)\b/); }
   });
   it("저장 후에도 ID·비밀번호를 다시 표시하지 않으며 삭제할 수 있다", () => {
     const html = renderToStaticMarkup(<BankCredentialForm {...scope} credentials={stored} storageAvailable disabled={false} onChanged={vi.fn()} />);

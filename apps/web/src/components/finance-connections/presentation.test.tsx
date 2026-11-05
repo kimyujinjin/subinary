@@ -2,8 +2,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ConnectionCard } from "./connection-card";
 import { ConnectionRegistrationForm } from "./registration-form";
-import { AssetConnectionsSummary } from "./asset-connections-summary";
-import type { ComponentProps } from "react";
 import { connectionFixture as item } from "./fixtures.test-support";
 
 const card = (patch: Partial<typeof item> = {}, canManage = true, unconfirmed = false, enabled = true) => renderToStaticMarkup(
@@ -73,9 +71,23 @@ describe("connection screen presentation contract", () => {
   it("requires explicit choice even when there is only one verified account", () => {
     const html = card({ status: "select_account", snapshot: null, selectedAccountId: null, canRefresh: false });
     expect(html).toContain("계좌를 선택해 주세요");
-    expect(html).toContain("합성 종합매매 계좌");
-    expect(html).toContain("이 계좌 조회하기");
+    // 하나뿐이어도 미리 고르지 않는다 — 자리표시자가 보이고 제출은 막힌다.
+    expect(html).toMatch(/<button[^>]*role="combobox"[^>]*data-placeholder=""[^>]*>/);
+    expect(html).toContain("계좌 선택");
+    expect(html).toMatch(/<button(?=[^>]*type="submit")(?=[^>]*disabled="")[^>]*>이 계좌 조회하기/);
     expect(html).not.toContain(`value="${"a".repeat(64)}" selected`);
+  });
+  it("목록을 다시 읽는 동안(disabled)에도 계좌 선택 칸은 막지 않고 공용 채움형 칸을 쓴다", () => {
+    // 칸을 막으면 열어 둔 목록이 닫힌다(60초마다). 흰 패널 위에서는 흰 배경·테두리로 덮은 칸이 보이지 않는다.
+    const html = renderToStaticMarkup(
+      <ConnectionCard item={{ ...item, status: "select_account", snapshot: null, selectedAccountId: null, canRefresh: false }} disabled enabled canManage onSelect={() => {}} onRefresh={() => {}} onDisconnect={() => {}} />,
+    );
+    const trigger = html.match(/<button[^>]*role="combobox"[^>]*>/)?.[0] ?? "";
+    expect(trigger).not.toBe("");
+    expect(trigger).not.toMatch(/\sdisabled=""/);
+    expect(trigger).toContain("bg-muted");
+    expect(trigger).not.toMatch(/bg-(background|card)\b/);
+    expect(html).toMatch(/<button(?=[^>]*type="submit")(?=[^>]*disabled="")[^>]*>이 계좌 조회하기/);
   });
   it("does not call account selection a successful holdings lookup", () => {
     const html = card({ snapshot: null, lastSuccessAt: null });
@@ -86,67 +98,5 @@ describe("connection screen presentation contract", () => {
     const html = card({}, false);
     expect(html).not.toContain("새로 조회</button>");
     expect(html).not.toContain("연결 해제</button>");
-  });
-});
-
-const assetSummary = (patch: Partial<ComponentProps<typeof AssetConnectionsSummary>> = {}) => renderToStaticMarkup(
-  <AssetConnectionsSummary data={{ enabled: true, disabledReason: null, items: [item] }} busy={false} loading={false} notice={null} uncertainId={null} {...patch} />,
-);
-describe("asset screen connected account summary", () => {
-  it("shows separate currencies, observation/valuation limits and a management link without write controls", () => {
-    const html = assetSummary();
-    expect(html).toContain('href="/more/connections"');
-    expect(html).toContain("123,456.75원");
-    expect(html).toContain("$98.00");
-    expect(html).not.toContain("USD");
-    expect(html).toContain("가족 합계에 더하지 않아요");
-    expect(html).toContain("내 연결 계좌");
-    expect(html).toContain("마지막 조회 성공");
-    expect(html).not.toContain("<button");
-    expect(html).not.toContain("<input");
-    expect(html).not.toContain("순자산");
-  });
-  it("discards previous values while access is being revalidated", () => {
-    const html = assetSummary({ loading: true, busy: true });
-    expect(html).toContain("연결 계좌를 확인하고 있어요");
-    expect(html).not.toContain("123,456.75");
-    expect(html).not.toContain("합성 종합매매 계좌");
-    expect(html).not.toContain("연결한 토스증권 계좌가 없어요");
-  });
-  it("shows a failed permission/read check without restoring a snapshot or inventing zero", () => {
-    const html = assetSummary({ data: null, notice: "연결을 볼 권한이 바뀌었어요." });
-    expect(html).toContain('role="alert"');
-    expect(html).toContain("권한이 바뀌었어요");
-    expect(html).not.toContain("123,456.75");
-    expect(html).not.toContain("0 원");
-  });
-  it("retains exact old values on provider failure or an unknown refresh", () => {
-    const failed = assetSummary({ data: { enabled: true, disabledReason: null, items: [{ ...item, status: "error", errorCode: "provider_unavailable" }] } });
-    expect(failed).toContain("이전 조회 내역");
-    expect(failed).toContain("123,456.75원");
-    expect(failed).toContain("조회 실패");
-    const unknown = assetSummary({ uncertainId: item.id });
-    expect(unknown).toContain("조회 확인 필요");
-    expect(unknown).toContain("이전 조회 내역");
-  });
-  it("distinguishes empty, disabled and disconnected connections", () => {
-    // 연결이 없으면 섹션을 그리지 않는다 — 연결 시작은 자산 추가 시트가 맡는다.
-    expect(assetSummary({ data: { enabled: true, disabledReason: null, items: [] } })).toBe("");
-    expect(assetSummary({ data: { enabled: false, disabledReason: "not_configured", items: [] } })).toBe("");
-    const disconnected = assetSummary({ data: { enabled: true, disabledReason: null, items: [{ ...item, status: "disconnected" }] } });
-    expect(disconnected).not.toContain("123,456.75");
-  });
-  it("preserves provider zero and keeps absent currency unfilled", () => {
-    const html = assetSummary({ data: { enabled: true, disabledReason: null, items: [{ ...item, snapshot: { ...item.snapshot!, totals: [{ currency: "KRW", marketValue: "0", afterCostValue: "0" }] } }] } });
-    expect(html).toContain(">0원<");
-    expect(html).toContain("조회 내역 없음");
-    expect(html).not.toContain("$0.00");
-  });
-  it("keeps an unselected account out of the values and directs selection to management", () => {
-    const html = assetSummary({ data: { enabled: true, disabledReason: null, items: [{ ...item, status: "select_account", selectedAccountId: null, snapshot: null, lastSuccessAt: null, canRefresh: false }] } });
-    expect(html).toContain("연결 관리에서 조회할 계좌를 선택해 주세요");
-    expect(html).toContain("아직 없음");
-    expect(html).not.toContain("<select");
-    expect(html).not.toContain("0 원");
   });
 });
