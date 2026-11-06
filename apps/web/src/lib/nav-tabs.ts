@@ -11,6 +11,11 @@ export const PRIMARY_TABS = [
 
 /** Existing task and management URLs remain available under 전체. */
 const TODO_PATHS: ReadonlyArray<string> = ["/todo", "/declines"];
+/**
+ * 연결 화면(/more/connections)은 주소가 전체 아래지만 자산 탭 소속이다 — 진입점 대부분이 자산 화면이고
+ * ← 기본 복귀도 /assets 라, 전체 탭이 켜져 있으면 탭 표시와 뒤로가기가 어긋났다(2026-11-06 결정 ①).
+ */
+const ASSET_PATHS: ReadonlyArray<string> = ["/assets", "/cards", "/plan", "/more/connections"];
 const ACCOUNT_PATHS: ReadonlyArray<string> = [
   "/more", "/household", "/devices", "/categories", "/ai-operations", "/ai",
 ];
@@ -36,7 +41,7 @@ export function isTabRoot(pathname: string): boolean {
 
 export function activeTabFor(pathname: string): TabKey | null {
   if (isUnder(pathname, "/dashboard")) return "home";
-  if (isUnder(pathname, "/assets") || isUnder(pathname, "/cards") || isUnder(pathname, "/plan")) return "assets";
+  if (ASSET_PATHS.some((p) => isUnder(pathname, p))) return "assets";
   if (["/transactions", "/ledger", "/budgets", ...TODO_PATHS, "/more/recurring"].some((p) => isUnder(pathname, p))) return "ledger";
   if (ACCOUNT_PATHS.some((p) => isUnder(pathname, p))) return "all";
   return null;

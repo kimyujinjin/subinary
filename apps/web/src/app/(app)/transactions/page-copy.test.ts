@@ -99,6 +99,39 @@ describe("거래 상세 시트", () => {
   });
 });
 
+describe("원래 결제를 못 찾은 환불(2026-11-06 결정 5)", () => {
+  const start = code.indexOf("function TransactionDetailDialog(");
+  const end = code.indexOf("function useTransactionModalBack(");
+  const detail = code.slice(start, end);
+
+  it("결정 블록의 '합계에서 빼기'는 서버 빼기(exclude)로 이어진다", () => {
+    expect(detail).toMatch(/exclude: onExclude,/);
+    expect(detail).toMatch(/linkCancellation: onOpenLink,/);
+    expect(code).toMatch(
+      /onExclude=\{\(\) =>\s*mutation\.mutate\(\{ kind: "exclude", id: detailTxn\.id \}\)/
+    );
+  });
+
+  it("⋯ 메뉴는 그대로다 — 환불에는 빼기를 두지 않고 삭제는 남는다", () => {
+    expect(detail).toMatch(
+      /const menuOffersExclude =\s*!isCancellation && !excluded && !decisionOffersExclude\(decision\);/
+    );
+    expect(detail).toContain('label: "거래 삭제"');
+    // 삭제 확인의 '합계에서 빼기' 대안은 결정 블록이 빼기를 물을 때도 켜진다.
+    expect(detail).toContain(
+      "const canExclude = menuOffersExclude || decisionOffersExclude(decision);"
+    );
+  });
+
+  it("뺀 환불은 되돌릴 수 있고, 뺀 채로는 원래 결제에 연결하지 않는다", () => {
+    // 예전에는 '합계에 다시 넣기'가 승인에만 있어 환불을 빼면 되돌릴 길이 없었다.
+    expect(detail).toContain("{(!isCancellation || canLink) && excluded ? (");
+    expect(detail).not.toContain("{!isCancellation && excluded ? (");
+    // 뺀 환불을 연결하면 원래 결제 금액에 반영되는데 기록은 '합계 제외'로 남아 화면이 어긋난다.
+    expect(detail).toContain("{canLink && decision == null && !excluded ? (");
+  });
+});
+
 describe("거래 목록", () => {
   it("검색칸은 기본 Input 모양이다 — 회색 채움을 bg-card로 덮지 않는다", () => {
     expect(code).not.toContain("border-transparent bg-card");

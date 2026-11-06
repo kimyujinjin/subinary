@@ -16,6 +16,8 @@
  *   보이므로 결과 창은 복사·공유하기 전에는 바깥이나 안드로이드 뒤로를 눌러도 닫히지 않는다.
  *   주 버튼은 공유 시트가 있으면 '공유하기', 없으면(Android 웹뷰) '링크 복사하기'.
  * - 가족에서 나가면 멤버십을 다시 받아 남은 가족(없으면 온보딩)으로 옮긴다.
+ * - 맨 아래 '새 가족 만들기' 줄(./create-household.tsx) — 머리의 가족 전환 메뉴에서 옮겨 왔다.
+ *   만든 뒤에는 넘어가지 않고 토스트의 '그 가족으로 가기'로만 바꾼다.
  * 권한은 서버에서도 강제(PRD §26). 여기서는 UI 노출/비활성으로 보조.
  * ------------------------------------------------------------------------- */
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -113,6 +115,7 @@ import { registerTransactionDetailBack } from "@/lib/transaction-detail-back";
 import { publicWebUrl } from "@/lib/web-url";
 
 import { ColorMenu } from "./color-menu";
+import { CreateHouseholdSection } from "./create-household";
 import {
   DEFAULT_INVITE_EXPIRY_HOURS,
   INVITE_EXPIRY_OPTIONS,
@@ -860,6 +863,10 @@ export default function HouseholdPage() {
           ) : null}
         </section>
       ) : null}
+
+      {/* 새 가족 만들기 — 어느 역할이든 자기가 소유자인 가족을 따로 만들 수 있다. 맨 아래에 둬 구성원 추가로
+          읽히지 않게 한다(초대는 위 '초대' 섹션). */}
+      <CreateHouseholdSection isOwner={isOwner} />
 
       {/* 가족 이름 바꾸기 (소유자·관리자) */}
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>

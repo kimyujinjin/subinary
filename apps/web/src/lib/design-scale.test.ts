@@ -30,7 +30,7 @@ function count(pattern: RegExp): number {
 // 상한은 내리기만 한다. 화면 개편 PR에서 실제 개수에 맞춰 갱신한다.
 // 2026-11-06 HIG 3·4단계로 모든 화면을 토큰으로 옮겨 0이 됐다(48 → 45 → 0). 이제 새로 쓰면 바로 실패한다.
 const MAX_ARBITRARY_TEXT_SIZE = 0;
-// 체크박스 rounded-[4px] 하나(components/ui/checkbox.tsx)만 남았다 — 예외로 둘지는 사용자 결정 대기.
+// 체크박스 하나 — 예외 확정(2026-11-06). components/ui/checkbox.tsx의 rounded-[4px](작은 상자에 12px은 원, full은 라디오처럼 보인다).
 const MAX_ARBITRARY_RADIUS = 1;
 // 이름 붙은 옛 크기(text-sm·rounded-xl 등)도 토큰 밖 값이다. 2026-11-05 처음 잴 때 239·54 → 2026-11-06 0.
 const MAX_NAMED_TEXT_SIZE = 0;

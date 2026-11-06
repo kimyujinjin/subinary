@@ -111,7 +111,7 @@ describe("종류별 끄기 — 푸시만 건너뛰고 알림함에는 남긴다"
       userId: ME,
       kind: "reminder",
       sourceKey: "notif_reminder_1",
-      title: "확인이 필요한 거래",
+      title: "확인할 거래",
     });
   });
 

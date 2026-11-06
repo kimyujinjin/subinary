@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   candidates: undefined as
     | Pick<MerchantLabelCandidateListResponse, "items" | "hasMore">
     | undefined,
+  candidatesError: false,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -31,7 +32,10 @@ vi.mock("@/lib/biometric", () => ({
   setBiometricPref: vi.fn(),
 }));
 vi.mock("@/lib/queries", () => ({
-  useMerchantLabelCandidates: () => ({ data: state.candidates }),
+  useMerchantLabelCandidates: () => ({
+    data: state.candidates,
+    isError: state.candidatesError,
+  }),
 }));
 
 function candidates(
@@ -56,6 +60,7 @@ function link(html: string, href: string): string {
 
 beforeEach(() => {
   state.candidates = undefined;
+  state.candidatesError = false;
 });
 
 describe("전체 메뉴", () => {
@@ -79,6 +84,13 @@ describe("전체 메뉴", () => {
     expect(ruleReviewLeftText(undefined)).toBeNull();
     expect(ruleReviewLeftText(candidates(0))).toBeNull();
     expect(ruleReviewLeftText(candidates(20, true))).toBe("20곳 이상 남음");
+    const html = renderToStaticMarkup(<MorePage />);
+    expect(link(html, "/more/category-rules")).not.toContain("남음");
+  });
+
+  it("다시 불러오기에 실패하면 예전 값이 있어도 숨긴다 — 규칙 화면은 오류를 보이는데 메뉴만 숫자를 남기지 않는다", () => {
+    state.candidates = candidates(12);
+    state.candidatesError = true;
     const html = renderToStaticMarkup(<MorePage />);
     expect(link(html, "/more/category-rules")).not.toContain("남음");
   });

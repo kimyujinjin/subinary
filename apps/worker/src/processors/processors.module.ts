@@ -113,7 +113,7 @@ import { TestProcessor } from './test.processor';
     // 새 거래 승격 시 FCM 푸시를 발송(수신자 해석·마스킹·선호 필터).
     NotificationDispatchProcessor,
     FcmService,
-    // 스케줄 알림(확인 리마인더·주간 요약)을 주기적으로 enqueue.
+    // 스케줄 알림('확인할 거래' 알림·주간 요약)을 주기적으로 enqueue.
     NotificationSchedulerService,
     OutboxDispatcherService,
     WorkerModelServingService,

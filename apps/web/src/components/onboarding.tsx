@@ -5,6 +5,7 @@
  * 히어로 + 선택 카드 2개(전체 클릭영역) → 선택한 방법의 폼만 점진 공개.
  * - 가족 만들기: RHF + zodResolver(householdCreateRequestSchema) → POST /households
  *   → refreshMemberships() → 대시보드. (성공 시 레이아웃이 앱 셸로 전환)
+ *   목록만 못 받으면 만들기 폼을 거두고 '다시 불러오기'만 둔다(같은 가족이 또 생기지 않게).
  * - 초대 받기: 붙여넣은 링크/토큰에서 토큰을 추출해 /join/<token> 수락 화면으로.
  * ------------------------------------------------------------------------- */
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -23,6 +24,7 @@ import { toast } from "sonner";
 import {
   householdCreateRequestSchema,
   type HouseholdCreateRequest,
+  type HouseholdSummary,
 } from "@family/contracts";
 
 import { Button } from "@/components/ui/button";
@@ -42,7 +44,8 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { ApiError, api } from "@/lib/api-client";
+import { createHousehold } from "@/app/(app)/household/create-household";
+import { api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 
 /** 링크/전체 URL/원문 토큰 어디서든 초대 토큰만 뽑아낸다. */
@@ -70,6 +73,61 @@ function extractToken(raw: string): string | null {
 }
 
 type OnboardingMode = "create" | "join";
+
+/** 가족은 생겼는데 가족 목록을 못 받았을 때 만들기 폼 자리에 계속 보이는 안내. */
+export function createdUnlistedMessage(name: string): string {
+  return `'${name}' 가족은 만들었어요. 목록을 불러오지 못했어요.`;
+}
+
+export const RELOAD_CREATED_FAILED =
+  "아직 불러오지 못했어요. 잠시 후 다시 눌러 주세요.";
+
+export type OnboardingCreateEffects = {
+  push: (href: string) => void;
+  toastSuccess: (message: string) => void;
+  toastError: (message: string) => void;
+  setNameError: (message: string) => void;
+  /** 만들기 폼을 거두고 '다시 불러오기' 안내로 바꾼다. */
+  showCreatedUnlisted: (name: string) => void;
+};
+
+/**
+ * 온보딩의 가족 만들기. 가족이 생겼는데 목록만 못 받았으면 홈으로 보내지 않는다 —
+ * 목록이 빈 채로 남아 같은 자리에 온보딩이 다시 그려지고(app-readiness-boundary), 이름이 남은 폼에서
+ * 또 누르면 같은 가족이 하나 더 생긴다(서버에 중복 방지 없음).
+ */
+export async function submitOnboardingCreate(
+  create: () => Promise<HouseholdSummary>,
+  refreshMemberships: () => Promise<void>,
+  effects: OnboardingCreateEffects,
+): Promise<void> {
+  const result = await createHousehold(create, refreshMemberships);
+  if (!result.ok) {
+    effects.setNameError(result.message);
+    effects.toastError(result.message);
+    return;
+  }
+  if (!result.listed) {
+    effects.showCreatedUnlisted(result.household.name);
+    return;
+  }
+  effects.toastSuccess(`'${result.household.name}' 가족을 만들었어요.`);
+  effects.push("/dashboard");
+}
+
+/** 만든 가족이 보이게 목록을 다시 받는다. 받으면 홈으로 가고 null, 못 받으면 보여 줄 오류 문구를 돌려준다. */
+export async function reloadCreatedHousehold(
+  refreshMemberships: () => Promise<void>,
+  push: (href: string) => void,
+): Promise<string | null> {
+  try {
+    await refreshMemberships();
+  } catch {
+    return RELOAD_CREATED_FAILED;
+  }
+  push("/dashboard");
+  return null;
+}
 
 /** 전체 클릭영역 선택 카드(오늘의집 톤 — 연보더 + hover 시 진한 보더). */
 function ChoiceCard({
@@ -101,12 +159,59 @@ function ChoiceCard({
   );
 }
 
+/** 가족은 만들었는데 목록을 못 받은 동안 만들기 폼 대신 보이는 카드 — 만들기 버튼이 없어 두 번째 요청이 나갈 수 없다. */
+export function CreatedUnlistedCard({
+  name,
+  reloading,
+  error,
+  onReload,
+}: {
+  name: string;
+  reloading: boolean;
+  error: string | null;
+  onReload: () => void;
+}) {
+  return (
+    <Card>
+      <CardContent>
+        <div className="flex flex-col gap-4">
+          <p role="status" className="text-body">
+            {createdUnlistedMessage(name)}
+          </p>
+          {error ? (
+            <p role="alert" className="text-destructive text-caption">
+              {error}
+            </p>
+          ) : null}
+          <Button
+            type="button"
+            size="lg"
+            className="w-full"
+            onClick={onReload}
+            disabled={reloading}
+          >
+            {reloading ? "불러오는 중…" : "다시 불러오기"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+type CreatedUnlisted = {
+  name: string;
+  reloading: boolean;
+  error: string | null;
+};
+
 export function Onboarding() {
   const router = useRouter();
   const { authedFetch, refreshMemberships, user } = useAuth();
 
   // 점진 공개: 선택 카드 → 선택한 방법의 폼.
   const [mode, setMode] = useState<OnboardingMode | null>(null);
+  const [createdUnlisted, setCreatedUnlisted] =
+    useState<CreatedUnlisted | null>(null);
 
   const form = useForm<HouseholdCreateRequest>({
     resolver: zodResolver(householdCreateRequestSchema),
@@ -114,21 +219,28 @@ export function Onboarding() {
   });
 
   async function onCreate(values: HouseholdCreateRequest) {
-    try {
-      const created = await authedFetch((token) =>
-        api.households.create(token, values),
-      );
-      await refreshMemberships();
-      toast.success(`'${created.name}' 가족을 만들었어요.`);
-      router.push("/dashboard");
-    } catch (err) {
-      const message =
-        err instanceof ApiError
-          ? err.message
-          : "가족을 만들지 못했어요. 잠시 후 다시 시도해 주세요.";
-      form.setError("name", { message });
-      toast.error(message);
-    }
+    await submitOnboardingCreate(
+      () => authedFetch((token) => api.households.create(token, values)),
+      refreshMemberships,
+      {
+        push: (href) => router.push(href),
+        toastSuccess: (message) => toast.success(message),
+        toastError: (message) => toast.error(message),
+        setNameError: (message) => form.setError("name", { message }),
+        showCreatedUnlisted: (name) =>
+          setCreatedUnlisted({ name, reloading: false, error: null }),
+      },
+    );
+  }
+
+  async function onReload() {
+    if (!createdUnlisted || createdUnlisted.reloading) return;
+    setCreatedUnlisted({ ...createdUnlisted, reloading: true, error: null });
+    const error = await reloadCreatedHousehold(refreshMemberships, (href) =>
+      router.push(href),
+    );
+    // 받았으면 목록이 차서 앱 셸로 바뀐다. 그래도 이 화면이 남으면 다시 누를 수 있게 푼다.
+    setCreatedUnlisted((prev) => prev && { ...prev, reloading: false, error });
   }
 
   // 초대 수락 진입
@@ -151,10 +263,17 @@ export function Onboarding() {
         <div className="bg-accent text-accent-foreground flex size-14 items-center justify-center rounded-full">
           <Sparkles className="size-6" />
         </div>
+        {/* 가족은 만들었는데 목록만 못 받은 상태에서 '만들어 주세요'라고 하면 아래 안내와 어긋난다. */}
         <h1 className="text-title tracking-tight">
-          가장 먼저,
-          <br />
-          가족을 만들어 주세요
+          {createdUnlisted ? (
+            "가족 목록을 불러오고 있어요"
+          ) : (
+            <>
+              가장 먼저,
+              <br />
+              가족을 만들어 주세요
+            </>
+          )}
         </h1>
         <p className="text-muted-foreground text-body max-w-sm">
           {user?.name ? `${user.name}님, 반가워요. ` : ""}
@@ -162,7 +281,15 @@ export function Onboarding() {
         </p>
       </div>
 
-      {mode === null ? (
+      {createdUnlisted ? (
+        /* 가족은 만들었는데 목록을 못 받았다 — 방법 고르기·만들기 폼 대신 다시 불러오기만 */
+        <CreatedUnlistedCard
+          name={createdUnlisted.name}
+          reloading={createdUnlisted.reloading}
+          error={createdUnlisted.error}
+          onReload={() => void onReload()}
+        />
+      ) : mode === null ? (
         /* 선택 카드 2개 — 전체 클릭영역 */
         <div className="flex flex-col gap-3">
           <ChoiceCard

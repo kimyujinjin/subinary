@@ -10,7 +10,10 @@
  *   그 '짝 결제'는 duplicate-pair.ts가 같은 조건으로 찾는다. 찾았을 때만 비교 안내와 '그 결제 보기'를 낸다.
  * - pending_review 승인: 카드 자동 연결이 애매할 때(뒤 4자리·발급사로 고른 카드가 여럿이거나 다른 구성원 카드) — 카드는 비어 있다.
  * - pending_review 취소: 원래 결제를 하나로 못 골랐을 때, 또는 사용자가 연결을 풀었을 때.
- *   연결 안 된 취소에 '정상 확인'(markValid)을 보내면 서버는 그대로 pending_review로 둔다 — 그래서 취소에는 연결만 묻는다.
+ *   연결 안 된 취소에 '정상 확인'(markValid)을 보내면 서버는 그대로 pending_review로 둔다 — 그래서 답은
+ *   '원래 결제 고르기'와 끝내 못 찾을 때의 '합계에서 빼기'(exclude) 둘이다(2026-11-06 결정 5).
+ *   빼도 기록은 남고, 확인 목록·할 일 숫자·확인 알림은 모두 excludedAt이 빈 거래만 세서 거기서 내려간다.
+ *   예전에는 고르기 하나뿐이라 원래 결제가 앱에 없으면 ⋯의 삭제 말고는 확인 목록에서 내릴 길이 없었다.
  */
 
 /** 결정 블록의 답 하나가 하는 일. */
@@ -66,13 +69,17 @@ export function reviewDecision(
   }
 
   if (input.transactionType === "cancellation") {
-    // 연결 안 된 취소는 '정상 확인'을 눌러도 그대로라, 할 수 있는 답은 원래 결제를 고르는 것뿐이다.
+    // 연결 안 된 환불은 '정상 확인'을 눌러도 그대로라 그 답은 내지 않는다. 원래 결제를 고르거나,
+    // 찾을 수 없으면 기록은 남긴 채 합계에서 뺀다 — 삭제는 되돌릴 수 없어 ⋯ 메뉴에만 둔다.
     if (!input.linked) {
       return {
-        question: "어떤 결제를 취소한 건지 골라 주세요",
+        question: "원래 결제를 찾지 못한 환불이에요",
         hint: null,
         pairLabel: null,
-        actions: [{ action: "linkCancellation", label: "원래 결제 고르기" }],
+        actions: [
+          { action: "linkCancellation", label: "원래 결제 고르기" },
+          { action: "exclude", label: "합계에서 빼기" },
+        ],
       };
     }
     return {

@@ -491,7 +491,7 @@ export class NotificationDispatchProcessor extends WorkerHost {
 
     if (uncertain) {
       return {
-        title: '확인이 필요한 거래',
+        title: '확인할 거래',
         body: merchant
           ? `${merchant} ${amount} 거래를 확인해 주세요`
           : `새 거래 ${amount}를 확인해 주세요`,
@@ -574,11 +574,11 @@ const DECLINE_REASON_HINTS: Record<string, string> = {
   invalid_credential: '카드 정보가 맞지 않아요',
 };
 
-/** 확인 필요 리마인더 문구. */
+/** '확인할 거래' 알림 문구(알림 채널·할 일 섹션과 같은 이름). */
 function composeReminder(count: number): { title: string; body: string } {
   return {
-    title: '확인이 필요한 거래',
-    body: `확인이 필요한 거래가 ${count}건 있어요`,
+    title: '확인할 거래',
+    body: `확인할 거래가 ${count}건 있어요`,
   };
 }
 

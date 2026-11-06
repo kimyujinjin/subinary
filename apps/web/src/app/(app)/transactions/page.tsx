@@ -1754,7 +1754,8 @@ function TransactionDetailDialog({
     exclude: onExclude,
     linkCancellation: onOpenLink,
   };
-  // 결정 블록이 이미 빼기를 물으면 메뉴에 같은 동작을 두지 않는다.
+  // 결정 블록이 이미 빼기를 물으면 메뉴에 같은 동작을 두지 않는다. 환불은 메뉴에 두지 않는다 —
+  // 빼기는 원래 결제를 못 찾은 '확인 필요' 환불에서만 결정 블록이 묻는다(연결된 환불은 원래 결제 금액에 반영돼 있다).
   const menuOffersExclude =
     !isCancellation && !excluded && !decisionOffersExclude(decision);
   // 이 거래에서 '합계에서 빼기'를 실제로 할 수 있을 때만 삭제 확인이 그 대안을 말한다.
@@ -2145,8 +2146,12 @@ function TransactionDetailDialog({
                 </div>
               </div>
             ) : null}
-            {/* 확인이 필요한 취소는 위 결정 블록이 '원래 결제 고르기'를 묻는다. */}
-            {canLink && decision == null ? (
+            {/*
+              확인이 필요한 취소는 위 결정 블록이 '원래 결제 고르기'를 묻는다. 합계에서 뺀 환불은 여기서 연결하지 않는다 —
+              연결하면 원래 결제 금액에 반영돼 합계에 잡히는데 이 기록은 '합계 제외'로 남아 화면이 서로 다른 말을 한다.
+              아래 '합계에 다시 넣기'로 되돌린 뒤에 원래 결제를 고른다.
+            */}
+            {canLink && decision == null && !excluded ? (
               <Button
                 variant="weak"
                 className="w-full"
@@ -2156,7 +2161,8 @@ function TransactionDetailDialog({
                 원래 결제와 연결하기
               </Button>
             ) : null}
-            {!isCancellation && excluded ? (
+            {/* 원래 결제를 못 찾아 뺀 환불도 되돌릴 수 있어야 한다. 연결된 환불은 빼는 길이 없어 그대로 둔다. */}
+            {(!isCancellation || canLink) && excluded ? (
               <Button
                 variant="weak"
                 className="w-full"

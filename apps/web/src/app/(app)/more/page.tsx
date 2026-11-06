@@ -277,8 +277,13 @@ function LogoutRow() {
 
 export default function MorePage() {
   const { user } = useAuth();
-  // 자동 분류 규칙 화면과 같은 훅·같은 캐시 키 — 그 화면에 들어가도 요청이 늘지 않는다.
-  const ruleReviewLeft = ruleReviewLeftText(useMerchantLabelCandidates().data);
+  // 가맹점 분류 검토는 할 일 숫자에 넣지 않고(미뤄도 되는 정리라 급한 일이 묻힌다, 2026-11-06) 이 줄에
+  // 회색으로 남은 수만 둔다. 규칙 화면과 같은 훅·캐시 키라 요청이 늘지 않고, 실패하면 그 화면처럼 숨긴다.
+  // '가맹점 정리'는 숫자를 두지 않는다 — 같은 가게 묶음 수는 가맹점 전체 목록을 받아 걸러 세야 한다.
+  const ruleCandidates = useMerchantLabelCandidates();
+  const ruleReviewLeft = ruleReviewLeftText(
+    ruleCandidates.isError ? undefined : ruleCandidates.data
+  );
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6">

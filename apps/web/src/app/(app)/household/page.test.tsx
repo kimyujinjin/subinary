@@ -240,6 +240,19 @@ describe("가족 화면 — 소유자", () => {
     expect(html).toContain("초대하기를 누르면 수락 링크를 만들 수 있어요");
     expect(html).toMatch(/초대하기<\/button>/);
   });
+
+  // 머리의 가족 전환 메뉴에 있을 때는 구성원 추가로 읽혔다 — 초대·색상 아래 맨 끝 줄로 옮겼다(2026-11-06 결정 ③).
+  it("puts '새 가족 만들기' as the last row, below invites and colors, pointing to 초대하기 above", () => {
+    const html = render();
+    const section = html.indexOf('aria-label="새 가족 만들기"');
+    expect(section).toBeGreaterThan(html.indexOf('aria-label="초대"'));
+    expect(section).toBeGreaterThan(html.indexOf('aria-label="색상"'));
+    const tail = html.slice(section);
+    expect(tail).toMatch(/<button[^>]*aria-haspopup="dialog"[^>]*>[\s\S]*?새 가족 만들기/);
+    expect(tail).toContain("기록이 따로 관리되는 새 가족을 만들어요.");
+    expect(tail).toContain("위의 초대하기를 써 주세요.");
+    expect(tail).not.toContain("<section");
+  });
 });
 
 describe("가족 화면 — 역할별 문구", () => {
@@ -273,6 +286,10 @@ describe("가족 화면 — 역할별 문구", () => {
     expect(html).not.toContain('aria-label="초대"');
     expect(html).toContain('aria-label="수빈 메뉴"');
     expect(html).not.toContain('aria-label="민수 메뉴"');
+    // 새 가족은 누구나 만들 수 있지만, 이 역할에는 초대하기 버튼이 없어 소유자에게 부탁하라고 적는다.
+    expect(html).toContain('aria-label="새 가족 만들기"');
+    expect(html).toContain("소유자에게 초대를 부탁해 주세요.");
+    expect(html).not.toContain("위의 초대하기");
   });
 
   it("lets a member change only their own color — no shared card color row, no role pickers", () => {

@@ -15,6 +15,8 @@ describe("path boundaries", () => {
     for (const path of ["/assets-archive", "/plans", "/transactions-archive", "/unknown"]) {
       expect(activeTabFor(path)).toBeNull();
     }
+    // 연결 화면만 자산 탭이다 — 이름이 비슷한 다른 전체 메뉴 경로까지 끌려가지 않는다.
+    expect(activeTabFor("/more/connections-archive")).toBe("all");
   });
 });
 
@@ -41,6 +43,7 @@ describe("simplified primary destinations", () => {
     ["/more/merchants", "all"], ["/more/recurring", "ledger"],
     ["/more/category-rules", "all"], ["/more/privacy/", "all"],
     ["/more/notifications", "all"], ["/more/password", "all"],
+    ["/more/connections", "assets"], ["/more/connections/", "assets"],
   ])("preserves legacy route %s under %s", (path, expected) => {
     expect(activeTabFor(path)).toBe(expected);
     expect(isTabRoot(path)).toBe(false);
@@ -62,13 +65,24 @@ describe("cold-entry parent destinations", () => {
     expect(parentTabHref("/notifications")).toBe("/dashboard");
   });
 
+  it("treats the connection screens as part of assets, matching their default back destination", () => {
+    // 결정 ①(2026-11-06): 주소는 전체 아래지만 자산 탭에 불이 켜지고, 콜드 진입의 뒤로가기도 자산으로 간다.
+    expect(activeTabFor("/more/connections")).toBe("assets");
+    expect(parentTabHref("/more/connections")).toBe("/assets");
+    expect(parentTabHref("/more/connections/")).toBe("/assets");
+    expect(isTabRoot("/more/connections")).toBe(false);
+    // 전체 메뉴 자체와 다른 하위 화면은 그대로 전체다.
+    expect(activeTabFor("/more")).toBe("all");
+    expect(parentTabHref("/more/privacy")).toBe("/more");
+  });
+
   it("returns a cold loan-import deep link to assets without making it an exit root", () => {
     expect(parentTabHref("/assets/loan-import/")).toBe("/assets");
     expect(isTabRoot("/assets/loan-import/")).toBe(false);
   });
 
   it("all legacy subpages reach a primary destination without a loop", () => {
-    for (const path of ["/declines", "/cards", "/budgets", "/ledger/analysis", "/todo", "/ai", "/more/privacy", "/plan/housing"]) {
+    for (const path of ["/declines", "/cards", "/budgets", "/ledger/analysis", "/todo", "/ai", "/more/privacy", "/plan/housing", "/more/connections"]) {
       const visited = new Set<string>();
       let current = path;
       while (!isTabRoot(current)) {

@@ -53,6 +53,8 @@ const POLL_INTERVAL_MS = 60_000;
  * 홈(2026-11-04 개편). 탭 첫 화면과 겹치는 바로가기(분석·카드 내역·순자산)는 두지 않고,
  * 탭에 들어가야만 알 수 있는 것을 질문 순서대로 보여준다:
  * 이번 달 괜찮나(사용액 + 지난달 이맘때) → 누가 썼나 → 예산 → 곧 나갈 돈 → 지난주.
+ * 달 이동(`?month=`)은 소비 카드의 금액·비교 문구에만 적용한다. 아래 섹션은 제목에 달이 없어 늘 이번 달로
+ * 읽히므로 데이터도 늘 이번 달이다 — 지난 달을 고르면 그 달 예산이 이번 달 예산처럼 보였다(2026-11-06 결정 ②).
  * 홈에서는 기록만 표시하며 잔액이나 거래를 변경하지 않는다.
  */
 export default function DashboardPage() {
@@ -77,12 +79,13 @@ function HomeView() {
   // 창 계산 기준 시각. 창은 시간·날·주 단위로 내려 잡아 렌더마다 쿼리 키가 바뀌지 않는다.
   const now = new Date();
 
+  // 고른 달은 소비 카드에만 쓴다. 아래 섹션은 전부 thisMonth·now 기준이다.
   const monthly = useMonthly(month, { refetchInterval: POLL_INTERVAL_MS });
   const todo = useTodoCounts({ refetchInterval: POLL_INTERVAL_MS });
   const requests = useReviewRequests(null, {
     refetchInterval: POLL_INTERVAL_MS,
   });
-  const budgets = useBudgets(month);
+  const budgets = useBudgets(thisMonth);
   // 홈이 `?month=`를 읽기만 하고 바꿀 수단이 없었다 — 어떤 화면도 그 링크를 걸지
   // 않아 사실상 닿을 수 없는 파라미터였다. 분석·예산과 같은 스위처를 쓴다.
   const monthsQuery = useAnalyticsMonths();
@@ -116,8 +119,8 @@ function HomeView() {
       ? paceText(monthly.data.totalNet, pace.data.totalNet)
       : null;
 
-  // 누가 썼나: 고른 달의 구성원별 집계. 색은 카드·거래 아이콘과 같은 구성원 색.
-  const members = useMembers(month);
+  // 누가 썼나: 이번 달 구성원별 집계. 색은 카드·거래 아이콘과 같은 구성원 색.
+  const members = useMembers(thisMonth);
   const householdMembers = useHouseholdMembers();
   const colorOf = useCallback(
     (memberId: string): MemberColor | null =>
@@ -126,17 +129,17 @@ function HomeView() {
     [householdMembers.data]
   );
 
-  // 지난주(월~일) — 이번 달을 볼 때만. 지난 달 화면에서 "지난주"는 뜻이 없다.
+  // 지난주(월~일). 오늘 기준 창이라 카드의 달 선택과 상관없이 보인다.
   const week = lastWeekWindow(now);
-  const weekly = useMonthlyRange(isCurrentMonth ? week : null);
-  const weeklyCategories = useCategoriesRange(isCurrentMonth ? week : null);
+  const weekly = useMonthlyRange(week);
+  const weeklyCategories = useCategoriesRange(week);
 
-  // 다가오는 지출: 정기 결제(7일) · 카드 결제일(7일) · 주택 납부(30일).
+  // 다가오는 지출: 정기 결제(7일) · 카드 결제일(7일) · 주택 납부(30일). 오늘 기준이라 달 선택과 상관없다.
   const housing = useManualHousingPlans(scope);
   const until = upcomingUntil(now);
   const recurring = useQuery<RecurringUpcomingResponse>({
     queryKey: recurringUpcomingQueryKey(householdId, until),
-    enabled: householdId != null && isCurrentMonth,
+    enabled: householdId != null,
     queryFn: () =>
       authedFetch((token) =>
         fetchRecurringUpcoming(token, householdId as string, until)
@@ -151,7 +154,7 @@ function HomeView() {
     [cardList.data]
   );
   const cardSpend = useCards(previousMonth, {
-    enabled: isCurrentMonth && billingCards.length > 0,
+    enabled: billingCards.length > 0,
   });
   const lastMonthCardSpend = useMemo(
     () =>
@@ -164,21 +167,19 @@ function HomeView() {
         : null,
     [cardSpend.data]
   );
-  const upcomingRows = isCurrentMonth
-    ? buildUpcomingRows({
-        now,
-        recurring: recurring.data?.enabled ? recurring.data.items : [],
-        // 주택은 조회가 성공했을 때만 — 실패·로딩 중의 캐시 값을 일정처럼 말하지 않는다.
-        housing: housing.isSuccess ? housing.data.summary : null,
-        cards: billingCards.map((card) => ({
-          id: card.id,
-          alias: card.alias,
-          status: card.status,
-          billingDay: card.billingDay ?? null,
-        })),
-        lastMonthCardSpend,
-      })
-    : [];
+  const upcomingRows = buildUpcomingRows({
+    now,
+    recurring: recurring.data?.enabled ? recurring.data.items : [],
+    // 주택은 조회가 성공했을 때만 — 실패·로딩 중의 캐시 값을 일정처럼 말하지 않는다.
+    housing: housing.isSuccess ? housing.data.summary : null,
+    cards: billingCards.map((card) => ({
+      id: card.id,
+      alias: card.alias,
+      status: card.status,
+      billingDay: card.billingDay ?? null,
+    })),
+    lastMonthCardSpend,
+  });
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-4">
@@ -212,21 +213,19 @@ function HomeView() {
       />
       <HomeBudgetSummary
         items={budgets.data?.items}
-        month={month}
+        month={thisMonth}
         error={budgets.isError}
         onRetry={() => void budgets.refetch()}
         retrying={budgets.isFetching}
       />
       <HomeUpcoming rows={upcomingRows} />
-      {isCurrentMonth ? (
-        <HomeWeeklyRecap
-          week={week}
-          monthly={weekly.data}
-          categories={weeklyCategories.data}
-          loading={weekly.isLoading}
-          error={weekly.isError}
-        />
-      ) : null}
+      <HomeWeeklyRecap
+        week={week}
+        monthly={weekly.data}
+        categories={weeklyCategories.data}
+        loading={weekly.isLoading}
+        error={weekly.isError}
+      />
     </div>
   );
 }

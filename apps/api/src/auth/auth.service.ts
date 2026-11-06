@@ -8,7 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, gte, isNotNull, isNull, or } from 'drizzle-orm';
 
 import type {
   AuthTokens,
@@ -493,6 +493,28 @@ export class AuthService {
         and(
           eq(schema.userSessions.userId, userId),
           isNull(schema.userSessions.revokedAt),
+        ),
+      );
+    // 살아 있는 세션만 끊으면 '모든 기기에서 로그아웃'이 24시간 동안 거짓이 된다: 최근에 회전된 옛
+    // 리프레시 토큰(revokedReason 'rotated'·0045 이전 NULL)은 refresh의 유예 창 안에서 새 세션을
+    // 받는다(회전 응답을 놓친 기기, 또는 토큰을 훔친 쪽). 그 행들의 이유를 같은 조치로 바꿔 유예에서
+    // 뺀다. revokedAt은 기록으로 두고 이유만 바꾸므로, 그 토큰은 그 요청만 401이고 전 세션 무효화는
+    // 일어나지 않는다(위 refresh 분기). 운영자 재설정 스크립트(scripts/ops/reset-password.mjs)와 같은 규칙.
+    await this.db
+      .update(schema.userSessions)
+      .set({ revokedReason: reason })
+      .where(
+        and(
+          eq(schema.userSessions.userId, userId),
+          isNotNull(schema.userSessions.revokedAt),
+          gte(
+            schema.userSessions.revokedAt,
+            new Date(Date.now() - REFRESH_REUSE_GRACE_MS),
+          ),
+          or(
+            eq(schema.userSessions.revokedReason, 'rotated'),
+            isNull(schema.userSessions.revokedReason),
+          ),
         ),
       );
   }

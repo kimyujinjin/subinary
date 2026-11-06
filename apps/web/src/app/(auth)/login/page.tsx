@@ -8,6 +8,10 @@
  * 오류 자리: 이메일·비밀번호가 틀린 경우(401)만 비밀번호 칸 아래에 둔다. 요청 과다(429)·서버·네트워크
  * 오류는 비밀번호와 무관하므로 폼 위 한 줄로 알린다(`login-failure.ts`).
  *
+ * 비밀번호 분실: 메일 발송 기능이 없어 스스로 되찾는 길이 없다(API에 재설정 경로 없음). 비밀번호 칸 아래
+ * '비밀번호를 잊었어요'가 안내 시트를 열어 앱을 관리하는 가족에게 임시 비밀번호를 받으라고 알린다. 운영자는
+ * `scripts/ops/reset-password.sh <이메일>`로 임시 비밀번호를 만든다(2026-11-06 결정 4).
+ *
  * `?returnTo=`는 초대 링크가 로그인에서 끊기지 않게 한다(C-1). 회원가입은 이미
  * invite를 보존했는데 **기존 계정 로그인만** 무조건 /dashboard로 가서, 초대받은
  * 사람이 수락 화면으로 돌아오지 못했다. 값은 공격자가 심을 수 있는 입력이므로
@@ -91,6 +95,7 @@ function LoginForm() {
   const [bioRetry, setBioRetry] = useState(false);
   const [bioBusy, setBioBusy] = useState(false);
   const [optInOpen, setOptInOpen] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
   const optInEligible = useRef(false);
   // 옵트인 흐름 동안 status 기반 리다이렉트 보류. login()이 status를 바꾸기
   // 전에 동기적으로 세워야 레이스가 없으므로 state가 아닌 ref를 쓴다.
@@ -237,6 +242,16 @@ function LoginForm() {
                 </FormItem>
               )}
             />
+            <div className="-mt-3 flex justify-end">
+              <button
+                type="button"
+                aria-haspopup="dialog"
+                className="text-muted-foreground text-caption inline-flex min-h-11 items-center px-1 font-medium hover:underline active:opacity-60"
+                onClick={() => setForgotOpen(true)}
+              >
+                비밀번호를 잊었어요
+              </button>
+            </div>
             <Button
               type="submit"
               size="lg"
@@ -328,6 +343,24 @@ function LoginForm() {
           >
             사용하지 않기
           </Button>
+        </div>
+      </BottomSheet>
+
+      {/* 비밀번호 분실 안내. 고를 것이 없는 안내라 시트이고, 버튼은 위젯이 다는 '닫기' 하나다. */}
+      <BottomSheet
+        open={forgotOpen}
+        onOpenChange={setForgotOpen}
+        title="비밀번호를 잊었나요?"
+      >
+        <div className="text-body text-muted-foreground flex flex-col gap-2 pb-3">
+          <p>모아는 아직 메일로 비밀번호를 다시 설정할 수 없어요.</p>
+          <p>
+            이 앱을 관리하는 가족에게 임시 비밀번호를 받아 로그인한 뒤,{" "}
+            <span className="text-foreground font-medium">
+              전체 › 비밀번호 변경
+            </span>
+            에서 새 비밀번호로 바꿔 주세요.
+          </p>
         </div>
       </BottomSheet>
     </main>
