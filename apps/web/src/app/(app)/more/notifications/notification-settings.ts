@@ -114,15 +114,6 @@ export function toUpdateRequest(
   };
 }
 
-/**
- * 화면에서만 풀어 쓰는 종류 설명. 이름('확인 리마인더'·'확인 요청')은 Android 시스템 설정의 채널 이름과
- * 같아야 해서(packages/shared) 그대로 두고, 이름이 비슷한 두 알림이 무엇을 알리는지만 여기서 가른다.
- */
-export const KIND_DESCRIPTION_OVERRIDES: Partial<Record<NotificationKind, string>> = {
-  reminder: "확인 필요·중복 의심으로 남은 거래 알림",
-  review: "가족끼리 물어본 결제와 그 답",
-};
-
 /** 이 휴대폰이 푸시를 못 받는 권한 상태인가 — 거부, 그리고 아직 허용하지 않은 상태(한 번 거절 포함). */
 export function pushBlockedOnThisPhone(permission: PushPermissionState): boolean {
   return permission === "denied" || permission === "prompt";
