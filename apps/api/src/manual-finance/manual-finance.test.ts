@@ -25,6 +25,7 @@ const AT = '2026-01-01T00:00:00.000Z';
 type Row = Record<string, unknown>;
 const tables = [schema.users, schema.households, schema.householdMembers, schema.manualAssets,
   schema.manualHousingPlans, schema.manualHousingPayments, schema.manualFinanceAudit,
+  schema.housingBrandConnections,
   schema.loanRecords, schema.loanSnapshots,
   schema.registeredDevices, schema.deviceCredentials, schema.householdConsents];
 const tableMap = new Map<string, Table>(tables.map(table => [getTableName(table), table as Table]));
@@ -356,6 +357,39 @@ describe('housing plan atomicity and privacy', () => {
     expect((await service.updatePlan(U, H, P, { ...fields, expectedVersion: 1,
       payments: [{ ...input.payments[0]!, id: replacement }] })).item.version).toBe(2);
     expect((await service.getPlan(U, H, P)).payments.map(row => row.id)).toEqual([replacement]);
+  });
+  it('keeps previous amount and paid-amount sources when the amounts are unchanged even if the client sends manual', async () => {
+    const { service } = setup();
+    const amountAsOf = '2026-03-01T00:00:00.000Z';
+    const paidAsOf = '2026-03-02T00:00:00.000Z';
+    const input = planInput({
+      payments: [{
+        id: PAY, kind: 'contract', installment: null, dueDate: '2026-12-01',
+        amount: '10000000', amountSource: 'confirmed', amountAsOfAt: amountAsOf,
+        paidAmount: '1000000', paidAmountSource: 'sujain_fetch', paidAmountAsOfAt: paidAsOf,
+        paidDate: '2026-02-01',
+      }],
+    });
+    await service.createPlan(U, input);
+    const { id: _id, householdId: _household, ...fields } = input;
+    const updated = await service.updatePlan(U, H, P, {
+      ...fields,
+      expectedVersion: 1,
+      payments: [{
+        id: PAY, kind: 'contract', installment: null, dueDate: '2026-12-01',
+        amount: '10000000', amountSource: 'manual', amountAsOfAt: '2026-11-06T15:00:00.000Z',
+        paidAmount: '1000000', paidAmountSource: 'manual', paidAmountAsOfAt: '2026-11-06T15:00:00.000Z',
+        paidDate: '2026-02-01',
+      }],
+    });
+    expect(updated.payments[0]).toMatchObject({
+      amount: '10000000',
+      amountSource: 'confirmed',
+      amountAsOfAt: amountAsOf,
+      paidAmount: '1000000',
+      paidAmountSource: 'sujain_fetch',
+      paidAmountAsOfAt: paidAsOf,
+    });
   });
   it('blocks non-owner edits and hides child records after soft deleting a shared plan', async () => {
     const { service, rows, queries } = setup(); const input = planInput({ visibility: 'household' });

@@ -108,9 +108,59 @@ function toPlan(row: PlanRow, userId: string, canWrite: boolean): ManualHousingP
     canEdit: canWrite && row.ownerUserId === userId };
 }
 
+function seoulMinute(value: Date | null): string | null {
+  if (!value) return null;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(value);
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;
+}
+
+function paymentStatus(amount: string | null, paidAmount: string | null): ManualHousingPayment['status'] {
+  if (amount === null || paidAmount === null) return 'unknown';
+  const left = BigInt(amount) - BigInt(paidAmount);
+  if (left <= 0n) return 'paid';
+  if (BigInt(paidAmount) > 0n) return 'partial';
+  return 'unpaid';
+}
+
 function toPayment(row: PaymentRow): ManualHousingPayment {
-  return { id: row.id, planId: row.planId, kind: row.kind, installment: row.installment,
-    dueDate: row.dueDate, amount: row.amount, paidAmount: row.paidAmount, paidDate: row.paidDate };
+  const remaining = row.amount !== null && row.paidAmount !== null
+    ? (BigInt(row.amount) - BigInt(row.paidAmount) < 0n ? '0' : (BigInt(row.amount) - BigInt(row.paidAmount)).toString())
+    : null;
+  return {
+    id: row.id, planId: row.planId, kind: row.kind, installment: row.installment,
+    label: row.label ?? null,
+    dueDate: row.dueDate, amount: row.amount, paidAmount: row.paidAmount, paidDate: row.paidDate,
+    amountSource: row.amountSource ?? null,
+    amountAsOfAt: row.amountAsOfAt?.toISOString() ?? null,
+    amountAsOfSeoul: seoulMinute(row.amountAsOfAt),
+    paidAmountSource: row.paidAmountSource ?? null,
+    paidAmountAsOfAt: row.paidAmountAsOfAt?.toISOString() ?? null,
+    paidAmountAsOfSeoul: seoulMinute(row.paidAmountAsOfAt),
+    remainingAmount: remaining,
+    status: paymentStatus(row.amount, row.paidAmount),
+  };
+}
+
+function toBrandConnection(
+  row: typeof schema.housingBrandConnections.$inferSelect,
+  userId: string,
+): NonNullable<ManualHousingPlanResponse['brandConnection']> {
+  return {
+    id: row.id,
+    planId: row.planId,
+    brand: row.brand,
+    status: row.status,
+    statusMessage: row.statusMessage,
+    credentialsStored: row.credentials !== null && row.disconnectedAt === null,
+    version: row.version,
+    lastFetchAt: row.lastFetchAt?.toISOString() ?? null,
+    lastSuccessAt: row.lastSuccessAt?.toISOString() ?? null,
+    canManage: row.ownerUserId === userId && row.disconnectedAt === null,
+  };
 }
 
 /**
@@ -322,14 +372,84 @@ export class ManualFinanceService {
       const [row] = await tx.select().from(schema.manualHousingPlans).where(and(eq(schema.manualHousingPlans.id, id),
         this.visible(schema.manualHousingPlans, householdId, userId))).limit(1);
       if (!row) throw notFound();
-      return { item: toPlan(row, userId, access.canWrite), payments: (await this.payments(tx, [id])).map(toPayment) };
+      const brandConnection = row.ownerUserId === userId
+        ? await this.brandConnection(tx, id, userId)
+        : null;
+      return {
+        item: toPlan(row, userId, access.canWrite),
+        payments: (await this.payments(tx, [id])).map(toPayment),
+        brandConnection,
+      };
     }, true);
   }
 
+  private async brandConnection(tx: Executor, planId: string, userId: string) {
+    const [row] = await tx.select().from(schema.housingBrandConnections).where(and(
+      eq(schema.housingBrandConnections.planId, planId),
+      eq(schema.housingBrandConnections.ownerUserId, userId),
+      isNull(schema.housingBrandConnections.disconnectedAt),
+    )).limit(1);
+    return row ? toBrandConnection(row, userId) : null;
+  }
+
+  private paymentInsert(
+    payment: ManualHousingPaymentInput,
+    planId: string,
+    position: number,
+    previous: PaymentRow | undefined,
+    asOf = new Date(),
+  ) {
+    const amountUnchanged = previous != null && previous.amount === payment.amount;
+    const paidUnchanged = previous != null && previous.paidAmount === payment.paidAmount;
+    // 금액이 그대로면 클라이언트가 manual·새 시각을 보내도 이전 출처·기준 시각을 유지한다.
+    const amountSource = payment.amount === null
+      ? null
+      : (amountUnchanged
+        ? (previous!.amountSource ?? payment.amountSource ?? 'manual')
+        : (payment.amountSource ?? 'manual'));
+    const amountAsOfAt = payment.amount === null
+      ? null
+      : (amountUnchanged && previous!.amountAsOfAt
+        ? previous!.amountAsOfAt
+        : (payment.amountAsOfAt ? new Date(payment.amountAsOfAt) : asOf));
+    const paidAmountSource = payment.paidAmount === null
+      ? null
+      : (paidUnchanged
+        ? (previous!.paidAmountSource ?? payment.paidAmountSource ?? 'manual')
+        : (payment.paidAmountSource ?? 'manual'));
+    const paidAmountAsOfAt = payment.paidAmount === null
+      ? null
+      : (paidUnchanged && previous!.paidAmountAsOfAt
+        ? previous!.paidAmountAsOfAt
+        : (payment.paidAmountAsOfAt ? new Date(payment.paidAmountAsOfAt) : asOf));
+    return {
+      id: payment.id,
+      planId,
+      position,
+      kind: payment.kind,
+      installment: payment.installment,
+      label: payment.label ?? previous?.label ?? null,
+      dueDate: payment.dueDate,
+      amount: payment.amount,
+      amountSource,
+      amountAsOfAt,
+      paidAmount: payment.paidAmount,
+      paidAmountSource,
+      paidAmountAsOfAt,
+      paidDate: payment.paidDate,
+    };
+  }
+
   private async replacePayments(tx: Executor, planId: string, payments: ManualHousingPaymentInput[], replacing = false): Promise<ManualHousingPayment[]> {
+    const previousRows = replacing
+      ? await tx.select().from(schema.manualHousingPayments).where(eq(schema.manualHousingPayments.planId, planId))
+      : [];
+    const previousById = new Map(previousRows.map((row) => [row.id, row]));
     if (replacing) await tx.delete(schema.manualHousingPayments).where(eq(schema.manualHousingPayments.planId, planId));
     if (payments.length === 0) return [];
-    const rows = await tx.insert(schema.manualHousingPayments).values(payments.map((payment, position) => ({ ...payment, planId, position }))).returning();
+    const rows = await tx.insert(schema.manualHousingPayments).values(
+      payments.map((payment, position) => this.paymentInsert(payment, planId, position, previousById.get(payment.id))),
+    ).returning();
     return rows.sort((a, b) => a.position - b.position).map(toPayment);
   }
 
@@ -347,12 +467,16 @@ export class ManualFinanceService {
         const payments = await this.replacePayments(tx, created.id, input.payments);
         await this.audit(tx, input.householdId, userId, 'housing_plan', created.id, 'create', created.version);
         sharedChange = created.visibility === 'household';
-        return { item: toPlan(created, userId, access.canWrite), payments };
+        return { item: toPlan(created, userId, access.canWrite), payments, brandConnection: null };
       }
       const [existing] = await tx.select().from(schema.manualHousingPlans).where(eq(schema.manualHousingPlans.id, input.id)).for('share').limit(1);
       if (!existing || existing.householdId !== input.householdId || existing.ownerUserId !== userId
         || existing.deletedAt !== null || existing.creationPayloadHash !== hash) throw createConflict();
-      return { item: toPlan(existing, userId, access.canWrite), payments: (await this.payments(tx, [existing.id])).map(toPayment) };
+      return {
+        item: toPlan(existing, userId, access.canWrite),
+        payments: (await this.payments(tx, [existing.id])).map(toPayment),
+        brandConnection: await this.brandConnection(tx, existing.id, userId),
+      };
     });
     if (sharedChange) this.publishShared(input.householdId);
     return result;
@@ -377,7 +501,11 @@ export class ManualFinanceService {
       const payments = await this.replacePayments(tx, id, input.payments, true);
       await this.audit(tx, householdId, userId, 'housing_plan', id, 'update', version);
       sharedChange = current.visibility === 'household' || row.visibility === 'household';
-      return { item: toPlan(row, userId, access.canWrite), payments };
+      return {
+        item: toPlan(row, userId, access.canWrite),
+        payments,
+        brandConnection: await this.brandConnection(tx, id, userId),
+      };
     });
     if (sharedChange) this.publishShared(householdId);
     return result;
