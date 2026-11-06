@@ -18,7 +18,7 @@
  * 찾지 못한 것으로 두고 비교 안내를 하지 않는다.
  * ------------------------------------------------------------------------- */
 import type { TransactionSummary } from "@family/contracts";
-import { useQuery } from "@tanstack/react-query";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
@@ -125,26 +125,25 @@ export function findDuplicatePair<T extends PairFields>(
   return best?.item ?? null;
 }
 
+type AuthedFetch = ReturnType<typeof useAuth>["authedFetch"];
+
 /**
- * 중복 의심 승인의 짝 결제. 찾을 필요가 없거나, 불러오는 중·실패·없음이면 null —
- * 상세는 null이면 비교 안내를 하지 않는다(보여 줄 수 없는 결제를 찾게 하지 않는다).
+ * 짝 결제를 찾는 조회(창 안의 승인 목록). 훅과 상세 미리 받기(detail-prefetch.ts)가 같은 키·요청을 쓴다.
  * 쿼리 키는 `["transactions", …]` 접두라 거래가 바뀌면 함께 무효화된다.
  */
-export function useDuplicatePair(
-  txn: TransactionSummary
-): TransactionSummary | null {
-  const { householdId } = useHousehold();
-  const { authedFetch } = useAuth();
-  const range = duplicatePairWindow(txn);
+export function duplicatePairQuery(
+  householdId: string | null,
+  range: { from: string; to: string } | null,
+  authedFetch: AuthedFetch
+) {
   const filters = {
     type: "approval",
     from: range?.from,
     to: range?.to,
     limit: DUPLICATE_PAIR_SCAN_LIMIT,
   };
-  const query = useQuery({
+  return queryOptions({
     queryKey: queryKeys.transactions(householdId, filters),
-    enabled: householdId != null && range != null,
     queryFn: () =>
       authedFetch((token) =>
         api.transactions.list(token, {
@@ -153,6 +152,25 @@ export function useDuplicatePair(
         })
       ),
   });
-  if (range == null || !query.isSuccess) return null;
-  return findDuplicatePair(query.data.items, txn);
+}
+
+/**
+ * 중복 의심 승인의 짝 결제(`pair`). 찾을 필요가 없거나, 불러오는 중·실패·없음이면 null —
+ * 상세는 null이면 비교 안내를 하지 않는다(보여 줄 수 없는 결제를 찾게 하지 않는다).
+ * `loading`은 짝을 찾는 중 — 상세가 안내 줄 자리를 미리 잡아 도착할 때 시트 높이가 바뀌지 않게 한다.
+ */
+export function useDuplicatePair(txn: TransactionSummary): {
+  pair: TransactionSummary | null;
+  loading: boolean;
+} {
+  const { householdId } = useHousehold();
+  const { authedFetch } = useAuth();
+  const range = duplicatePairWindow(txn);
+  const query = useQuery({
+    ...duplicatePairQuery(householdId, range, authedFetch),
+    enabled: householdId != null && range != null,
+  });
+  if (range == null) return { pair: null, loading: false };
+  if (!query.isSuccess) return { pair: null, loading: query.isLoading };
+  return { pair: findDuplicatePair(query.data.items, txn), loading: false };
 }

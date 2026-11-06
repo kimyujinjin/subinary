@@ -10,21 +10,59 @@
  * 전체 폭 버튼이 붙어, 모든 가족 공개 결제에서 '이 가맹점 최근 결제'를 아래로 밀었다. 줄을 누르면 물어볼
  * 사람을 고르는 메뉴가 그 자리에서 펼쳐진다(값 고르기와 같은 PickerMenu — 시트 위에 창을 겹치지 않는다).
  * 물어본 사람·받은 요청과 오류는 그 줄 아래에 붙는다.
+ *
+ * 요청 목록을 받는 동안에는 메뉴 없이 같은 높이의 줄로 자리만 잡아 둔다(2026-11-06 사용자 지적 — 예전에는
+ * 받은 뒤에 줄이 새로 끼어들어 내용만큼 아래에 붙는 시트의 윗변이 튀었다).
  * ------------------------------------------------------------------------- */
-import type { TransactionSummary } from "@family/contracts";
+import {
+  reviewRequestListResponseSchema,
+  type TransactionSummary,
+} from "@family/contracts";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { FieldRow } from "@/components/widgets/field-row";
 import { InlineNotice } from "@/components/widgets/inline-notice";
-import { ApiError } from "@/lib/api-client";
+import { ApiError, apiFetch } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
+import { useHousehold } from "@/lib/household-context";
 import { useHouseholdMembers } from "@/lib/queries";
 import {
+  reviewRequestsKey,
   useCreateReviewRequest,
   useResolveReviewRequest,
-  useReviewRequests,
 } from "@/lib/review-requests";
+
+type AuthedFetch = ReturnType<typeof useAuth>["authedFetch"];
+
+/**
+ * 이 결제의 열린 확인 요청. 이 줄과 거래 상세 미리 받기(transactions/detail-prefetch.ts)가 같은 키·요청을 쓴다.
+ * 요청 모양은 `lib/review-requests.ts`의 `useReviewRequests(transactionId)`와 같다(키도 같아 요청을 보내거나
+ * 풀면 `["review-requests"]` 무효화로 함께 다시 받는다).
+ */
+export function reviewRequestsQuery(
+  householdId: string | null,
+  transactionId: string,
+  authedFetch: AuthedFetch
+) {
+  return queryOptions({
+    queryKey: reviewRequestsKey(householdId, transactionId),
+    queryFn: () =>
+      authedFetch(async (token) => {
+        const params = new URLSearchParams({
+          householdId: householdId as string,
+          transactionId,
+        });
+        return reviewRequestListResponseSchema.parse(
+          await apiFetch(`/v1/review-requests?${params.toString()}`, {
+            accessToken: token,
+          })
+        );
+      }),
+  });
+}
 
 function errorText(error: unknown): string {
   return error instanceof ApiError
@@ -39,10 +77,14 @@ export function ReviewRequestAction({
   txn: Pick<TransactionSummary, "id" | "visibility" | "masked">;
   disabled?: boolean;
 }) {
-  const { user } = useAuth();
+  const { user, authedFetch } = useAuth();
+  const { householdId } = useHousehold();
   const members = useHouseholdMembers();
   const shareable = txn.visibility === "household" && !txn.masked;
-  const requests = useReviewRequests(txn.id, { enabled: shareable });
+  const requests = useQuery({
+    ...reviewRequestsQuery(householdId, txn.id, authedFetch),
+    enabled: householdId != null && shareable,
+  });
   const create = useCreateReviewRequest();
   const resolve = useResolveReviewRequest();
 
@@ -51,8 +93,21 @@ export function ReviewRequestAction({
     (member) => member.status === "active" && member.userId !== user.id
   );
   if (others.length === 0) return null;
-  // 이미 물어봤는지 모르는 채로 메뉴를 열면 같은 사람을 다시 고르게 된다 — 요청 목록을 받은 뒤에 그린다.
-  if (requests.isLoading) return null;
+  // 이미 물어봤는지 모르는 채로 메뉴를 열면 같은 사람을 다시 고르게 된다 — 요청 목록을 받기 전에는 메뉴를 달지 않는다.
+  // 줄은 받은 뒤에도 꼭 있으니 같은 높이로 먼저 그린다. 값 자리는 내용 없는 회색 막대뿐이다.
+  if (requests.isLoading) {
+    return (
+      <FieldRow
+        label="가족에게 물어보기"
+        value={
+          <>
+            <span className="sr-only">불러오는 중</span>
+            <Skeleton aria-hidden="true" className="ml-auto h-4 w-20" />
+          </>
+        }
+      />
+    );
+  }
 
   const open = requests.data?.items ?? [];
   const received = open.find((item) => item.direction === "received");

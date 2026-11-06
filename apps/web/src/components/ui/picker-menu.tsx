@@ -6,6 +6,8 @@
  *
  * 값 고르기는 창(시트)이 아니라 드롭다운이다. 2026-11-05 하루 동안 바텀 시트로 띄웠다가
  * "모든 걸 다 바텀 시트로 만들라고 한 건 아니었다"는 지적으로 정리했다(`sheet-layout.ts` 표).
+ *
+ * 여는 순간은 공용 드롭다운(`dropdown-menu.tsx`)을 따른다 — 터치는 손을 뗄 때, 마우스는 누르는 순간 연다.
  */
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { Check } from "lucide-react";
@@ -35,7 +37,7 @@ export type PickerMenuProps = {
   align?: "start" | "end";
   /**
    * 메뉴를 열지 않는다. 트리거 버튼의 disabled 속성만으로는 막히지 않는다 — Radix는 자기 Trigger의
-   * disabled만 보고 pointerdown에서 메뉴를 연다(Android 웹뷰는 disabled 버튼에도 pointer 이벤트를 보낸다).
+   * disabled만 보고 메뉴를 연다(Android 웹뷰는 disabled 버튼에도 pointer 이벤트를 보낸다).
    */
   disabled?: boolean;
 };

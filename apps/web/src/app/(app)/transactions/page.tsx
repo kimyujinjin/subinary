@@ -7,6 +7,8 @@
  * 목록은 날짜별 그룹("7월 17일" 헤더 + 원화 승인 소계) + ListRow(카테고리 아이콘 · 가맹점 ·
  * 카드/구성원/카테고리 · 금액 · 상태 칩). 행 클릭 → 상세 바텀 시트에서
  * 카테고리 변경(applyRule)/공개 범위/메모/정상·중복 표시/취소연결을 처리한다.
+ * 줄을 누르려 하면 상세가 쓸 하위 데이터를 미리 받고(스크롤 터치는 거른다, press-prefetch.ts), 열 때 아직이면
+ * 잠깐만 기다린다(detail-prefetch.ts).
  * 상세 줄에서 고른 값은 그 자리에서 저장되고, 진행 표시·오류도 그 줄에만 보인다(detail-save.ts).
  * 상태 이름은 목록과 상세가 같다 — 취소됨·부분 취소·환불·합계 제외·확인 필요·중복 의심(list-status.ts).
  *
@@ -16,6 +18,8 @@
  * ------------------------------------------------------------------------- */
 import {
   Suspense,
+  memo,
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -204,6 +208,18 @@ import {
   type TransactionsEmptyAction,
 } from "./empty-state-copy";
 import { DEVICE_TIME_ZONE_NOTE, deviceMatchesSeoulTime } from "./device-time";
+import {
+  createDetailOpenGate,
+  prefetchTransactionDetail,
+  resolveDetailFallback,
+  seedTransactionDetail,
+  type DetailPrefetchContext,
+} from "./detail-prefetch";
+import {
+  pressPrefetchHandlers,
+  usePressPrefetch,
+  type PressPrefetch,
+} from "./press-prefetch";
 
 /* -------------------------------------------------------------------------- */
 /* Local types                                                                */
@@ -308,6 +324,107 @@ function TxnChips({ chips }: { chips: readonly TransactionChip[] }) {
   );
 }
 
+/**
+ * 거래 목록 한 줄. memo — 상세를 열고 닫거나(detailId·openingId) 저장 상태가 바뀌어 페이지가 다시 그려져도
+ * 바뀌지 않은 줄은 건너뛴다. 100줄을 다시 그리면 맥(node)에서 약 5ms, 폰에서는 그 몇 배라 시트가 올라오는 첫 프레임을
+ * 늦췄다(2026-11-06 측정). 넘기는 값은 글자·불리언과 페이지가 고정해 둔 함수뿐이다.
+ */
+const TransactionRow = memo(function TransactionRow({
+  txn,
+  categoryName,
+  iconClassName,
+  subtitle,
+  pressed,
+  busy,
+  press,
+  onPrefetch,
+  onOpen,
+}: Readonly<{
+  txn: TransactionSummary;
+  categoryName: string | null;
+  /** 아이콘 원의 색(구성원·공용 색, 비공개·합계 제외는 회색). */
+  iconClassName: string;
+  subtitle: string;
+  /** 상세를 열려고 하위 데이터를 기다리는 중 — 손을 뗀 뒤에도 눌린 모양으로 둔다. */
+  pressed: boolean;
+  /** 이 거래를 저장하는 중. */
+  busy: boolean;
+  /** 목록 전체가 함께 쓰는 누름 판별(바뀌지 않는 값) — 스크롤하려고 댄 손가락에는 미리 받지 않는다. */
+  press: PressPrefetch;
+  onPrefetch: (txn: TransactionSummary) => void;
+  onOpen: (txn: TransactionSummary, viaKeyboard: boolean) => void;
+}>) {
+  // ListRow는 click 이벤트를 넘겨주지 않는다 — 감싼 요소가 먼저(capture) 보고 키보드로 누른 click(detail 0)인지 적어 둔다.
+  const viaKeyboard = useRef(false);
+  const Icon = categoryIcon(categoryName);
+  const isCancellation = txn.transactionType === "cancellation";
+  const excluded = txn.excludedAt != null;
+  const chips = transactionChips(txn);
+  const totalNote = dayTotalNote(txn);
+  return (
+    // contents: 상자를 만들지 않아 줄 배치는 그대로다. 줄 버튼의 포인터 이벤트가 여기로 올라와, 누르려는 손가락이면
+    // 미리 받기를 시작한다(press-prefetch.ts — 스크롤하려고 댄 손가락에는 요청을 보내지 않는다).
+    <div
+      className="contents"
+      {...(txn.masked
+        ? {}
+        : pressPrefetchHandlers(press, () => onPrefetch(txn)))}
+      onClickCapture={(event) => {
+        viaKeyboard.current = event.detail === 0;
+      }}
+    >
+      <ListRow
+        icon={<Icon aria-hidden="true" />}
+        iconClassName={cn("rounded-control", iconClassName)}
+        title={
+          txn.masked ? (
+            <span className="text-muted-foreground">{merchantLabel(txn)}</span>
+          ) : (
+            merchantLabel(txn)
+          )
+        }
+        subtitle={subtitle}
+        value={
+          <span
+            className={cn(
+              "flex min-w-0 max-w-full flex-col items-end",
+              excluded && "line-through opacity-60"
+            )}
+          >
+            {isCancellation ? (
+              <Money amount={-txn.amount} currency={txn.currency} muted />
+            ) : (
+              <Money amount={txn.netAmount} currency={txn.currency} />
+            )}
+            {txn.originalCurrency && txn.originalAmount != null ? (
+              <span className="text-muted-foreground text-micro max-w-full font-normal">
+                {foreignAmountLabel(txn.originalAmount, txn.originalCurrency)}
+              </span>
+            ) : null}
+          </span>
+        }
+        valueSub={
+          // 승인은 기본 상태라 표시하지 않는다(§5 가계부). 소계에서 빠지는 줄은 이유를 글자로 붙인다.
+          chips.length > 0 || totalNote ? (
+            <span className="flex max-w-full flex-wrap items-center justify-end gap-1.5">
+              <TxnChips chips={chips} />
+              {totalNote ? <span>{totalNote}</span> : null}
+            </span>
+          ) : undefined
+        }
+        onClick={
+          txn.masked ? undefined : () => onOpen(txn, viaKeyboard.current)
+        }
+        className={cn(
+          "rounded-control py-3 hover:bg-muted/60 active:bg-muted",
+          pressed && "bg-muted",
+          busy && "pointer-events-none opacity-60"
+        )}
+      />
+    </div>
+  );
+});
+
 /** 상세 줄의 값 자리 — 저장하는 동안 값 앞에 작은 진행 표시만 둔다(다른 줄은 그대로). */
 function SavingValue({
   saving,
@@ -362,7 +479,7 @@ export default function TransactionsPage() {
 }
 
 function TransactionsView() {
-  const { authedFetch } = useAuth();
+  const { authedFetch, user } = useAuth();
   const { householdId } = useHousehold();
   const queryClient = useQueryClient();
 
@@ -721,9 +838,16 @@ function TransactionsView() {
   });
 
   // 상세 Dialog는 항상 최신 목록의 행을 바라본다(뮤테이션 후 refetch 반영).
-  // 목록에 없으면 단건 조회 결과로 폴백.
+  // 목록에 없으면 단건 조회 결과로 폴백. 조회가 실패했을 때 시트와 얼럿 중 무엇을 보일지는 resolveDetailFallback이
+  // 하나만 고른다 — 미리 넣은 요약(seedTransactionDetail)이 실패 뒤에도 캐시에 남아 둘이 겹쳐 떴다.
+  const detailFallback = resolveDetailFallback(
+    detailFallbackQuery.data,
+    detailFallbackQuery.isError
+      ? detailFallbackReason(detailFallbackQuery.error)
+      : null
+  );
   const detailTxn = detailId
-    ? items.find((t) => t.id === detailId) ?? detailFallbackQuery.data ?? null
+    ? items.find((t) => t.id === detailId) ?? detailFallback.txn
     : null;
   const detailCard = detailTxn?.cardId
     ? cardById.get(detailTxn.cardId)
@@ -731,8 +855,8 @@ function TransactionsView() {
 
   // 폴백까지 실패한 경우 = 열 수 없는 딥링크. 이유(없음/막힘/오류)를 구분해 알린다.
   const detailFallbackError =
-    detailId != null && !inList && detailFallbackQuery.isError
-      ? detailFallbackCopy(detailFallbackReason(detailFallbackQuery.error))
+    detailId != null && !inList && detailFallback.failure != null
+      ? detailFallbackCopy(detailFallback.failure)
       : null;
 
   // 상세에서 진행 중이거나 실패한 저장 — 거래·자리(줄 또는 동작)마다 따로 둔다(detail-save.ts).
@@ -1003,6 +1127,79 @@ function TransactionsView() {
     setDetailBackId(null);
     setActionError(null);
   };
+
+  // --- 상세 열기: 미리 받기 + 짧게 기다리기(detail-prefetch.ts) ---
+  // 시트가 열린 뒤 하위 데이터(최근 결제·짝 결제·가족에게 물어보기)가 따로 도착하면 내용만큼 아래에 붙는 시트의
+  // 윗변이 튀었다(2026-11-06 사용자 지적). 줄을 누르려 하면 받기 시작하고, 열 때 아직이면 잠깐만 기다린다.
+  const askFamily =
+    user != null &&
+    members.some(
+      (member) => member.status === "active" && member.userId !== user.id
+    );
+  const prefetchContext: DetailPrefetchContext = {
+    householdId,
+    authedFetch,
+    askFamily,
+  };
+  // 기다리는 동안 누른 줄을 눌린 모양으로 둔다 — 손을 떼면 active: 표시가 사라진다.
+  const [openingId, setOpeningId] = useState<string | null>(null);
+  const [openGate] = useState(() => createDetailOpenGate(setOpeningId));
+  useEffect(() => () => openGate.cancel(), [openGate]);
+  const detailIdRef = useRef(detailId);
+  useEffect(() => {
+    detailIdRef.current = detailId;
+  }, [detailId]);
+  const prefetchDetail = (txn: TransactionSummary) => {
+    void prefetchTransactionDetail(queryClient, txn, prefetchContext);
+  };
+  // 키보드로 연 상세는 기다리지 않는다. 기다리는 사이 다른 길(닫기·이전 거래·딥링크)로 상세가 바뀌었으면 열지 않는다.
+  const openWhenReady = (
+    txn: TransactionSummary,
+    viaKeyboard: boolean,
+    open: () => void
+  ) => {
+    const from = detailIdRef.current;
+    openGate.open(
+      txn.id,
+      viaKeyboard
+        ? null
+        : prefetchTransactionDetail(queryClient, txn, prefetchContext),
+      () => {
+        if (detailIdRef.current === from) open();
+      }
+    );
+  };
+  const openFromList = (txn: TransactionSummary, viaKeyboard: boolean) =>
+    openWhenReady(txn, viaKeyboard, () => openDetail(txn.id));
+  /** 상세 안에서 다른 거래(이 가맹점 최근 결제·짝 결제)로 넘어간다 — '‹ 이전 거래'로 한 단계 돌아온다. */
+  const openFromDetail = (
+    from: TransactionSummary,
+    target: TransactionSummary,
+    viaKeyboard: boolean
+  ) =>
+    openWhenReady(target, viaKeyboard, () => {
+      // 목록(이번 달·조건) 밖 거래는 단건 조회가 끝날 때까지 상세가 사라졌다가 다시 올라왔다 — 가진 요약으로 먼저 그린다.
+      if (!items.some((item) => item.id === target.id)) {
+        seedTransactionDetail(queryClient, householdId, target);
+      }
+      forgetDetailErrors(from.id);
+      setDetailBackId(from.id);
+      setDetailId(target.id);
+    });
+  // 목록 줄은 memo(TransactionRow)라 넘기는 함수가 렌더마다 바뀌지 않게 하고, 부를 때 최신 것을 쓴다.
+  // 누름 판별도 목록이 하나를 함께 쓴다 — 손가락은 한 번에 한 줄만 누른다.
+  const rowPress = usePressPrefetch();
+  const rowHandlers = useRef({ prefetchDetail, openFromList });
+  rowHandlers.current = { prefetchDetail, openFromList };
+  const onRowPrefetch = useCallback(
+    (txn: TransactionSummary) => rowHandlers.current.prefetchDetail(txn),
+    []
+  );
+  const onRowOpen = useCallback(
+    (txn: TransactionSummary, viaKeyboard: boolean) =>
+      rowHandlers.current.openFromList(txn, viaKeyboard),
+    []
+  );
   // 메모·원래 결제 고르기 창은 그 거래의 저장 상태만 본다(다른 줄 저장 중에도 막히지 않게).
   const memoSave = memoTarget
     ? detailSavesFor(detailSaves, memoTarget.id).memo
@@ -1145,84 +1342,24 @@ function TransactionsView() {
                       ) : null}
                     </div>
                     <div className="flex flex-col">
-                      {group.items.map((txn) => {
-                        const Icon = categoryIcon(categoryNameOf(txn));
-                        const isCancellation =
-                          txn.transactionType === "cancellation";
-                        const excluded = txn.excludedAt != null;
-                        const chips = transactionChips(txn);
-                        const totalNote = dayTotalNote(txn);
-                        return (
-                          <ListRow
-                            key={txn.id}
-                            icon={<Icon aria-hidden="true" />}
-                            iconClassName={cn(
-                              "rounded-control",
-                              txn.masked || excluded
-                                ? "bg-muted text-muted-foreground"
-                                : sharedIconClass(txn)
-                            )}
-                            title={
-                              txn.masked ? (
-                                <span className="text-muted-foreground">
-                                  {merchantLabel(txn)}
-                                </span>
-                              ) : (
-                                merchantLabel(txn)
-                              )
-                            }
-                            subtitle={subtitleOf(txn)}
-                            value={
-                              <span
-                                className={cn(
-                                  "flex min-w-0 max-w-full flex-col items-end",
-                                  excluded && "line-through opacity-60"
-                                )}
-                              >
-                                {isCancellation ? (
-                                  <Money
-                                    amount={-txn.amount}
-                                    currency={txn.currency}
-                                    muted
-                                  />
-                                ) : (
-                                  <Money
-                                    amount={txn.netAmount}
-                                    currency={txn.currency}
-                                  />
-                                )}
-                                {txn.originalCurrency &&
-                                txn.originalAmount != null ? (
-                                  <span className="text-muted-foreground text-micro max-w-full font-normal">
-                                    {foreignAmountLabel(
-                                      txn.originalAmount,
-                                      txn.originalCurrency
-                                    )}
-                                  </span>
-                                ) : null}
-                              </span>
-                            }
-                            valueSub={
-                              // 승인은 기본 상태라 표시하지 않는다(§5 가계부). 소계에서 빠지는 줄은 이유를 글자로 붙인다.
-                              chips.length > 0 || totalNote ? (
-                                <span className="flex max-w-full flex-wrap items-center justify-end gap-1.5">
-                                  <TxnChips chips={chips} />
-                                  {totalNote ? <span>{totalNote}</span> : null}
-                                </span>
-                              ) : undefined
-                            }
-                            onClick={
-                              txn.masked ? undefined : () => openDetail(txn.id)
-                            }
-                            className={cn(
-                              "rounded-control py-3 hover:bg-muted/60 active:bg-muted",
-                              busyId === txn.id
-                                ? "pointer-events-none opacity-60"
-                                : undefined
-                            )}
-                          />
-                        );
-                      })}
+                      {group.items.map((txn) => (
+                        <TransactionRow
+                          key={txn.id}
+                          txn={txn}
+                          categoryName={categoryNameOf(txn)}
+                          iconClassName={
+                            txn.masked || txn.excludedAt != null
+                              ? "bg-muted text-muted-foreground"
+                              : sharedIconClass(txn)
+                          }
+                          subtitle={subtitleOf(txn)}
+                          pressed={openingId === txn.id}
+                          busy={busyId === txn.id}
+                          press={rowPress}
+                          onPrefetch={onRowPrefetch}
+                          onOpen={onRowOpen}
+                        />
+                      ))}
                     </div>
                   </section>
                 ))}
@@ -1285,11 +1422,11 @@ function TransactionsView() {
           onApplyCategoryRule={(categoryId) =>
             applyCategoryRule(detailTxn, categoryId)
           }
-          onOpenTransaction={(id) => {
-            forgetDetailErrors(detailTxn.id);
-            setDetailBackId(detailTxn.id);
-            setDetailId(id);
-          }}
+          onOpenTransaction={(target, viaKeyboard) =>
+            openFromDetail(detailTxn, target, viaKeyboard)
+          }
+          onPrefetchTransaction={prefetchDetail}
+          openingId={openingId}
           onBack={
             detailBackId != null && detailBackId !== detailTxn.id
               ? () => {
@@ -1421,6 +1558,8 @@ function TransactionDetailDialog({
   categoryOptions,
   onApplyCategoryRule,
   onOpenTransaction,
+  onPrefetchTransaction,
+  openingId,
   onChangeCard,
   onResolveCard,
   onChangeCategory,
@@ -1451,7 +1590,12 @@ function TransactionDetailDialog({
   cardOptions: ReadonlyArray<Option>;
   categoryOptions: ReadonlyArray<Option>;
   onApplyCategoryRule: (categoryId: string) => Promise<unknown>;
-  onOpenTransaction: (id: string) => void;
+  /** 다른 거래(최근 결제·짝 결제)로 넘어간다. 키보드로 누른 click이면 `viaKeyboard`가 참이다(기다리지 않는다). */
+  onOpenTransaction: (target: TransactionSummary, viaKeyboard: boolean) => void;
+  /** 다른 거래 줄에 손가락·마우스가 닿는 순간 — 그 거래 시트의 하위 데이터를 미리 받는다. */
+  onPrefetchTransaction: (target: TransactionSummary) => void;
+  /** 열려고 하위 데이터를 기다리는 거래 — 누른 줄을 손을 뗀 뒤에도 눌린 모양으로 둔다. */
+  openingId: string | null;
   onChangeCard: (cardId: string) => void;
   onResolveCard: (cardId: string) => void;
   onChangeCategory: (categoryId: string) => void;
@@ -1469,6 +1613,8 @@ function TransactionDetailDialog({
   onClose: () => void;
 }>) {
   const [editSaving, setEditSaving] = useState(false);
+  // '그 결제 보기'에 누르려는 손가락이 닿으면 그 결제의 하위 데이터를 미리 받는다(스크롤 터치는 거른다).
+  const pairPress = usePressPrefetch();
   // 줄에서 고른 값이 저장되는 동안은 다른 줄·동작을 잠그거나 흐리게 하지 않는다 — 그 줄의 값 자리에만 진행 표시.
   // 저장 중인 그 줄만은 다시 고를 수 없게 잠근다: 저장 중에 원래 값으로 되돌리면 먼저 보낸 저장이 남아
   // 마지막에 고른 값과 다른 값이 저장됐다.
@@ -1488,9 +1634,8 @@ function TransactionDetailDialog({
   // 카드를 고르며 확인하는 동안은 카드 줄을, 카드 줄을 저장하는 동안은 결정 블록의 카드 고르기를 잠근다 — 둘 다 카드를 바꾼다.
   const resolvingCard =
     actionSave?.status === "pending" && actionSave.kind === "resolveCard";
-  // 잠긴(흐린) 줄도 폰(Android WebView)에서는 메뉴가 열린다 — Radix 트리거는 자식 버튼의 disabled를 보지 않고
-  // pointerdown으로 연다. 그래서 잠긴 동안 고른 값은 onSelect에서 버린다(먼저 보낸 저장과 겹치지 않게).
-  // 트리거 자체를 끄려면 공용 PickerMenu·FieldRow를 바꿔야 해서 사용자 확인을 기다린다.
+  // 잠긴 줄은 PickerMenu·FieldRow의 disabled로 Radix 트리거까지 잠근다 — 버튼 disabled만으로는 폰(Android WebView)에서
+  // 메뉴가 열렸다. 그래도 잠긴 동안 고른 값은 onSelect에서 한 번 더 버린다(먼저 보낸 저장과 겹치지 않게).
   const categoryLocked = deleting || isSaving("category");
   const cardLocked = deleting || isSaving("card") || resolvingCard;
   const visibilityLocked = deleting || isSaving("visibility");
@@ -1733,7 +1878,9 @@ function TransactionDetailDialog({
   const searchTerm = merchantSearchTerm(txn);
   // 중복 의심이면 서버가 겹친다고 본 짝 결제를 같은 조건으로 찾는다(duplicate-pair.ts).
   // '이 가맹점 최근 결제'(최신 5건)는 표시용이라 짝이 그 안에 있다는 보장이 없다.
-  const duplicatePair = useDuplicatePair(txn);
+  // 찾는 동안(duplicatePairLoading)은 결정 블록이 안내 줄 자리를 잡아 둔다 — 도착할 때 시트가 커지지 않게.
+  const { pair: duplicatePair, loading: duplicatePairLoading } =
+    useDuplicatePair(txn);
   // 확인할 거래면 금액 아래에서 무엇이 의심스러운지 묻고 같은 무게의 답을 나란히 둔다(decision-copy.ts).
   const decision = reviewDecision({
     status: txn.status,
@@ -2094,13 +2241,37 @@ function TransactionDetailDialog({
                     <Button
                       type="button"
                       variant="link"
-                      className="h-11 gap-1 self-start px-0 has-[>svg]:px-0"
+                      className={cn(
+                        "h-11 gap-1 self-start px-0 has-[>svg]:px-0",
+                        openingId === duplicatePair.id && "opacity-60"
+                      )}
                       disabled={busy}
-                      onClick={() => onOpenTransaction(duplicatePair.id)}
+                      {...pressPrefetchHandlers(pairPress, () =>
+                        onPrefetchTransaction(duplicatePair)
+                      )}
+                      onClick={(event) =>
+                        onOpenTransaction(duplicatePair, event.detail === 0)
+                      }
                     >
                       {decision.pairLabel}
                       <ChevronRight aria-hidden="true" />
                     </Button>
+                  ) : duplicatePairLoading ? (
+                    // 짝 결제를 찾는 동안 안내 줄(폰에서 두 줄, 넓은 화면 한 줄)과 '그 결제 보기' 자리를 잡아 둔다 —
+                    // 도착할 때 아래 답 버튼이 밀려 내려가며 시트가 커지지 않게. 내용 없는 회색 막대뿐이고, 짝이 없으면 그때 줄어든다.
+                    <div aria-hidden="true" className="flex min-w-0 flex-col gap-1">
+                      <div className="text-caption flex flex-col">
+                        <div className="flex h-lh items-center">
+                          <Skeleton className="h-3 w-full" />
+                        </div>
+                        <div className="flex h-lh items-center sm:hidden">
+                          <Skeleton className="h-3 w-2/3" />
+                        </div>
+                      </div>
+                      <div className="flex h-11 items-center">
+                        <Skeleton className="h-4 w-20" />
+                      </div>
+                    </div>
                   ) : null}
                 </div>
                 {/* 같은 무게의 답은 같은 모양으로 나란히 둔다. 채움 버튼은 두지 않는다(§3.3). */}
@@ -2124,6 +2295,7 @@ function TransactionDetailDialog({
                         label="카드"
                         options={cardOptions}
                         value={txn.cardId ?? null}
+                        disabled={pickCardLocked}
                         onSelect={(cardId) => {
                           if (!pickCardLocked) onResolveCard(cardId);
                         }}
@@ -2336,7 +2508,9 @@ function TransactionDetailDialog({
             txn={txn}
             searchTerm={searchTerm}
             disabled={busy || editing}
+            openingId={openingId}
             onOpen={onOpenTransaction}
+            onPrefetch={onPrefetchTransaction}
           />
         ) : null}
 

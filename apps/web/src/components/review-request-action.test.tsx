@@ -1,11 +1,12 @@
 /**
  * '가족에게 물어보기'는 상세 정보 목록의 한 줄이다(2026-11-05 HIG 검수 3·4단계).
  * 예전에는 폼 라벨 아래 구성원마다 전체 폭 버튼이 붙어 '이 가맹점 최근 결제'를 아래로 밀었다.
+ * 요청 목록을 받는 동안에도 같은 높이의 줄로 자리를 잡는다(2026-11-06 — 받은 뒤 줄이 끼어들어 시트가 튀었다).
  */
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ReviewRequestAction } from "./review-request-action";
+import { ReviewRequestAction, reviewRequestsQuery } from "./review-request-action";
 
 type Request = {
   id: string;
@@ -21,7 +22,18 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/auth-context", () => ({
-  useAuth: () => ({ user: { id: "u-me" } }),
+  useAuth: () => ({ user: { id: "u-me" }, authedFetch: async () => ({}) }),
+}));
+vi.mock("@/lib/household-context", () => ({
+  useHousehold: () => ({ householdId: "h-1" }),
+}));
+// 요청 목록은 이 줄과 거래 상세 미리 받기가 함께 쓰는 쿼리(reviewRequestsQuery)로 받는다.
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
+  useQuery: () => ({
+    data: state.loading ? undefined : { items: state.requests },
+    isLoading: state.loading,
+  }),
 }));
 vi.mock("@/lib/queries", () => ({
   useHouseholdMembers: () => ({
@@ -33,10 +45,8 @@ vi.mock("@/lib/queries", () => ({
   }),
 }));
 vi.mock("@/lib/review-requests", () => ({
-  useReviewRequests: () => ({
-    data: { items: state.requests },
-    isLoading: state.loading,
-  }),
+  reviewRequestsKey: (householdId: string | null, transactionId: string | null) =>
+    ["review-requests", householdId, transactionId] as const,
   useCreateReviewRequest: () => ({
     mutate: vi.fn(),
     isPending: false,
@@ -105,13 +115,34 @@ describe("ReviewRequestAction", () => {
     expect(html).toContain("요청을 보내지 못했어요");
   });
 
-  it("공개 범위가 가족 공개가 아니거나 요청 목록을 모르면 그리지 않는다", () => {
+  it("공개 범위가 가족 공개가 아니면 그리지 않는다", () => {
     expect(
       renderToStaticMarkup(
         <ReviewRequestAction txn={{ ...shared, visibility: "private" }} />
       )
     ).toBe("");
+  });
+
+  it("요청 목록을 받는 동안은 메뉴 없이 같은 높이의 줄로 자리만 잡는다", () => {
     state.loading = true;
-    expect(renderToStaticMarkup(<ReviewRequestAction txn={shared} />)).toBe("");
+    const html = renderToStaticMarkup(<ReviewRequestAction txn={shared} />);
+    expect(html).toContain("가족에게 물어보기");
+    // 설정 줄과 같은 최소 높이(min-h-12) — 받은 뒤에도 줄 높이가 그대로다.
+    expect(html).toContain("min-h-12");
+    // 이미 물어봤는지 모르는 채로 고르게 하지 않는다 — 누르는 버튼·메뉴가 없다.
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain('aria-haspopup="menu"');
+    // 값 자리는 내용 없는 회색 막대뿐이다.
+    expect(html).toContain('data-slot="skeleton"');
+    expect(html).not.toContain("답을 기다려요");
+  });
+});
+
+describe("reviewRequestsQuery", () => {
+  it("lib의 확인 요청 키를 그대로 쓴다 — 보내기·풀기의 무효화가 이 줄과 미리 받은 캐시에 함께 닿는다", () => {
+    const options = reviewRequestsQuery("h-1", "t-1", async () =>
+      Promise.reject(new Error("부르지 않는다"))
+    );
+    expect(options.queryKey).toEqual(["review-requests", "h-1", "t-1"]);
   });
 });

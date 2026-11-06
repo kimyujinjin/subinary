@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DUPLICATE_PAIR_WINDOW_MS,
+  duplicatePairQuery,
   duplicatePairWindow,
   findDuplicatePair,
 } from "./duplicate-pair";
@@ -136,5 +137,19 @@ describe("findDuplicatePair — 서버 판정과 같은 조건", () => {
       approvedAt: "2025-01-10T03:02:30.000Z",
     });
     expect(findDuplicatePair([oldPair], old)?.id).toBe("old-pair");
+  });
+});
+
+describe("duplicatePairQuery — 훅과 상세 미리 받기가 같은 조회를 쓴다", () => {
+  it("승인 시각 창 안의 승인을 한 번에(100건) 부르는 거래 목록 키다", () => {
+    const range = duplicatePairWindow(self);
+    const options = duplicatePairQuery("h", range, async () =>
+      Promise.reject(new Error("부르지 않는다"))
+    );
+    expect(options.queryKey).toEqual([
+      "transactions",
+      "h",
+      { type: "approval", from: range?.from, to: range?.to, limit: 100 },
+    ]);
   });
 });
