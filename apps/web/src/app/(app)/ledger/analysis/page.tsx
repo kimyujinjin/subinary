@@ -441,9 +441,10 @@ function LedgerAnalysisView() {
                   </div>
 
                   {/* 직접 제외·자산 이동만 공시한다. 비공개 거래의 존재·건수는 표시하지 않는다.
-                      끝에 붙던 '볼 수 있는 기록만'은 무슨 뜻인지 알기 어려워 뺐다(2026-11-05 HIG 검수). */}
+                      끝에 붙던 '볼 수 있는 기록만'은 무슨 뜻인지 알기 어려워 뺐다(2026-11-05 HIG 검수).
+                      취소로 생긴 기록은 이름 규칙대로 '환불'이다(홈 '환불 반영'과 같은 말, 2026-11-06 결정 ⑦). */}
                   <p className="text-caption text-muted-foreground">
-                    승인 {formatWon(monthly.totalApproved)} · 취소{" "}
+                    승인 {formatWon(monthly.totalApproved)} · 환불{" "}
                     {formatWon(monthly.totalCancelled)} ·{" "}
                     {monthly.transactionCount.toLocaleString("ko-KR")}건
                   </p>

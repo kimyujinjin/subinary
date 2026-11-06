@@ -28,7 +28,7 @@ export const NOTIFICATION_CHANNELS = {
    */
   upcoming: 'upcoming',
   /**
-   * 가족이 결제를 물어봤다 / 물어본 결제를 확인했다(2026-11-04 확인 요청). 사람이 사람에게
+   * 가족이 결제를 물어봤다 / 물어본 결제를 확인했다(2026-11-04, 채널 이름 '가족이 물어본 결제'). 사람이 사람에게
    * 보내는 유일한 알림이라 시스템 알림(결제·예산)과 따로 끌 수 있게 채널을 나눈다.
    */
   review: 'review',
@@ -43,16 +43,30 @@ export interface NotificationChannelMeta {
   description: string;
 }
 
-/** 네이티브가 앱 시작 시 생성할 채널 정의(kind 순서 고정). */
+/**
+ * 네이티브가 앱 시작 시 생성할 채널 정의(kind 순서 고정).
+ *
+ * 이름은 알림을 눌러 열리는 할 일 화면의 섹션 이름과 같다('확인할 거래'·'가족이 물어본 결제',
+ * 2026-11-06) — 시스템 설정·앱 알림 설정·할 일 화면이 한 이름이어야 찾을 수 있다. 웹 알림 설정
+ * 화면도 이 이름·설명을 그대로 쓴다.
+ *
+ * **id는 절대 바꾸지 않는다.** Android는 사용자가 채널별로 끈 설정·소리를 id로 기억한다. id가
+ * 바뀌면 새 채널이 생기고 사용자 설정이 사라진다. 같은 id로 다시 createChannel하면 이름·설명만
+ * 바뀌므로 문구는 고쳐도 된다(notifications.test.ts가 id를 고정한다).
+ */
 export const NOTIFICATION_CHANNEL_META: readonly NotificationChannelMeta[] = [
-  { id: NOTIFICATION_CHANNELS.transaction, name: '결제 알림', description: '새 결제·취소 알림' },
+  { id: NOTIFICATION_CHANNELS.transaction, name: '결제 알림', description: '새 결제·환불 알림' },
   { id: NOTIFICATION_CHANNELS.budget, name: '예산 알림', description: '예산 사용률 경고' },
-  { id: NOTIFICATION_CHANNELS.reminder, name: '확인 리마인더', description: '확인이 필요한 거래 알림' },
+  {
+    id: NOTIFICATION_CHANNELS.reminder,
+    name: '확인할 거래',
+    description: '확인 필요·중복 의심으로 남은 거래',
+  },
   { id: NOTIFICATION_CHANNELS.summary, name: '소비 요약', description: '주간 소비 요약' },
   {
     id: NOTIFICATION_CHANNELS.decline,
     name: '결제 실패',
-    description: '반복 거절된 결제 알림',
+    description: '반복 실패한 결제 알림',
   },
   {
     id: NOTIFICATION_CHANNELS.upcoming,
@@ -60,9 +74,10 @@ export const NOTIFICATION_CHANNEL_META: readonly NotificationChannelMeta[] = [
     description: '내일 나갈 정기 결제 안내',
   },
   {
+    // 이름이 이미 '가족이 물어본 결제'라 설명은 이름에 없는 나머지(내가 물어본 결제의 답)를 말한다.
     id: NOTIFICATION_CHANNELS.review,
-    name: '확인 요청',
-    description: '가족이 물어본 결제와 그 답',
+    name: '가족이 물어본 결제',
+    description: '가족이 물어본 결제와 내가 물어본 결제의 답',
   },
 ];
 

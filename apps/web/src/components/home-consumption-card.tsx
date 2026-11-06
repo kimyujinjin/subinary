@@ -34,7 +34,8 @@ export interface HomeConsumptionCardProps {
   processing?: HomeProcessingSource;
   /**
    * 거래가 있는 달 목록. `onMonthChange`와 함께 주면 카드 안에서 달을 옮길 수 있다.
-   * 월 이동은 **이 카드의 금액에만** 영향을 주므로 컨트롤도 여기 둔다.
+   * 달 이동은 **이 카드의 금액·비교 문구에만** 적용되므로 컨트롤도 카드 안에 둔다 — 홈의 아래 섹션
+   * (누가 썼나·예산·다가오는 지출·지난주)과 이 카드의 할 일 줄은 고른 달과 상관없이 늘 지금 기준이다.
    */
   months?: readonly string[];
   onMonthChange?: (month: string) => void;
@@ -78,7 +79,10 @@ export function monthComparison(
 const ROW =
   "text-body hover:bg-muted/50 focus-visible:outline-ring -mx-5 flex min-h-12 items-center gap-2 px-5 py-3 focus-visible:outline-2 focus-visible:-outline-offset-2 active:bg-muted";
 
-/** 할 일은 별도 카드 없이 소비 금액 아래 줄로만 안내한다. */
+/**
+ * 홈 첫 카드: 카드 사용액(달 이동은 이 카드에만) + 그 아래 할 일 줄. 할 일은 별도 카드 없이 소비 금액 아래
+ * 줄로만 안내한다.
+ */
 export function HomeConsumptionCard({
   month,
   isCurrentMonth,
@@ -163,10 +167,11 @@ export function HomeConsumptionCard({
           카드 사용액을 불러오지 못했어요
         </p>
       )}
-      {/* 금액을 모를 때 '결제 취소 반영'만 남으면 없는 숫자에 단서를 다는 셈이라 함께 숨긴다. */}
+      {/* 취소로 생긴 기록은 이름 규칙대로 '환불'이다(분석 탭 '승인 · 환불'과 같은 말).
+          금액을 모를 때 '환불 반영'만 남으면 없는 숫자에 단서를 다는 셈이라 함께 숨긴다. */}
       {amountKnown ? (
         <p className="text-caption text-muted-foreground mt-1">
-          {comparison ? `${comparison} · ` : ""}결제 취소 반영
+          {comparison ? `${comparison} · ` : ""}환불 반영
         </p>
       ) : null}
       {processingText ? (

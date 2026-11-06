@@ -8,9 +8,9 @@
  * 지우지 않는다). 화면을 떠나면 기다리던 입력을 바로 보낸다.
  *
  * 선호는 사용자 단위라 **내 모든 기기**에 적용된다. 끄는 것은 푸시뿐이고 알림함 기록은
- * 남는다(worker가 선호를 보기 전에 이력을 저장한다). 종류 이름은 안드로이드 알림 채널과 같은
- * 문구다 — 시스템 설정에서 찾는 이름과 같아야 한다. 설명도 채널 문구를 쓰되, 이름이 비슷한
- * '확인 리마인더'·'확인 요청'만 화면에서 풀어 쓴다(KIND_DESCRIPTION_OVERRIDES).
+ * 남는다(worker가 선호를 보기 전에 이력을 저장한다). 종류 이름·설명은 안드로이드 알림 채널 문구
+ * 그대로다(packages/shared) — 시스템 설정에서 찾는 이름, 할 일 화면의 섹션 이름('확인할 거래'·
+ * '가족이 물어본 결제')과 같아야 한다. 화면에서 따로 풀어 쓰지 않는다.
  *
  * 서버 값은 켜져 있어도 이 휴대폰의 OS 알림 권한이 없으면 여기로는 하나도 오지 않는다. 그래서
  * 들어올 때와 앱으로 돌아올 때(설정에서 켜고 오는 길) 권한을 읽어, 막혀 있으면 맨 위에 켜는 곳을
@@ -54,7 +54,6 @@ import { cn } from "@/lib/utils";
 
 import {
   draftFromServer,
-  KIND_DESCRIPTION_OVERRIDES,
   pushPermissionNotice,
   pushSwitchDescription,
   quietError,
@@ -73,13 +72,13 @@ const CHANNEL_META = new Map(
   NOTIFICATION_CHANNEL_META.map((meta) => [meta.id, meta]),
 );
 
-/** 종류별 행 — 계약의 종류 순서 그대로, 이름은 알림 채널 문구(설명은 헷갈리는 둘만 화면에서 풀어 쓴다). */
+/** 종류별 행 — 계약의 종류 순서 그대로, 이름·설명은 알림 채널 문구. */
 const KIND_ROWS = notificationKindSchema.options.map((kind) => {
   const meta = CHANNEL_META.get(NOTIFICATION_CHANNELS[kind]);
   return {
     kind,
     name: meta?.name ?? kind,
-    description: KIND_DESCRIPTION_OVERRIDES[kind] ?? meta?.description,
+    description: meta?.description,
   };
 });
 

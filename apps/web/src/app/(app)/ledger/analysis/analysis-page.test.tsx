@@ -228,6 +228,13 @@ describe("가계부 분석 탭", () => {
     expect(button).not.toContain("bg-primary/10");
   });
 
+  it("히어로 캡션은 취소로 생긴 기록을 홈과 같은 이름 '환불'로 부른다", () => {
+    // 서버 렌더는 붙은 글자 조각 사이에 빈 주석을 넣는다 — 지우고 한 줄로 읽는다.
+    const text = render().replace(/<!-- -->/g, "");
+    expect(text).toContain("승인 35,000원 · 환불 2,000원 · 3건");
+    expect(text).not.toContain("· 취소");
+  });
+
   it("합계 제외 공시는 이름 규칙대로 말하고, 목록으로 가는 글자 링크는 44px이다", () => {
     const html = render();
     expect(html).toContain("합계 제외 거래 2건");

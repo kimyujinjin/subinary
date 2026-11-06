@@ -70,17 +70,21 @@ describe("알림 설정 화면", () => {
     for (const name of [
       "결제 알림",
       "예산 알림",
-      "확인 리마인더",
+      "확인할 거래",
       "소비 요약",
       "결제 실패",
       "정기 결제 예고",
-      "확인 요청",
+      "가족이 물어본 결제",
     ]) {
       expect(html).toContain(name);
     }
-    // 이름이 비슷한 둘은 무엇을 알리는지 설명으로 가른다(이름은 Android 채널 이름이라 그대로).
-    expect(html).toContain("확인 필요·중복 의심으로 남은 거래 알림");
-    expect(html).toContain("가족끼리 물어본 결제와 그 답");
+    // 이름은 할 일 화면 섹션 이름과 같고, 설명도 채널 문구 그대로다(화면에서 따로 풀어 쓰지 않는다).
+    expect(html).toContain("확인 필요·중복 의심으로 남은 거래");
+    expect(html).toContain("가족이 물어본 결제와 내가 물어본 결제의 답");
+    expect(html).toContain("새 결제·환불 알림");
+    expect(html).toContain("반복 실패한 결제 알림");
+    expect(html).not.toContain("확인 리마인더");
+    expect(html).not.toContain("확인 요청");
     expect(switchTag(html, "kind-summary")).toContain('aria-checked="false"');
     expect(switchTag(html, "kind-transaction")).toContain(
       'aria-checked="true"'

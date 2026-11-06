@@ -77,10 +77,12 @@ describe("quiet home transaction exceptions", () => {
     }
   });
 
-  it("hides the cancellation footnote while the amount is loading or failed", () => {
-    expect(consumption({ monthly })).toContain("결제 취소 반영");
-    expect(consumption({ monthly, loading: true })).not.toContain("결제 취소 반영");
-    expect(consumption({ monthly, error: true })).not.toContain("결제 취소 반영");
+  it("hides the refund footnote while the amount is loading or failed", () => {
+    // 취소로 생긴 기록은 이름 규칙대로 '환불'이다(분석 탭 '승인 · 환불'과 같은 말).
+    expect(consumption({ monthly })).toContain("환불 반영");
+    expect(consumption({ monthly })).not.toContain("결제 취소");
+    expect(consumption({ monthly, loading: true })).not.toContain("환불 반영");
+    expect(consumption({ monthly, error: true })).not.toContain("환불 반영");
     expect(consumption({ monthly, loading: true, pace: "지난달 이맘때보다 1,000원 덜 썼어요" })).not.toContain("지난달 이맘때");
   });
 
