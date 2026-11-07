@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readSujainPages } from '../collect.mjs';
+import { isEligibleSujainCapturedRow, readSujainPages } from '../collect.mjs';
 import { SujainReadError } from '../policy.mjs';
 
 /**
@@ -539,5 +539,93 @@ test('both pages still empty after waiting is unsupported_layout, not silent emp
   assert.equal(
     f.actions.some((row) => row[0] === 'goto' && String(row[1]).includes('unit-items')),
     true,
+  );
+});
+
+test('member-profile/contact captured rows are not eligible payment or option tables', () => {
+  assert.equal(
+    isEligibleSujainCapturedRow({
+      headers: ['항목', '내용'],
+      cells: ['이름', '합성 회원'],
+      sourcePage: 'unit-items',
+    }),
+    false,
+  );
+  assert.equal(
+    isEligibleSujainCapturedRow({
+      headers: ['품목', '금액'],
+      cells: ['합성 항목 A', '500,000'],
+      sourcePage: 'unit-items',
+    }),
+    true,
+  );
+  assert.equal(
+    isEligibleSujainCapturedRow({
+      headers: ['구분', '금액'],
+      cells: ['계약금', '1,000'],
+      sourcePage: 'payment',
+    }),
+    true,
+  );
+});
+
+test('contact-only tables on both pages are unsupported_layout, not scrape success', async () => {
+  const contactPayment = [
+    { cells: ['이름', '합성 회원'], headers: ['항목', '내용'], sourcePage: 'payment' },
+    { cells: ['휴대전화', '000-0000-0000'], headers: ['항목', '내용'], sourcePage: 'payment' },
+  ];
+  const contactUnit = [
+    { cells: ['주소', '합성 주소'], headers: ['항목', '내용'], sourcePage: 'unit-items' },
+    { cells: ['이메일', 'synthetic@example.com'], headers: ['항목', '내용'], sourcePage: 'unit-items' },
+  ];
+  const f = officialLoginPage({
+    afterClick: 'navigate',
+    paymentRows: contactPayment,
+    unitItemsRows: contactUnit,
+  });
+  const previous = process.env.SUJAIN_TABLE_WAIT_MS;
+  process.env.SUJAIN_TABLE_WAIT_MS = '50';
+  try {
+    await assert.rejects(
+      () => readSujainPages(f.page, job()),
+      (error) => error instanceof SujainReadError && error.code === 'unsupported_layout',
+    );
+  } finally {
+    if (previous === undefined) delete process.env.SUJAIN_TABLE_WAIT_MS;
+    else process.env.SUJAIN_TABLE_WAIT_MS = previous;
+  }
+});
+
+test('contact rows do not hide a later eligible option table during the wait', async () => {
+  const f = officialLoginPage({
+    afterClick: 'navigate',
+    paymentRows: [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }],
+    unitItemsRows: [],
+  });
+  let unitEvalAttempts = 0;
+  f.page.evaluate = async (_fn, sourcePage) => {
+    if (sourcePage === 'payment') {
+      return [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }];
+    }
+    unitEvalAttempts += 1;
+    if (unitEvalAttempts === 1) {
+      return [
+        { cells: ['이름', '합성 회원'], headers: ['항목', '내용'], sourcePage: 'unit-items' },
+      ];
+    }
+    return [
+      { cells: ['이름', '합성 회원'], headers: ['항목', '내용'], sourcePage: 'unit-items' },
+      { cells: ['합성 항목 A', '500,000'], headers: ['품목', '금액'], sourcePage: 'unit-items' },
+    ];
+  };
+
+  const result = await readSujainPages(f.page, job());
+  assert.ok(unitEvalAttempts >= 2);
+  assert.equal(
+    result.rows.some((row) => row.sourcePage === 'unit-items' && row.cells[0] === '이름'),
+    false,
+  );
+  assert.ok(
+    result.rows.some((row) => row.sourcePage === 'unit-items' && row.cells[0] === '합성 항목 A'),
   );
 });

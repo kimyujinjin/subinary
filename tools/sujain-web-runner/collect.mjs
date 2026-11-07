@@ -24,6 +24,21 @@ export function normalizeCapturedRows(rows) {
   }));
 }
 
+/**
+ * Keep only tables that look like 분양대금 / 옵션 (amount-like or option-like headers,
+ * or payment-kind cell text). Member-profile / contact tables (이름·휴대전화·주소·이메일
+ * under a bare 항목/이름 column) must not end the AJAX wait or become scrape rows.
+ * Keep in sync with apps/api/.../sujain-parse.ts isEligibleSujainRow.
+ */
+export function isEligibleSujainCapturedRow(row) {
+  const headers = Array.isArray(row?.headers) ? row.headers : [];
+  if (headers.some((header) => /예정(?!일)|금액|분양가|대금/u.test(header))) return true;
+  if (headers.some((header) => /옵션|유상|설치\s*품목|품목/u.test(header))) return true;
+  const cells = Array.isArray(row?.cells) ? row.cells : [];
+  const joined = [...headers, ...cells].join(' ');
+  return /계약금|중도금|잔금|옵션|유상|설치\s*품목/u.test(joined);
+}
+
 /** Official ajax failure alerts — not the post-login success toast. */
 function isCredentialFailureDialog(message) {
   return /실패|오류|틀렸|일치하지|아이디|비밀번호|잘못|없/u.test(message)
@@ -96,7 +111,7 @@ async function evaluateTableRows(page, sourcePage) {
     }
     return out.slice(0, 100);
   }, sourcePage);
-  return normalizeCapturedRows(raw);
+  return normalizeCapturedRows(raw).filter(isEligibleSujainCapturedRow);
 }
 
 /** Cap for waiting until a scrape table paints at least one non-empty data cell. */

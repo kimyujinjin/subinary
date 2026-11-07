@@ -15,6 +15,8 @@ export type SujainParseResult = {
   items: HousingBrandFetchedItem[];
   unreadCount: number;
   unreadReasons: string[];
+  /** Rows that looked like payment/option tables (not member-profile/contact junk). */
+  eligibleRowCount: number;
 };
 
 const KIND_HINTS: Array<{ kind: ManualHousingPaymentKind; patterns: RegExp[] }> = [
@@ -23,6 +25,30 @@ const KIND_HINTS: Array<{ kind: ManualHousingPaymentKind; patterns: RegExp[] }> 
   { kind: 'balance', patterns: [/잔금/u] },
   { kind: 'option', patterns: [/옵션/u, /설치\s*품목/u, /유상/u] },
 ];
+
+/** Amount-like column names — a name/항목 column alone is not enough. */
+const AMOUNT_LIKE_HEADER = /예정(?!일)|금액|분양가|대금/u;
+/** Option-table headers (품목). Do not treat bare 항목/이름/명칭 as option lists. */
+const OPTION_TABLE_HEADER = /옵션|유상|설치\s*품목|품목/u;
+/** Payment/option kind signals in header or cell text. */
+const PAYMENT_OR_OPTION_SIGNAL = /계약금|중도금|잔금|옵션|유상|설치\s*품목/u;
+
+/**
+ * Member-profile / contact tables share a name-like column but are not 분양대금·옵션.
+ * Only keep rows that look like payment or option tables.
+ */
+export function isEligibleSujainRow(row: SujainRawRow): boolean {
+  const headers = row.headers ?? [];
+  if (headers.some((header) => AMOUNT_LIKE_HEADER.test(header))) return true;
+  if (headers.some((header) => OPTION_TABLE_HEADER.test(header))) return true;
+  const joined = [...headers, ...row.cells].join(' ');
+  return PAYMENT_OR_OPTION_SIGNAL.test(joined);
+}
+
+/** After filtering junk tables, zero readable payment/option items → fail honestly. */
+export function isSujainUnsupportedLayout(result: SujainParseResult): boolean {
+  return result.items.length === 0;
+}
 
 function digitsOnly(value: string): string | null {
   const cleaned = value.replace(/[,\s원]/gu, '');
@@ -86,8 +112,14 @@ export function parseSujainRows(rows: SujainRawRow[]): SujainParseResult {
   const items: HousingBrandFetchedItem[] = [];
   const unreadReasons: string[] = [];
   let unreadCount = 0;
+  let eligibleRowCount = 0;
 
   for (const row of rows.slice(0, 100)) {
+    // Skip member-profile / contact / misc tables before kind detection so they
+    // neither become unit-items options nor dominate unreadCount with kind notes.
+    if (!isEligibleSujainRow(row)) continue;
+    eligibleRowCount += 1;
+
     const joined = [...(row.headers ?? []), ...row.cells].join(' ');
     const kind = detectKind(joined, row.sourcePage);
     const unread: HousingBrandFetchedItem['unreadFields'] = [];
@@ -206,6 +238,7 @@ export function parseSujainRows(rows: SujainRawRow[]): SujainParseResult {
     items,
     unreadCount,
     unreadReasons: [...new Set(unreadReasons)].slice(0, 50),
+    eligibleRowCount,
   };
 }
 
