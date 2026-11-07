@@ -1,0 +1,124 @@
+name: CD Production
+
+# main 에서 CI(이름: CI)가 성공으로 끝난 뒤에만 운영 반영을 시도한다.
+# GitHub-hosted runner 는 홈 Mac Docker 에 닿지 않고, 인바운드 포트/SSH 도
+# 열지 않는다. 실제 deploy 는 self-hosted runner(라벨: self-hosted, macOS,
+# production-docker)에서만, 운영 워크트리에서 공식 진입점 deploy.sh 기본값으로 실행한다
+# (Docker + migrate + OTA — 브라우저와 폰 웹 번들 드리프트 방지).
+#
+# 첫 자동 배포 조건(둘 다 필요):
+#   1. 이 워크플로가 main 에 머지됨
+#   2. 홈 Mac runner + 아래 repository variables 가 준비됨
+# 준비가 안 됐으면 gate 가 실패한다(성공으로 조용히 건너뛰지 않음).
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  # 운영 동시 배포 금지(docs/operations/README.md). 진행 중 배포를 취소하지 않는다.
+  group: production-docker-deploy
+  cancel-in-progress: false
+
+jobs:
+  # ubuntu-latest 게이트: CI 성공·push·활성화 플래그만 검사한다.
+  # runner 가 없어도 이 job 은 돌고, 미설정이면 빨간 실패로 남긴다.
+  gate:
+    runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    outputs:
+      deploy_sha: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Refuse deploy until production CD is explicitly enabled
+        env:
+          PRODUCTION_CD_ENABLED: ${{ vars.PRODUCTION_CD_ENABLED }}
+          PRODUCTION_REPO_DIR: ${{ vars.PRODUCTION_REPO_DIR }}
+        run: |
+          set -eu
+          echo "CI run: ${{ github.event.workflow_run.html_url }}"
+          echo "Deploy SHA: ${{ github.event.workflow_run.head_sha }}"
+          echo "CI event: ${{ github.event.workflow_run.event }}"
+          echo "CI head branch: ${{ github.event.workflow_run.head_branch }}"
+
+          missing=0
+          if [ "${PRODUCTION_CD_ENABLED}" != "true" ]; then
+            echo "::error::Repository variable PRODUCTION_CD_ENABLED must be exactly 'true' before auto-deploy runs."
+            echo "Register the home-Mac self-hosted runner (labels: self-hosted, macOS, production-docker), confirm it is Idle, then set PRODUCTION_CD_ENABLED=true."
+            echo "See docs/operations/cd-production.md."
+            missing=1
+          fi
+          if [ -z "${PRODUCTION_REPO_DIR}" ]; then
+            echo "::error::Repository variable PRODUCTION_REPO_DIR is empty."
+            echo "Set it to the absolute path of the home-Mac production work tree (path only — never put secret values in GitHub)."
+            echo "Example used in ops docs: /Users/soobeen/Desktop/Project/subinary"
+            echo "See docs/operations/cd-production.md."
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          echo "Gate passed: PRODUCTION_CD_ENABLED=true, PRODUCTION_REPO_DIR is set."
+
+  deploy:
+    needs: gate
+    runs-on: [self-hosted, macOS, production-docker]
+    timeout-minutes: 120
+    steps:
+      # Actions 기본 _work 체크아웃이 아니라 운영 워크트리에서 deploy.sh 를 돌린다.
+      # 임시 /private/tmp/subinary-deploy-* 체크아웃으로 compose 라벨이 남는 사고를 피하고,
+      # docker-compose.prod.yml 의 name: family-memory-ai 를 유지한다(바꾸면 컨테이너 고아화).
+      # 부분 서비스만 docker compose up 하는 병렬 경로를 만들지 않는다.
+      - name: Deploy official path in the production work tree
+        env:
+          PRODUCTION_REPO_DIR: ${{ vars.PRODUCTION_REPO_DIR }}
+          DEPLOY_SHA: ${{ needs.gate.outputs.deploy_sha }}
+        run: |
+          set -eu
+
+          if [ ! -d "$PRODUCTION_REPO_DIR" ]; then
+            echo "::error::PRODUCTION_REPO_DIR does not exist on this runner: $PRODUCTION_REPO_DIR"
+            exit 1
+          fi
+          cd "$PRODUCTION_REPO_DIR"
+
+          if [ ! -f docker-compose.prod.yml ]; then
+            echo "::error::Missing docker-compose.prod.yml in $PRODUCTION_REPO_DIR"
+            exit 1
+          fi
+          if ! grep -q '^name: family-memory-ai$' docker-compose.prod.yml; then
+            echo "::error::docker-compose.prod.yml must keep project name family-memory-ai (changing it orphans running containers)."
+            exit 1
+          fi
+          if [ ! -f .env ] || [ ! -f .env.production ]; then
+            echo "::error::Missing .env and/or .env.production in $PRODUCTION_REPO_DIR (gitignored; must already exist on the Mac)."
+            exit 1
+          fi
+
+          command -v docker >/dev/null
+          docker info >/dev/null
+          command -v git >/dev/null
+
+          echo "Production tree: $PRODUCTION_REPO_DIR"
+          echo "Target SHA: $DEPLOY_SHA"
+
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Production work tree is dirty; refusing auto-deploy so we do not build an unreproducible image."
+            git status --porcelain >&2
+            exit 1
+          fi
+
+          git fetch --prune origin
+          if ! git cat-file -e "${DEPLOY_SHA}^{commit}" 2>/dev/null; then
+            echo "::error::Deploy SHA $DEPLOY_SHA is not available after git fetch."
+            exit 1
+          fi
+          # CI 가 검증한 커밋만 배포한다(그 사이 main tip 이 달라도 따라가지 않음).
+          git checkout --detach "$DEPLOY_SHA"
+
+          # 공식 진입점 기본값: bootstrap(Docker+migrate+verify) 후 OTA 번들까지.
+          # DEPLOY_SKIP_OTA 를 설정하지 않는다 — Docker 만 올리면 폰 웹 자산가 낡은 채로 남는다.
+          sh scripts/ops/deploy.sh
