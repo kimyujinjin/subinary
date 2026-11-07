@@ -25,7 +25,14 @@ test('Dockerfile.prod installs sujain-web-runner playwright-core 1.62.0 and chro
   assert.match(dockerfile, /playwright-core/);
   assert.match(dockerfile, /1\.62\.0/);
   assert.match(dockerfile, /--only-shell/);
-  assert.match(dockerfile, /chrome-headless-shell/);
+  // playwright-core@1.62.0 chromium-headless-shell EXECUTABLE_PATHS:
+  //   linux-x64  → chrome-headless-shell-linux64/chrome-headless-shell
+  //   linux-arm64 → chrome-linux/headless_shell  (홈 Mac 운영 이미지 플랫폼)
+  // find 는 두 이름을 모두 허용해야 한다. 한쪽만 찾으면 플랫폼 회귀.
+  assert.match(
+    dockerfile,
+    /find "\$\{PLAYWRIGHT_BROWSERS_PATH\}" -type f \\\( -name chrome-headless-shell -o -name headless_shell \\\)/,
+  );
   assert.match(dockerfile, /\/app\/tools\/sujain-web-runner\/chromium/);
   // 설치 RUN 은 수자인 디렉터리만. 주석에 신한 분리 안내가 있어도 bank-web 경로로 cd 하지 않는다.
   const runtimeInstall = dockerfile.match(
