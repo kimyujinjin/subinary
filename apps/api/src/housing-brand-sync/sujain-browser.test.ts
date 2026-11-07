@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -99,6 +100,31 @@ describe('sujain runner diagnostics without credentials', () => {
       { error: 'operation_unknown', reason: 'response_too_large' },
       '',
     )).toEqual({ code: 'operation_unknown', reason: 'response_too_large' });
+  });
+
+  it('maps nonzero exit without JSON to runner_exit_nonzero', () => {
+    expect(classifySujainRunnerFailure(1, null, '')).toEqual({
+      code: 'operation_unknown',
+      reason: 'runner_exit_nonzero',
+    });
+  });
+
+  it('preserves parent_deadline and playwright_timeout allowlisted reasons', () => {
+    expect(classifySujainRunnerFailure(
+      0,
+      { error: 'operation_unknown', reason: 'parent_deadline' },
+      '',
+    )).toEqual({ code: 'operation_unknown', reason: 'parent_deadline' });
+    expect(classifySujainRunnerFailure(
+      0,
+      { error: 'operation_unknown', reason: 'playwright_timeout' },
+      '',
+    )).toEqual({ code: 'operation_unknown', reason: 'playwright_timeout' });
+    expect(classifySujainRunnerFailure(
+      0,
+      { error: 'operation_unknown', reason: 'runner_exception' },
+      '',
+    )).toEqual({ code: 'operation_unknown', reason: 'runner_exception' });
   });
 
   it('truncates synthetic overlong cells without inventing values', () => {
@@ -226,5 +252,76 @@ describe('sujain child transport with synthetic streams', () => {
       code: 'credentials_invalid',
       reason: null,
     });
+  });
+
+  it('marks the 60s parent timer as parent_deadline and warns without stderr', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const test = child();
+    const pending = client().read(credentials(), new AbortController().signal);
+    const outcome = expect(pending).rejects.toMatchObject({
+      code: 'operation_unknown',
+      reason: 'parent_deadline',
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await outcome;
+    expect(test.process.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/sujain runner failed code=operation_unknown reason=parent_deadline/),
+    );
+    expect(warn.mock.calls.flat().join('\n')).not.toContain('Synthetic!123');
+    warn.mockRestore();
+  });
+
+  it('marks stdin transport errors as stdin_error and warns', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const test = child();
+    const pending = client().read(credentials(), new AbortController().signal);
+    const outcome = expect(pending).rejects.toMatchObject({
+      code: 'operation_unknown',
+      reason: 'stdin_error',
+    });
+    test.process.stdin.emit('error', new Error('synthetic-stdin-broken'));
+    await outcome;
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/sujain runner failed code=operation_unknown reason=stdin_error/),
+    );
+    expect(warn.mock.calls.flat().join('\n')).not.toContain('synthetic-stdin-broken');
+    warn.mockRestore();
+  });
+
+  it('surfaces playwright_timeout from runner JSON and warns without stderr', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const test = child();
+    const pending = client().read(credentials(), new AbortController().signal);
+    test.process.stdout.write(JSON.stringify({
+      ok: false,
+      error: 'operation_unknown',
+      reason: 'playwright_timeout',
+    }));
+    test.close(0);
+    await expect(pending).rejects.toMatchObject({
+      code: 'operation_unknown',
+      reason: 'playwright_timeout',
+    });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/sujain runner failed code=operation_unknown reason=playwright_timeout/),
+    );
+    warn.mockRestore();
+  });
+
+  it('surfaces runner_exit_nonzero when child exits hard with empty stdout', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const test = child();
+    const pending = client().read(credentials(), new AbortController().signal);
+    test.close(1);
+    await expect(pending).rejects.toMatchObject({
+      code: 'operation_unknown',
+      reason: 'runner_exit_nonzero',
+    });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/sujain runner failed code=operation_unknown reason=runner_exit_nonzero/),
+    );
+    warn.mockRestore();
   });
 });

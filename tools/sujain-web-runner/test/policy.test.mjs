@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { allowedRequest, chromiumSandboxEnabled, isLoginUrl, validateJob, SujainReadError } from '../policy.mjs';
+import {
+  allowedRequest,
+  chromiumSandboxEnabled,
+  classifyUntypedRunnerError,
+  isLoginUrl,
+  validateJob,
+  SujainReadError,
+} from '../policy.mjs';
 
 test('allows only sujain hosts', () => {
   assert.equal(allowedRequest('https://www.sujain.co.kr/mypage/payment'), true);
@@ -51,4 +58,30 @@ test('runner turns sandbox off via policy and maps launch failure to runtime_una
   assert.doesNotMatch(runtime, /console\.(log|error|info|debug|warn)/);
   assert.doesNotMatch(runtime, /BANK_WEB_/);
   assert.doesNotMatch(runtime, /--no-sandbox/);
+});
+
+test('classifyUntypedRunnerError uses error.name only — never message text', () => {
+  const timeout = new Error('page.setDefaultTimeout synthetic secret Timeout 5000ms exceeded');
+  timeout.name = 'TimeoutError';
+  assert.equal(classifyUntypedRunnerError(timeout), 'playwright_timeout');
+
+  const destroyed = new Error('Execution context was destroyed synthetic page text');
+  destroyed.name = 'Error';
+  assert.equal(classifyUntypedRunnerError(destroyed), 'runner_exception');
+
+  assert.equal(classifyUntypedRunnerError(new SujainReadError('credentials_invalid')), null);
+  assert.equal(classifyUntypedRunnerError(null), 'runner_exception');
+  assert.equal(classifyUntypedRunnerError('string-throw'), 'runner_exception');
+});
+
+test('runner catch attaches allowlisted reason for untyped failures', async () => {
+  const runtime = await readFile(new URL('../run.mjs', import.meta.url), 'utf8');
+  const policy = await readFile(new URL('../policy.mjs', import.meta.url), 'utf8');
+  assert.match(runtime, /classifyUntypedRunnerError/);
+  assert.match(policy, /playwright_timeout/);
+  assert.match(policy, /runner_exception/);
+  assert.match(policy, /error\.name/);
+  assert.doesNotMatch(policy, /error\.message/);
+  assert.doesNotMatch(runtime, /error\.message/);
+  assert.doesNotMatch(runtime, /\.stack/);
 });
