@@ -1,8 +1,27 @@
 import { SujainReadError, isLoginUrl } from './policy.mjs';
 import { SUJAIN_URLS } from './urls.mjs';
 
+/** Must match apps/api sujain-browser responseSchema string caps. */
+export const SUJAIN_CELL_MAX = 200;
+export const SUJAIN_HEADER_MAX = 100;
+
 function text(value) {
   return (value ?? '').replace(/\s+/gu, ' ').trim();
+}
+
+function clip(value, max) {
+  const clipped = text(value);
+  return clipped.length <= max ? clipped : clipped.slice(0, max);
+}
+
+/** Truncate cell/header strings to API schema caps so ok:true is not discarded. */
+export function normalizeCapturedRows(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.slice(0, 100).map((row) => ({
+    cells: (Array.isArray(row?.cells) ? row.cells : []).slice(0, 20).map((cell) => clip(cell, SUJAIN_CELL_MAX)),
+    headers: (Array.isArray(row?.headers) ? row.headers : []).slice(0, 20).map((header) => clip(header, SUJAIN_HEADER_MAX)),
+    sourcePage: row?.sourcePage === 'unit-items' ? 'unit-items' : 'payment',
+  }));
 }
 
 /** Official ajax failure alerts — not the post-login success toast. */
@@ -38,16 +57,22 @@ async function waitUntilLeftLogin(page, timeout = 15_000) {
 }
 
 async function tableRows(page, sourcePage) {
-  return page.evaluate((pageKind) => {
+  const raw = await page.evaluate((pageKind) => {
+    const cellMax = 200;
+    const headerMax = 100;
+    const clipText = (value, max) => {
+      const clipped = (value ?? '').replace(/\s+/gu, ' ').trim();
+      return clipped.length <= max ? clipped : clipped.slice(0, max);
+    };
     const out = [];
     for (const table of Array.from(document.querySelectorAll('table')).slice(0, 20)) {
       const headerCells = Array.from(table.querySelectorAll('thead th, tr:first-child th'))
-        .map((cell) => (cell.textContent ?? '').replace(/\s+/gu, ' ').trim())
+        .map((cell) => clipText(cell.textContent, headerMax))
         .filter(Boolean);
       const bodyRows = Array.from(table.querySelectorAll('tbody tr, tr')).slice(0, 50);
       for (const row of bodyRows) {
         const cells = Array.from(row.querySelectorAll('th, td'))
-          .map((cell) => (cell.textContent ?? '').replace(/\s+/gu, ' ').trim());
+          .map((cell) => clipText(cell.textContent, cellMax));
         if (cells.length === 0 || cells.every((cell) => !cell)) continue;
         // 헤더만 있는 줄은 건너뛴다.
         if (headerCells.length && cells.join('|') === headerCells.join('|')) continue;
@@ -60,6 +85,7 @@ async function tableRows(page, sourcePage) {
     }
     return out.slice(0, 100);
   }, sourcePage);
+  return normalizeCapturedRows(raw);
 }
 
 /**
@@ -168,6 +194,8 @@ export async function readSujainPages(page, job) {
 
   return {
     capturedAt: new Date().toISOString(),
-    rows: rows.filter((row) => row.cells.length > 0 || text((row.headers ?? []).join(''))).slice(0, 100),
+    rows: normalizeCapturedRows(
+      rows.filter((row) => row.cells.length > 0 || text((row.headers ?? []).join(''))),
+    ),
   };
 }
