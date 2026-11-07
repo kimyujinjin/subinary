@@ -637,6 +637,13 @@ test('unsupported_layout diagnostics include table counts and header texts only'
     { rawRowCount: 2, preSkipRowCount: 0, formControlCount: 0 },
   ]);
   assert.equal(diagnostics.layout.payment.outsideTableFormControlCount, 0);
+  assert.deepEqual(diagnostics.layout.payment.outsideTableFormControls, {
+    visibleInput: 0,
+    visibleSelect: 0,
+    visibleTextarea: 0,
+    hidden: 0,
+    other: 0,
+  });
   assert.equal(diagnostics.layout.payment.iframeCount, 0);
   assert.equal(diagnostics.layout.payment.pagePath, 'https://www.sujain.co.kr/mypage/payment');
   assert.equal(diagnostics.layout['unit-items'].tableCount, 1);
@@ -668,11 +675,11 @@ test('unsupported_layout diagnostics include table counts and header texts only'
   }
   assert.match(
     warnFragment,
-    /layout=payment:t=1;h=\[항목\|내용\];raw=2;eligible=0;tables=\[r=2,p=0,i=0\];out=0;ifr=0;path=https:\/\/www\.sujain\.co\.kr\/mypage\/payment/,
+    /layout=payment:t=1;h=\[항목\|내용\];raw=2;eligible=0;tables=\[r=2,p=0,i=0\];out=0\[vi=0,vs=0,vt=0,h=0,o=0\];ifr=0;path=https:\/\/www\.sujain\.co\.kr\/mypage\/payment/,
   );
   assert.match(
     warnFragment,
-    /unit-items:t=1;h=\[항목\|내용\];raw=2;eligible=0;tables=\[r=2,p=0,i=0\];out=0;ifr=0;path=https:\/\/www\.sujain\.co\.kr\/mypage\/unit-items/,
+    /unit-items:t=1;h=\[항목\|내용\];raw=2;eligible=0;tables=\[r=2,p=0,i=0\];out=0\[vi=0,vs=0,vt=0,h=0,o=0\];ifr=0;path=https:\/\/www\.sujain\.co\.kr\/mypage\/unit-items/,
   );
   // Layout diagnostic object never carries a cells key.
   assert.equal(Object.hasOwn(diagnostics.layout.payment, 'cells'), false);
@@ -688,6 +695,13 @@ test('layout diagnostic builder never copies cell values from a capture payload'
     eligibleRowCount: 0,
     tables: [{ rawRowCount: 1, preSkipRowCount: 2, formControlCount: 4 }],
     outsideTableFormControlCount: 1,
+    outsideTableFormControls: {
+      visibleInput: 0,
+      visibleSelect: 1,
+      visibleTextarea: 0,
+      hidden: 0,
+      other: 0,
+    },
     iframeCount: 0,
     iframePaths: [],
     pagePath: 'https://www.sujain.co.kr/mypage/payment?tok=SECRET',
@@ -703,6 +717,13 @@ test('layout diagnostic builder never copies cell values from a capture payload'
     { rawRowCount: 1, preSkipRowCount: 2, formControlCount: 4 },
   ]);
   assert.equal(diagnostic.outsideTableFormControlCount, 1);
+  assert.deepEqual(diagnostic.outsideTableFormControls, {
+    visibleInput: 0,
+    visibleSelect: 1,
+    visibleTextarea: 0,
+    hidden: 0,
+    other: 0,
+  });
   assert.equal(diagnostic.pagePath, 'https://www.sujain.co.kr/mypage/payment');
   assert.equal(Object.hasOwn(diagnostic, 'cells'), false);
   assert.equal(Object.hasOwn(diagnostic, 'rows'), false);
@@ -722,6 +743,13 @@ test('normalizeTableEvaluateResult accepts production object shape and array fix
       { rawRowCount: 1, preSkipRowCount: 2, formControlCount: 8 },
     ],
     outsideTableFormControlCount: 3,
+    outsideTableFormControls: {
+      visibleInput: 1,
+      visibleSelect: 1,
+      visibleTextarea: 0,
+      hidden: 1,
+      other: 0,
+    },
     iframeCount: 1,
     iframePaths: ['https://www.sujain.co.kr/embed?token=SECRET'],
     rows: [
@@ -736,6 +764,13 @@ test('normalizeTableEvaluateResult accepts production object shape and array fix
     { rawRowCount: 1, preSkipRowCount: 2, formControlCount: 8 },
   ]);
   assert.equal(fromObject.outsideTableFormControlCount, 3);
+  assert.deepEqual(fromObject.outsideTableFormControls, {
+    visibleInput: 1,
+    visibleSelect: 1,
+    visibleTextarea: 0,
+    hidden: 1,
+    other: 0,
+  });
   assert.equal(fromObject.iframeCount, 1);
   assert.deepEqual(fromObject.iframePaths, ['https://www.sujain.co.kr/embed']);
   assert.equal(fromObject.rows.length, 2);
@@ -749,6 +784,13 @@ test('normalizeTableEvaluateResult accepts production object shape and array fix
     { rawRowCount: 1, preSkipRowCount: 0, formControlCount: 0 },
   ]);
   assert.equal(fromArray.outsideTableFormControlCount, 0);
+  assert.deepEqual(fromArray.outsideTableFormControls, {
+    visibleInput: 0,
+    visibleSelect: 0,
+    visibleTextarea: 0,
+    hidden: 0,
+    other: 0,
+  });
   assert.equal(fromArray.iframeCount, 0);
   assert.equal(fromArray.rows.length, 1);
 });
@@ -765,6 +807,13 @@ test('input-backed payment rows from evaluate object are kept as eligible scrape
       { rawRowCount: 4, preSkipRowCount: 5, formControlCount: 0 },
     ],
     outsideTableFormControlCount: 0,
+    outsideTableFormControls: {
+      visibleInput: 0,
+      visibleSelect: 0,
+      visibleTextarea: 0,
+      hidden: 0,
+      other: 0,
+    },
     iframeCount: 0,
     iframePaths: [],
     rows: [

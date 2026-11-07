@@ -64,6 +64,20 @@ const tableLayoutStatsSchema = z.object({
 /** Origin+pathname or pathname only — runner already strips query/hash. */
 const layoutPagePathSchema = z.string().max(200);
 
+/**
+ * Outside-table control buckets — counts only. Never names/ids/values/types
+ * beyond these five keys. visible* = on-screen data fields; hidden =
+ * type=hidden / hidden attr / display|visibility none; other = password/file/
+ * submit/button/image/reset/checkbox/radio (password never counted as visible).
+ */
+const outsideTableFormControlsSchema = z.object({
+  visibleInput: z.number().int().min(0).max(1000),
+  visibleSelect: z.number().int().min(0).max(1000),
+  visibleTextarea: z.number().int().min(0).max(1000),
+  hidden: z.number().int().min(0).max(1000),
+  other: z.number().int().min(0).max(1000),
+}).strict();
+
 /** Safe layout snapshot: counts + header texts + sanitized path. Never cell values. */
 const pageLayoutSchema = z.object({
   tableCount: z.number().int().min(0).max(100),
@@ -73,6 +87,8 @@ const pageLayoutSchema = z.object({
   tables: z.array(tableLayoutStatsSchema).max(20),
   /** input/select/textarea count outside any table — count only. */
   outsideTableFormControlCount: z.number().int().min(0).max(1000),
+  /** Visibility/kind breakdown; buckets should sum to outsideTableFormControlCount. */
+  outsideTableFormControls: outsideTableFormControlsSchema,
   iframeCount: z.number().int().min(0).max(100),
   /** Sanitized iframe srcs (origin+pathname); never content or query/hash. */
   iframePaths: z.array(layoutPagePathSchema).max(20),
@@ -219,6 +235,18 @@ export function classifySujainRunnerFailure(
 }
 
 /**
+ * Compact outside-table breakdown for warn lines.
+ * Example: out=12[vi=2,vs=1,vt=0,h=5,o=4]
+ * Mirrors tools/sujain-web-runner/policy.mjs formatOutsideTableFormControlsFragment.
+ */
+function formatOutsideTableFormControlsFragment(
+  count: number,
+  breakdown: z.infer<typeof outsideTableFormControlsSchema>,
+): string {
+  return `out=${count}[vi=${breakdown.visibleInput},vs=${breakdown.visibleSelect},vt=${breakdown.visibleTextarea},h=${breakdown.hidden},o=${breakdown.other}]`;
+}
+
+/**
  * Compact layout fragment for warn logs. Header texts + counts + sanitized path
  * only — never cells, form values, or query strings.
  * Mirrors tools/sujain-web-runner/policy.mjs formatLayoutWarnFragment.
@@ -239,8 +267,12 @@ export function formatLayoutWarnFragment(
       .map((stats) => `[r=${stats.rawRowCount},p=${stats.preSkipRowCount},i=${stats.formControlCount}]`)
       .join(',');
     const pathText = entry.pagePath || '-';
+    const outText = formatOutsideTableFormControlsFragment(
+      entry.outsideTableFormControlCount,
+      entry.outsideTableFormControls,
+    );
     parts.push(
-      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount};tables=${tableText || '[]'};out=${entry.outsideTableFormControlCount};ifr=${entry.iframeCount};path=${pathText}`,
+      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount};tables=${tableText || '[]'};${outText};ifr=${entry.iframeCount};path=${pathText}`,
     );
   }
   if (parts.length === 0) return '';

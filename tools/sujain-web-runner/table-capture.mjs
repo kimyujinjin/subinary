@@ -18,17 +18,32 @@
  *   tableHeaders: string[][],
  *   tables: Array<{ rawRowCount: number, preSkipRowCount: number, formControlCount: number }>,
  *   outsideTableFormControlCount: number,
+ *   outsideTableFormControls: {
+ *     visibleInput: number,
+ *     visibleSelect: number,
+ *     visibleTextarea: number,
+ *     hidden: number,
+ *     other: number,
+ *   },
  *   iframeCount: number,
  *   iframePaths: string[],
  *   rows: Array<{ cells: string[], headers: string[], sourcePage: string }>,
  * }}
  */
 export function captureSujainTables(pageKind, doc) {
+  const emptyOutsideBreakdown = {
+    visibleInput: 0,
+    visibleSelect: 0,
+    visibleTextarea: 0,
+    hidden: 0,
+    other: 0,
+  };
   const empty = {
     tableCount: 0,
     tableHeaders: [],
     tables: [],
     outsideTableFormControlCount: 0,
+    outsideTableFormControls: { ...emptyOutsideBreakdown },
     iframeCount: 0,
     iframePaths: [],
     rows: [],
@@ -163,6 +178,67 @@ export function captureSujainTables(pageKind, doc) {
     return false;
   };
 
+  /**
+   * Classify one outside-table control for diagnostics only.
+   * Never reads value/name/id/placeholder/aria/class/option text — tag + type
+   * token + visibility flags only. Password always lands in `other`.
+   * @returns {'visibleInput'|'visibleSelect'|'visibleTextarea'|'hidden'|'other'}
+   */
+  const classifyOutsideFormControl = (el) => {
+    const tag = String(el?.tagName || '').toLowerCase();
+    if (tag === 'input') {
+      const type = String(
+        (typeof el.getAttribute === 'function' ? el.getAttribute('type') : null)
+          ?? el.type
+          ?? 'text',
+      ).toLowerCase();
+      if (
+        type === 'password'
+        || type === 'file'
+        || type === 'submit'
+        || type === 'button'
+        || type === 'image'
+        || type === 'reset'
+        || type === 'checkbox'
+        || type === 'radio'
+      ) {
+        return 'other';
+      }
+      if (type === 'hidden') return 'hidden';
+    }
+
+    // Attribute / property hidden — never emit attribute strings.
+    if (el.hidden === true) return 'hidden';
+    if (typeof el.getAttribute === 'function') {
+      try {
+        if (el.getAttribute('hidden') !== null) return 'hidden';
+      } catch {
+        // ignore
+      }
+    }
+
+    // CSS display/visibility:none when readable — compare tokens only, never log style text.
+    try {
+      if (typeof getComputedStyle === 'function') {
+        const style = getComputedStyle(el);
+        const display = String(style?.display ?? '').toLowerCase();
+        const visibility = String(style?.visibility ?? '').toLowerCase();
+        if (display === 'none' || visibility === 'hidden') return 'hidden';
+      } else if (el.style && typeof el.style === 'object') {
+        const display = String(el.style.display ?? '').toLowerCase();
+        const visibility = String(el.style.visibility ?? '').toLowerCase();
+        if (display === 'none' || visibility === 'hidden') return 'hidden';
+      }
+    } catch {
+      // ignore missing computed style in Node fixtures
+    }
+
+    if (tag === 'select') return 'visibleSelect';
+    if (tag === 'textarea') return 'visibleTextarea';
+    if (tag === 'input') return 'visibleInput';
+    return 'other';
+  };
+
   const allTables = Array.from(root.querySelectorAll('table'));
   const tableHeaders = [];
   const tables = [];
@@ -201,12 +277,19 @@ export function captureSujainTables(pageKind, doc) {
     });
   }
 
-  // Page-level: form controls outside any table — count only, never values.
+  // Page-level: form controls outside any table — counts only, never values.
+  const outsideTableFormControls = { ...emptyOutsideBreakdown };
   let outsideTableFormControlCount = 0;
   for (const el of Array.from(root.querySelectorAll('input, select, textarea')).slice(0, 2000)) {
-    if (!isInsideTable(el)) outsideTableFormControlCount += 1;
+    if (isInsideTable(el)) continue;
+    outsideTableFormControlCount += 1;
+    const bucket = classifyOutsideFormControl(el);
+    outsideTableFormControls[bucket] += 1;
   }
   outsideTableFormControlCount = Math.min(outsideTableFormControlCount, 1000);
+  for (const key of Object.keys(outsideTableFormControls)) {
+    outsideTableFormControls[key] = Math.min(outsideTableFormControls[key], 1000);
+  }
 
   // Page-level: iframe count + sanitized src paths (never content, never query/hash).
   const iframeEls = Array.from(root.querySelectorAll('iframe'));
@@ -225,6 +308,7 @@ export function captureSujainTables(pageKind, doc) {
     tableHeaders,
     tables,
     outsideTableFormControlCount,
+    outsideTableFormControls,
     iframeCount,
     iframePaths,
     rows: out.slice(0, 100),
