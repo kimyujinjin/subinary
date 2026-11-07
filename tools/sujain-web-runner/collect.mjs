@@ -1,4 +1,9 @@
-import { SujainReadError, isLoginUrl, sanitizePageLayoutDiagnostic } from './policy.mjs';
+import {
+  SujainReadError,
+  isLoginUrl,
+  sanitizeLayoutPagePath,
+  sanitizePageLayoutDiagnostic,
+} from './policy.mjs';
 import { captureSujainTables } from './table-capture.mjs';
 import { SUJAIN_URLS } from './urls.mjs';
 
@@ -42,8 +47,9 @@ export function isEligibleSujainCapturedRow(row) {
 
 /**
  * Safe layout snapshot for one scrape page: table counts + header texts + row
- * counts + per-table raw/form-control counts only. Never includes cell values
- * (names, phones, amounts, dates) or input values.
+ * counts + per-table raw/pre-skip/form-control counts + outside-table input
+ * count + iframe count/paths + sanitized page path. Never includes cell values
+ * (names, phones, amounts, dates), form-control values, or query strings.
  */
 export function buildPageLayoutDiagnostic({
   sourcePage,
@@ -52,6 +58,10 @@ export function buildPageLayoutDiagnostic({
   rawRowCount,
   eligibleRowCount,
   tables,
+  outsideTableFormControlCount,
+  iframeCount,
+  iframePaths,
+  pagePath,
 }) {
   return sanitizePageLayoutDiagnostic({
     sourcePage: sourcePage === 'unit-items' ? 'unit-items' : 'payment',
@@ -60,7 +70,17 @@ export function buildPageLayoutDiagnostic({
     rawRowCount,
     eligibleRowCount,
     tables,
+    outsideTableFormControlCount,
+    iframeCount,
+    iframePaths,
+    pagePath,
   });
+}
+
+function normalizeNonNegInt(value, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(Math.trunc(n), max);
 }
 
 function normalizeTableStats(rawTables, fallbackHeaders, rows) {
@@ -68,30 +88,43 @@ function normalizeTableStats(rawTables, fallbackHeaders, rows) {
     const out = [];
     for (const entry of rawTables.slice(0, 20)) {
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
-      const rawN = Number(entry.rawRowCount);
-      const formN = Number(entry.formControlCount);
       out.push({
-        rawRowCount: Number.isFinite(rawN) && rawN >= 0 ? Math.min(Math.trunc(rawN), 1000) : 0,
-        formControlCount: Number.isFinite(formN) && formN >= 0 ? Math.min(Math.trunc(formN), 1000) : 0,
+        rawRowCount: normalizeNonNegInt(entry.rawRowCount, 1000),
+        preSkipRowCount: normalizeNonNegInt(entry.preSkipRowCount, 1000),
+        formControlCount: normalizeNonNegInt(entry.formControlCount, 1000),
       });
     }
     return out;
   }
   // Array-shaped evaluate fixtures have no per-table form counts — derive raw
-  // counts from captured rows per header set; formControlCount stays 0.
+  // counts from captured rows per header set; preSkip/formControl stay 0.
   const headers = Array.isArray(fallbackHeaders) ? fallbackHeaders : [];
   return headers.slice(0, 20).map((cols) => {
     const key = (Array.isArray(cols) ? cols : []).join('\u0001');
     const rawRowCount = rows.filter((row) => row.headers.join('\u0001') === key).length;
-    return { rawRowCount: Math.min(rawRowCount, 1000), formControlCount: 0 };
+    return {
+      rawRowCount: Math.min(rawRowCount, 1000),
+      preSkipRowCount: 0,
+      formControlCount: 0,
+    };
   });
+}
+
+function normalizeIframePaths(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const entry of value.slice(0, 20)) {
+    const path = sanitizeLayoutPagePath(entry);
+    if (path) out.push(path);
+  }
+  return out;
 }
 
 /**
  * Normalize page.evaluate output. Production returns
- * `{ tableCount, tableHeaders, tables, rows }`; older/simple test fixtures may
- * return a bare row array — derive header sets from those rows, never invent
- * cell text.
+ * `{ tableCount, tableHeaders, tables, outsideTableFormControlCount,
+ * iframeCount, iframePaths, rows }`; older/simple test fixtures may return a
+ * bare row array — derive header sets from those rows, never invent cell text.
  */
 export function normalizeTableEvaluateResult(raw) {
   if (Array.isArray(raw)) {
@@ -109,11 +142,22 @@ export function normalizeTableEvaluateResult(raw) {
       tableCount: headers.length,
       tableHeaders: headers,
       tables: normalizeTableStats(undefined, headers, rows),
+      outsideTableFormControlCount: 0,
+      iframeCount: 0,
+      iframePaths: [],
       rows,
     };
   }
   if (!raw || typeof raw !== 'object') {
-    return { tableCount: 0, tableHeaders: [], tables: [], rows: [] };
+    return {
+      tableCount: 0,
+      tableHeaders: [],
+      tables: [],
+      outsideTableFormControlCount: 0,
+      iframeCount: 0,
+      iframePaths: [],
+      rows: [],
+    };
   }
   const tableHeaders = [];
   if (Array.isArray(raw.tableHeaders)) {
@@ -133,6 +177,9 @@ export function normalizeTableEvaluateResult(raw) {
     tableCount,
     tableHeaders,
     tables: normalizeTableStats(raw.tables, tableHeaders, rows),
+    outsideTableFormControlCount: normalizeNonNegInt(raw.outsideTableFormControlCount, 1000),
+    iframeCount: normalizeNonNegInt(raw.iframeCount, 100),
+    iframePaths: normalizeIframePaths(raw.iframePaths),
     rows,
   };
 }
@@ -187,6 +234,12 @@ async function evaluateTableRows(page, sourcePage) {
 
   const normalized = normalizeTableEvaluateResult(raw);
   const eligible = normalized.rows.filter(isEligibleSujainCapturedRow);
+  let pageHref = '';
+  try {
+    pageHref = typeof page.url === 'function' ? page.url() : '';
+  } catch {
+    pageHref = '';
+  }
   const layout = buildPageLayoutDiagnostic({
     sourcePage,
     tableCount: normalized.tableCount,
@@ -194,6 +247,10 @@ async function evaluateTableRows(page, sourcePage) {
     rawRowCount: normalized.rows.length,
     eligibleRowCount: eligible.length,
     tables: normalized.tables,
+    outsideTableFormControlCount: normalized.outsideTableFormControlCount,
+    iframeCount: normalized.iframeCount,
+    iframePaths: normalized.iframePaths,
+    pagePath: pageHref,
   });
   return { rows: eligible, layout };
 }
@@ -236,6 +293,12 @@ async function tableRows(page, sourcePage) {
 
   const deadline = Date.now() + tableWaitMs();
   let destroyedRetried = false;
+  let pageHref = '';
+  try {
+    pageHref = typeof page.url === 'function' ? page.url() : '';
+  } catch {
+    pageHref = '';
+  }
   let last = {
     rows: [],
     layout: buildPageLayoutDiagnostic({
@@ -245,6 +308,10 @@ async function tableRows(page, sourcePage) {
       rawRowCount: 0,
       eligibleRowCount: 0,
       tables: [],
+      outsideTableFormControlCount: 0,
+      iframeCount: 0,
+      iframePaths: [],
+      pagePath: pageHref,
     }),
   };
 

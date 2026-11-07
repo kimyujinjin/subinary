@@ -6,7 +6,8 @@
  * production evaluate passes only pageKind and uses the page document.
  *
  * Privacy: never returns password/hidden control values. Callers must never log
- * cell values — layout diagnostics use counts only.
+ * cell values — layout diagnostics use counts only. Iframe srcs and page URLs
+ * are stripped to origin+pathname (or pathname) with search/hash removed.
  */
 
 /**
@@ -15,21 +16,56 @@
  * @returns {{
  *   tableCount: number,
  *   tableHeaders: string[][],
- *   tables: Array<{ rawRowCount: number, formControlCount: number }>,
+ *   tables: Array<{ rawRowCount: number, preSkipRowCount: number, formControlCount: number }>,
+ *   outsideTableFormControlCount: number,
+ *   iframeCount: number,
+ *   iframePaths: string[],
  *   rows: Array<{ cells: string[], headers: string[], sourcePage: string }>,
  * }}
  */
 export function captureSujainTables(pageKind, doc) {
+  const empty = {
+    tableCount: 0,
+    tableHeaders: [],
+    tables: [],
+    outsideTableFormControlCount: 0,
+    iframeCount: 0,
+    iframePaths: [],
+    rows: [],
+  };
   const root = doc ?? (typeof document !== 'undefined' ? document : null);
   if (!root || typeof root.querySelectorAll !== 'function') {
-    return { tableCount: 0, tableHeaders: [], tables: [], rows: [] };
+    return empty;
   }
 
   const cellMax = 200;
   const headerMax = 100;
+  const pathMax = 200;
   const clipText = (value, max) => {
     const clipped = String(value ?? '').replace(/\s+/gu, ' ').trim();
     return clipped.length <= max ? clipped : clipped.slice(0, max);
+  };
+
+  /**
+   * Origin+pathname or pathname only — strip search/hash. Never credentials.
+   * Inlined here because this function is serialized into page.evaluate.
+   */
+  const sanitizePath = (value) => {
+    const raw = String(value ?? '').trim();
+    if (!raw) return null;
+    try {
+      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/u.test(raw) || raw.startsWith('//')) {
+        const url = new URL(raw.startsWith('//') ? `https:${raw}` : raw);
+        if (url.username || url.password) return null;
+        const out = `${url.origin}${url.pathname}`.slice(0, pathMax);
+        return out || null;
+      }
+      const path = raw.split(/[?#]/u)[0].slice(0, pathMax);
+      if (!path || /[\x00-\x1f]/u.test(path)) return null;
+      return path;
+    } catch {
+      return null;
+    }
   };
 
   /**
@@ -110,6 +146,23 @@ export function captureSujainTables(pageKind, doc) {
     return Math.min(table.querySelectorAll('input, select, textarea').length, 1000);
   };
 
+  const isInsideTable = (el) => {
+    if (!el || typeof el !== 'object') return false;
+    if (typeof el.closest === 'function') {
+      try {
+        return Boolean(el.closest('table'));
+      } catch {
+        // fall through to parent walk
+      }
+    }
+    let node = el.parentElement ?? el.parentNode ?? null;
+    while (node) {
+      if (String(node.tagName || '').toLowerCase() === 'table') return true;
+      node = node.parentElement ?? node.parentNode ?? null;
+    }
+    return false;
+  };
+
   const allTables = Array.from(root.querySelectorAll('table'));
   const tableHeaders = [];
   const tables = [];
@@ -125,6 +178,9 @@ export function captureSujainTables(pageKind, doc) {
     let tableRawRowCount = 0;
 
     const bodyRows = Array.from(table.querySelectorAll('tbody tr, tr')).slice(0, 50);
+    // Count every candidate tr before empty-cell / header-only skips.
+    const preSkipRowCount = bodyRows.length;
+
     for (const row of bodyRows) {
       const cells = Array.from(row.querySelectorAll('th, td')).map((cell) => readCellText(cell));
       if (cells.length === 0 || cells.every((cell) => !cell)) continue;
@@ -140,14 +196,37 @@ export function captureSujainTables(pageKind, doc) {
 
     tables.push({
       rawRowCount: Math.min(tableRawRowCount, 1000),
+      preSkipRowCount: Math.min(preSkipRowCount, 1000),
       formControlCount,
     });
+  }
+
+  // Page-level: form controls outside any table — count only, never values.
+  let outsideTableFormControlCount = 0;
+  for (const el of Array.from(root.querySelectorAll('input, select, textarea')).slice(0, 2000)) {
+    if (!isInsideTable(el)) outsideTableFormControlCount += 1;
+  }
+  outsideTableFormControlCount = Math.min(outsideTableFormControlCount, 1000);
+
+  // Page-level: iframe count + sanitized src paths (never content, never query/hash).
+  const iframeEls = Array.from(root.querySelectorAll('iframe'));
+  const iframeCount = Math.min(iframeEls.length, 100);
+  const iframePaths = [];
+  for (const iframe of iframeEls.slice(0, 20)) {
+    const src = typeof iframe.getAttribute === 'function'
+      ? (iframe.getAttribute('src') ?? iframe.src ?? '')
+      : (iframe.src ?? '');
+    const path = sanitizePath(src);
+    if (path) iframePaths.push(path);
   }
 
   return {
     tableCount: Math.min(allTables.length, 100),
     tableHeaders,
     tables,
+    outsideTableFormControlCount,
+    iframeCount,
+    iframePaths,
     rows: out.slice(0, 100),
   };
 }

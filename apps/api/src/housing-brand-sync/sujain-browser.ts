@@ -56,16 +56,28 @@ const runnerStageSchema = z.enum([
 /** Per-table counts only — never form-control values. */
 const tableLayoutStatsSchema = z.object({
   rawRowCount: z.number().int().min(0).max(1000),
+  /** tr candidates before empty-cell / header-only skips. */
+  preSkipRowCount: z.number().int().min(0).max(1000),
   formControlCount: z.number().int().min(0).max(1000),
 }).strict();
 
-/** Safe layout snapshot: table counts + header texts + row counts. Never cell values. */
+/** Origin+pathname or pathname only — runner already strips query/hash. */
+const layoutPagePathSchema = z.string().max(200);
+
+/** Safe layout snapshot: counts + header texts + sanitized path. Never cell values. */
 const pageLayoutSchema = z.object({
   tableCount: z.number().int().min(0).max(100),
   tableHeaders: z.array(z.array(z.string().max(SUJAIN_HEADER_MAX)).max(20)).max(20),
   rawRowCount: z.number().int().min(0).max(1000),
   eligibleRowCount: z.number().int().min(0).max(1000),
   tables: z.array(tableLayoutStatsSchema).max(20),
+  /** input/select/textarea count outside any table — count only. */
+  outsideTableFormControlCount: z.number().int().min(0).max(1000),
+  iframeCount: z.number().int().min(0).max(100),
+  /** Sanitized iframe srcs (origin+pathname); never content or query/hash. */
+  iframePaths: z.array(layoutPagePathSchema).max(20),
+  /** Final scrape URL as origin+pathname (or null when unavailable). */
+  pagePath: layoutPagePathSchema.nullable(),
 }).strict();
 
 const layoutDiagnosticsSchema = z.object({
@@ -207,7 +219,8 @@ export function classifySujainRunnerFailure(
 }
 
 /**
- * Compact layout fragment for warn logs. Header texts + counts only — never cells.
+ * Compact layout fragment for warn logs. Header texts + counts + sanitized path
+ * only — never cells, form values, or query strings.
  * Mirrors tools/sujain-web-runner/policy.mjs formatLayoutWarnFragment.
  */
 export function formatLayoutWarnFragment(
@@ -223,10 +236,11 @@ export function formatLayoutWarnFragment(
       .map((cols) => `[${cols.join('|')}]`)
       .join(',');
     const tableText = entry.tables
-      .map((stats) => `[r=${stats.rawRowCount},i=${stats.formControlCount}]`)
+      .map((stats) => `[r=${stats.rawRowCount},p=${stats.preSkipRowCount},i=${stats.formControlCount}]`)
       .join(',');
+    const pathText = entry.pagePath || '-';
     parts.push(
-      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount};tables=${tableText || '[]'}`,
+      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount};tables=${tableText || '[]'};out=${entry.outsideTableFormControlCount};ifr=${entry.iframeCount};path=${pathText}`,
     );
   }
   if (parts.length === 0) return '';

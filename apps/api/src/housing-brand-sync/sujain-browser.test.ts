@@ -201,14 +201,22 @@ describe('sujain runner diagnostics without credentials', () => {
         tableHeaders: [['항목', '내용']],
         rawRowCount: 2,
         eligibleRowCount: 0,
-        tables: [{ rawRowCount: 2, formControlCount: 0 }],
+        tables: [{ rawRowCount: 2, preSkipRowCount: 3, formControlCount: 0 }],
+        outsideTableFormControlCount: 0,
+        iframeCount: 0,
+        iframePaths: [],
+        pagePath: 'https://www.sujain.co.kr/mypage/payment',
       },
       'unit-items': {
         tableCount: 1,
         tableHeaders: [['품목', '금액']],
         rawRowCount: 1,
         eligibleRowCount: 1,
-        tables: [{ rawRowCount: 1, formControlCount: 0 }],
+        tables: [{ rawRowCount: 1, preSkipRowCount: 2, formControlCount: 0 }],
+        outsideTableFormControlCount: 1,
+        iframeCount: 0,
+        iframePaths: [],
+        pagePath: 'https://www.sujain.co.kr/mypage/unit-items',
       },
     };
     expect(classifySujainRunnerFailure(
@@ -247,7 +255,11 @@ describe('sujain runner diagnostics without credentials', () => {
         tableHeaders: [['항목', '내용']],
         rawRowCount: 2,
         eligibleRowCount: 0,
-        tables: [{ rawRowCount: 2, formControlCount: 0 }],
+        tables: [{ rawRowCount: 2, preSkipRowCount: 3, formControlCount: 0 }],
+        outsideTableFormControlCount: 2,
+        iframeCount: 1,
+        iframePaths: ['https://www.sujain.co.kr/embed'],
+        pagePath: 'https://www.sujain.co.kr/mypage/payment',
       },
       'unit-items': {
         tableCount: 0,
@@ -255,14 +267,23 @@ describe('sujain runner diagnostics without credentials', () => {
         rawRowCount: 0,
         eligibleRowCount: 0,
         tables: [],
+        outsideTableFormControlCount: 0,
+        iframeCount: 0,
+        iframePaths: [],
+        pagePath: 'https://www.sujain.co.kr/mypage/unit-items',
       },
     };
     const fragment = formatLayoutWarnFragment(layout);
-    expect(fragment).toContain('layout=payment:t=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,i=0]');
-    expect(fragment).toContain('unit-items:t=0;h=[];raw=0;eligible=0;tables=[]');
+    expect(fragment).toContain(
+      'layout=payment:t=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,p=3,i=0];out=2;ifr=1;path=https://www.sujain.co.kr/mypage/payment',
+    );
+    expect(fragment).toContain(
+      'unit-items:t=0;h=[];raw=0;eligible=0;tables=[];out=0;ifr=0;path=https://www.sujain.co.kr/mypage/unit-items',
+    );
     expect(fragment).not.toContain('합성 회원');
     expect(fragment).not.toContain('000-0000-0000');
     expect(fragment).not.toContain('1,000');
+    expect(fragment).not.toContain('?');
     expect(formatSujainRunnerWarnExtras(null, 'scrape_unit_items', layout)).toContain(
       'stage=scrape_unit_items layout=payment:',
     );
@@ -273,6 +294,10 @@ describe('sujain runner diagnostics without credentials', () => {
         rawRowCount: 0,
         eligibleRowCount: 0,
         tables: [],
+        outsideTableFormControlCount: 0,
+        iframeCount: 0,
+        iframePaths: [],
+        pagePath: null,
         cells: ['합성 회원'],
       },
     })).toBeNull();
@@ -504,14 +529,22 @@ describe('sujain child transport with synthetic streams', () => {
           tableHeaders: [['항목', '내용']],
           rawRowCount: 2,
           eligibleRowCount: 0,
-          tables: [{ rawRowCount: 2, formControlCount: 0 }],
+          tables: [{ rawRowCount: 2, preSkipRowCount: 3, formControlCount: 0 }],
+          outsideTableFormControlCount: 0,
+          iframeCount: 0,
+          iframePaths: [],
+          pagePath: 'https://www.sujain.co.kr/mypage/payment',
         },
         'unit-items': {
           tableCount: 1,
           tableHeaders: [['항목', '내용']],
           rawRowCount: 2,
           eligibleRowCount: 0,
-          tables: [{ rawRowCount: 2, formControlCount: 0 }],
+          tables: [{ rawRowCount: 2, preSkipRowCount: 3, formControlCount: 0 }],
+          outsideTableFormControlCount: 0,
+          iframeCount: 0,
+          iframePaths: [],
+          pagePath: 'https://www.sujain.co.kr/mypage/unit-items',
         },
       },
     }));
@@ -524,8 +557,12 @@ describe('sujain child transport with synthetic streams', () => {
     expect(joined).toMatch(
       /sujain runner failed code=unsupported_layout reason=none stage=scrape_unit_items layout=/,
     );
-    expect(joined).toContain('payment:t=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,i=0]');
-    expect(joined).toContain('unit-items:t=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,i=0]');
+    expect(joined).toContain(
+      'payment:t=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,p=3,i=0];out=0;ifr=0;path=https://www.sujain.co.kr/mypage/payment',
+    );
+    expect(joined).toContain(
+      'unit-items:t=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,p=3,i=0];out=0;ifr=0;path=https://www.sujain.co.kr/mypage/unit-items',
+    );
     expect(joined).not.toContain('합성 회원');
     expect(joined).not.toContain('000-0000-0000');
     expect(joined).not.toContain('synthetic@example.com');

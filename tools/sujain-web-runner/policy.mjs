@@ -49,6 +49,8 @@ const LAYOUT_PAGES = new Set(['payment', 'unit-items']);
 const LAYOUT_HEADER_MAX = 100;
 const LAYOUT_TABLE_MAX = 20;
 const LAYOUT_HEADER_CELLS_MAX = 20;
+const LAYOUT_PATH_MAX = 200;
+const LAYOUT_IFRAME_PATHS_MAX = 20;
 
 /**
  * Header cell text only — never data-cell values.
@@ -62,14 +64,48 @@ export function sanitizeLayoutHeaderText(value) {
   return clipped;
 }
 
+/**
+ * Final scrape URL or iframe src → origin+pathname (or pathname).
+ * Strips search and hash so session tokens cannot leak. Never credentials.
+ */
+export function sanitizeLayoutPagePath(value) {
+  if (typeof value !== 'string') return null;
+  const raw = value.trim();
+  if (!raw) return null;
+  try {
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/u.test(raw) || raw.startsWith('//')) {
+      const url = new URL(raw.startsWith('//') ? `https:${raw}` : raw);
+      if (url.username || url.password) return null;
+      const out = `${url.origin}${url.pathname}`.slice(0, LAYOUT_PATH_MAX);
+      return out || null;
+    }
+    const path = raw.split(/[?#]/u)[0].slice(0, LAYOUT_PATH_MAX);
+    if (!path || /[\x00-\x1f]/u.test(path)) return null;
+    return path;
+  } catch {
+    return null;
+  }
+}
+
 function sanitizeNonNegInt(value, max) {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return 0;
   return Math.min(Math.trunc(n), max);
 }
 
+function sanitizeIframePaths(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const entry of value.slice(0, LAYOUT_IFRAME_PATHS_MAX)) {
+    const path = sanitizeLayoutPagePath(entry);
+    if (path) out.push(path);
+  }
+  return out;
+}
+
 /**
  * Per-table counts only — never input values, names, or amounts.
+ * preSkipRowCount = tr candidates before empty-cell / header-only skips.
  */
 function sanitizeTableLayoutStats(value) {
   if (!Array.isArray(value)) return [];
@@ -78,6 +114,7 @@ function sanitizeTableLayoutStats(value) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
     out.push({
       rawRowCount: sanitizeNonNegInt(entry.rawRowCount, 1000),
+      preSkipRowCount: sanitizeNonNegInt(entry.preSkipRowCount, 1000),
       formControlCount: sanitizeNonNegInt(entry.formControlCount, 1000),
     });
   }
@@ -86,8 +123,9 @@ function sanitizeTableLayoutStats(value) {
 
 /**
  * One scrape page: tableCount + header texts + raw/eligible row counts +
- * per-table raw/form-control counts. Never includes cell values, URLs, or
- * arbitrary extra keys.
+ * per-table raw/pre-skip/form-control counts + outside-table input count +
+ * iframe count/paths + sanitized page path. Never includes cell values,
+ * form-control values, query strings, or arbitrary extra keys.
  */
 export function sanitizePageLayoutDiagnostic(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -114,6 +152,10 @@ export function sanitizePageLayoutDiagnostic(value) {
     rawRowCount: sanitizeNonNegInt(value.rawRowCount, 1000),
     eligibleRowCount: sanitizeNonNegInt(value.eligibleRowCount, 1000),
     tables: sanitizeTableLayoutStats(value.tables),
+    outsideTableFormControlCount: sanitizeNonNegInt(value.outsideTableFormControlCount, 1000),
+    iframeCount: sanitizeNonNegInt(value.iframeCount, 100),
+    iframePaths: sanitizeIframePaths(value.iframePaths),
+    pagePath: sanitizeLayoutPagePath(value.pagePath),
   };
 }
 
@@ -138,14 +180,19 @@ export function sanitizeLayoutDiagnostics(layout) {
       rawRowCount: sanitized.rawRowCount,
       eligibleRowCount: sanitized.eligibleRowCount,
       tables: sanitized.tables,
+      outsideTableFormControlCount: sanitized.outsideTableFormControlCount,
+      iframeCount: sanitized.iframeCount,
+      iframePaths: sanitized.iframePaths,
+      pagePath: sanitized.pagePath,
     };
   }
   return Object.keys(out).length > 0 ? out : null;
 }
 
 /**
- * Compact warn-line fragment. Header texts + counts only — never cell values.
- * Example: layout=payment:t=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,i=0]|unit-items:t=0;h=[];raw=0;eligible=0;tables=[]
+ * Compact warn-line fragment. Header texts + counts + sanitized path only —
+ * never cell values, form values, or query strings.
+ * Example: layout=payment:t=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,p=3,i=0];out=0;ifr=0;path=https://www.sujain.co.kr/mypage/payment|unit-items:…
  */
 export function formatLayoutWarnFragment(layout) {
   const sanitized = sanitizeLayoutDiagnostics(layout);
@@ -158,10 +205,11 @@ export function formatLayoutWarnFragment(layout) {
       .map((cols) => `[${cols.join('|')}]`)
       .join(',');
     const tableText = entry.tables
-      .map((stats) => `[r=${stats.rawRowCount},i=${stats.formControlCount}]`)
+      .map((stats) => `[r=${stats.rawRowCount},p=${stats.preSkipRowCount},i=${stats.formControlCount}]`)
       .join(',');
+    const pathText = entry.pagePath || '-';
     parts.push(
-      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount};tables=${tableText || '[]'}`,
+      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount};tables=${tableText || '[]'};out=${entry.outsideTableFormControlCount};ifr=${entry.iframeCount};path=${pathText}`,
     );
   }
   if (parts.length === 0) return '';
