@@ -48,8 +48,9 @@ export function isEligibleSujainCapturedRow(row) {
 /**
  * Safe layout snapshot for one scrape page: table counts + header texts + row
  * counts + per-table raw/pre-skip/form-control counts + outside-table input
- * count + iframe count/paths + sanitized page path. Never includes cell values
- * (names, phones, amounts, dates), form-control values, or query strings.
+ * count + visibility/kind breakdown + iframe count/paths + sanitized page path.
+ * Never includes cell values (names, phones, amounts, dates), form-control
+ * values, or query strings.
  */
 export function buildPageLayoutDiagnostic({
   sourcePage,
@@ -59,6 +60,7 @@ export function buildPageLayoutDiagnostic({
   eligibleRowCount,
   tables,
   outsideTableFormControlCount,
+  outsideTableFormControls,
   iframeCount,
   iframePaths,
   pagePath,
@@ -71,6 +73,7 @@ export function buildPageLayoutDiagnostic({
     eligibleRowCount,
     tables,
     outsideTableFormControlCount,
+    outsideTableFormControls,
     iframeCount,
     iframePaths,
     pagePath,
@@ -120,11 +123,31 @@ function normalizeIframePaths(value) {
   return out;
 }
 
+const EMPTY_OUTSIDE_TABLE_FORM_CONTROLS = {
+  visibleInput: 0,
+  visibleSelect: 0,
+  visibleTextarea: 0,
+  hidden: 0,
+  other: 0,
+};
+
+function normalizeOutsideTableFormControls(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  return {
+    visibleInput: normalizeNonNegInt(source?.visibleInput, 1000),
+    visibleSelect: normalizeNonNegInt(source?.visibleSelect, 1000),
+    visibleTextarea: normalizeNonNegInt(source?.visibleTextarea, 1000),
+    hidden: normalizeNonNegInt(source?.hidden, 1000),
+    other: normalizeNonNegInt(source?.other, 1000),
+  };
+}
+
 /**
  * Normalize page.evaluate output. Production returns
  * `{ tableCount, tableHeaders, tables, outsideTableFormControlCount,
- * iframeCount, iframePaths, rows }`; older/simple test fixtures may return a
- * bare row array — derive header sets from those rows, never invent cell text.
+ * outsideTableFormControls, iframeCount, iframePaths, rows }`; older/simple
+ * test fixtures may return a bare row array — derive header sets from those
+ * rows, never invent cell text.
  */
 export function normalizeTableEvaluateResult(raw) {
   if (Array.isArray(raw)) {
@@ -143,6 +166,7 @@ export function normalizeTableEvaluateResult(raw) {
       tableHeaders: headers,
       tables: normalizeTableStats(undefined, headers, rows),
       outsideTableFormControlCount: 0,
+      outsideTableFormControls: { ...EMPTY_OUTSIDE_TABLE_FORM_CONTROLS },
       iframeCount: 0,
       iframePaths: [],
       rows,
@@ -154,6 +178,7 @@ export function normalizeTableEvaluateResult(raw) {
       tableHeaders: [],
       tables: [],
       outsideTableFormControlCount: 0,
+      outsideTableFormControls: { ...EMPTY_OUTSIDE_TABLE_FORM_CONTROLS },
       iframeCount: 0,
       iframePaths: [],
       rows: [],
@@ -178,6 +203,7 @@ export function normalizeTableEvaluateResult(raw) {
     tableHeaders,
     tables: normalizeTableStats(raw.tables, tableHeaders, rows),
     outsideTableFormControlCount: normalizeNonNegInt(raw.outsideTableFormControlCount, 1000),
+    outsideTableFormControls: normalizeOutsideTableFormControls(raw.outsideTableFormControls),
     iframeCount: normalizeNonNegInt(raw.iframeCount, 100),
     iframePaths: normalizeIframePaths(raw.iframePaths),
     rows,
@@ -248,6 +274,7 @@ async function evaluateTableRows(page, sourcePage) {
     eligibleRowCount: eligible.length,
     tables: normalized.tables,
     outsideTableFormControlCount: normalized.outsideTableFormControlCount,
+    outsideTableFormControls: normalized.outsideTableFormControls,
     iframeCount: normalized.iframeCount,
     iframePaths: normalized.iframePaths,
     pagePath: pageHref,
@@ -309,6 +336,7 @@ async function tableRows(page, sourcePage) {
       eligibleRowCount: 0,
       tables: [],
       outsideTableFormControlCount: 0,
+      outsideTableFormControls: { ...EMPTY_OUTSIDE_TABLE_FORM_CONTROLS },
       iframeCount: 0,
       iframePaths: [],
       pagePath: pageHref,

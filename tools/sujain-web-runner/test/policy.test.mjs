@@ -175,6 +175,14 @@ test('layout sanitizer keeps header texts and counts, drops cell values and URL-
       eligibleRowCount: 0,
       tables: [{ rawRowCount: 2, preSkipRowCount: 3, formControlCount: 0 }],
       outsideTableFormControlCount: 2,
+      outsideTableFormControls: {
+        visibleInput: 1,
+        visibleSelect: 1,
+        visibleTextarea: 0,
+        hidden: 0,
+        other: 0,
+        secretType: 'password',
+      },
       iframeCount: 1,
       iframePaths: ['https://www.sujain.co.kr/embed?token=SECRET_IFRAME#x'],
       pagePath: 'https://www.sujain.co.kr/mypage/payment?session=SECRET_TOKEN#top',
@@ -203,6 +211,13 @@ test('layout sanitizer keeps header texts and counts, drops cell values and URL-
       eligibleRowCount: 0,
       tables: [{ rawRowCount: 2, preSkipRowCount: 3, formControlCount: 0 }],
       outsideTableFormControlCount: 2,
+      outsideTableFormControls: {
+        visibleInput: 1,
+        visibleSelect: 1,
+        visibleTextarea: 0,
+        hidden: 0,
+        other: 0,
+      },
       iframeCount: 1,
       iframePaths: ['https://www.sujain.co.kr/embed'],
       pagePath: 'https://www.sujain.co.kr/mypage/payment',
@@ -214,6 +229,13 @@ test('layout sanitizer keeps header texts and counts, drops cell values and URL-
       eligibleRowCount: 1,
       tables: [{ rawRowCount: 1, preSkipRowCount: 2, formControlCount: 3 }],
       outsideTableFormControlCount: 0,
+      outsideTableFormControls: {
+        visibleInput: 0,
+        visibleSelect: 0,
+        visibleTextarea: 0,
+        hidden: 0,
+        other: 0,
+      },
       iframeCount: 0,
       iframePaths: [],
       pagePath: 'https://www.sujain.co.kr/mypage/unit-items',
@@ -226,6 +248,8 @@ test('layout sanitizer keeps header texts and counts, drops cell values and URL-
   assert.equal(text.includes('SECRET_TOKEN'), false);
   assert.equal(text.includes('SECRET_IFRAME'), false);
   assert.equal(text.includes('?session='), false);
+  assert.equal(text.includes('secretType'), false);
+  assert.equal(text.includes('password'), false);
 
   const page = sanitizePageLayoutDiagnostic({
     sourcePage: 'payment',
@@ -241,16 +265,23 @@ test('layout sanitizer keeps header texts and counts, drops cell values and URL-
     cells: ['합성 항목 A', '500,000'],
   });
   assert.equal(Object.hasOwn(page, 'cells'), false);
+  assert.deepEqual(page.outsideTableFormControls, {
+    visibleInput: 0,
+    visibleSelect: 0,
+    visibleTextarea: 0,
+    hidden: 0,
+    other: 0,
+  });
   assert.equal(JSON.stringify(page).includes('합성 항목 A'), false);
 
   const fragment = formatLayoutWarnFragment(sanitized);
   assert.match(
     fragment,
-    /^layout=payment:t=1;h=\[항목\|내용\];raw=2;eligible=0;tables=\[r=2,p=3,i=0\];out=2;ifr=1;path=https:\/\/www\.sujain\.co\.kr\/mypage\/payment\|/,
+    /^layout=payment:t=1;h=\[항목\|내용\];raw=2;eligible=0;tables=\[r=2,p=3,i=0\];out=2\[vi=1,vs=1,vt=0,h=0,o=0\];ifr=1;path=https:\/\/www\.sujain\.co\.kr\/mypage\/payment\|/,
   );
   assert.match(
     fragment,
-    /unit-items:t=1;h=\[품목\|금액\],\[\];raw=1;eligible=1;tables=\[r=1,p=2,i=3\];out=0;ifr=0;path=https:\/\/www\.sujain\.co\.kr\/mypage\/unit-items/,
+    /unit-items:t=1;h=\[품목\|금액\],\[\];raw=1;eligible=1;tables=\[r=1,p=2,i=3\];out=0\[vi=0,vs=0,vt=0,h=0,o=0\];ifr=0;path=https:\/\/www\.sujain\.co\.kr\/mypage\/unit-items/,
   );
   assert.equal(fragment.includes('합성 회원'), false);
   assert.equal(fragment.includes('SECRET_TOKEN'), false);

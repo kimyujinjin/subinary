@@ -4,6 +4,14 @@ import { captureSujainTables } from '../table-capture.mjs';
 import { isEligibleSujainCapturedRow } from '../collect.mjs';
 import { formatLayoutWarnFragment, sanitizePageLayoutDiagnostic } from '../policy.mjs';
 
+const EMPTY_OUTSIDE = {
+  visibleInput: 0,
+  visibleSelect: 0,
+  visibleTextarea: 0,
+  hidden: 0,
+  other: 0,
+};
+
 /** Minimal DOM duck-types for Node — mirrors the td/input shapes capture reads. */
 function control(tagName, attrs = {}) {
   const el = {
@@ -12,6 +20,8 @@ function control(tagName, attrs = {}) {
     name: attrs.name ?? '',
     type: attrs.type ?? (tagName === 'INPUT' ? 'text' : undefined),
     value: attrs.value ?? '',
+    hidden: attrs.hidden === true,
+    style: attrs.style ?? {},
     options: attrs.options,
     selectedIndex: attrs.selectedIndex ?? 0,
     parentElement: null,
@@ -19,7 +29,9 @@ function control(tagName, attrs = {}) {
       if (key === 'type') return attrs.type ?? (tagName === 'INPUT' ? 'text' : null);
       if (key === 'id') return attrs.id ?? null;
       if (key === 'name') return attrs.name ?? null;
-      return attrs[key] ?? null;
+      if (key === 'hidden') return attrs.hidden === true ? '' : null;
+      if (Object.hasOwn(attrs, key)) return attrs[key];
+      return null;
     },
     closest(sel) {
       if (sel !== 'table') return null;
@@ -136,6 +148,7 @@ test('회차/약정금액 table with amounts in inputs is captured and eligible'
   // header row + 1 body row = preSkip 2; raw keeps the body row only.
   assert.deepEqual(captured.tables, [{ rawRowCount: 1, preSkipRowCount: 2, formControlCount: 8 }]);
   assert.equal(captured.outsideTableFormControlCount, 0);
+  assert.deepEqual(captured.outsideTableFormControls, EMPTY_OUTSIDE);
   assert.equal(captured.iframeCount, 0);
   assert.deepEqual(captured.iframePaths, []);
   assert.equal(isEligibleSujainCapturedRow(captured.rows[0]), true);
@@ -185,6 +198,7 @@ test('layout diagnostics include per-table counts and never cell or input values
     eligibleRowCount: captured.rows.filter(isEligibleSujainCapturedRow).length,
     tables: captured.tables,
     outsideTableFormControlCount: captured.outsideTableFormControlCount,
+    outsideTableFormControls: captured.outsideTableFormControls,
     iframeCount: captured.iframeCount,
     iframePaths: captured.iframePaths,
     pagePath: 'https://www.sujain.co.kr/mypage/payment?session=SECRET_TOKEN#top',
@@ -195,6 +209,7 @@ test('layout diagnostics include per-table counts and never cell or input values
     { rawRowCount: 1, preSkipRowCount: 2, formControlCount: 8 },
     { rawRowCount: 4, preSkipRowCount: 5, formControlCount: 0 },
   ]);
+  assert.deepEqual(layout.outsideTableFormControls, EMPTY_OUTSIDE);
   assert.equal(layout.pagePath, 'https://www.sujain.co.kr/mypage/payment');
   const text = JSON.stringify(layout);
   const fragment = formatLayoutWarnFragment({ payment: layout });
@@ -212,7 +227,7 @@ test('layout diagnostics include per-table counts and never cell or input values
   }
   assert.match(
     fragment,
-    /payment:t=2;h=\[회차\|약정일자\|약정금액\|납부일자\|납부원금\|연체료\|할인료\|실납부금\],\[이름\*\];raw=5;eligible=1;tables=\[r=1,p=2,i=8\],\[r=4,p=5,i=0\];out=0;ifr=0;path=https:\/\/www\.sujain\.co\.kr\/mypage\/payment/,
+    /payment:t=2;h=\[회차\|약정일자\|약정금액\|납부일자\|납부원금\|연체료\|할인료\|실납부금\],\[이름\*\];raw=5;eligible=1;tables=\[r=1,p=2,i=8\],\[r=4,p=5,i=0\];out=0\[vi=0,vs=0,vt=0,h=0,o=0\];ifr=0;path=https:\/\/www\.sujain\.co\.kr\/mypage\/payment/,
   );
 });
 
@@ -310,6 +325,13 @@ test('outside-table form controls and iframe paths are counted without values or
     doc([paymentTable], { outsideControls: outside, iframes: frames }),
   );
   assert.equal(captured.outsideTableFormControlCount, 3);
+  assert.deepEqual(captured.outsideTableFormControls, {
+    visibleInput: 1,
+    visibleSelect: 1,
+    visibleTextarea: 1,
+    hidden: 0,
+    other: 0,
+  });
   assert.equal(captured.iframeCount, 2);
   assert.deepEqual(captured.iframePaths, [
     'https://www.sujain.co.kr/embed/unit',
@@ -321,4 +343,107 @@ test('outside-table form controls and iframe paths are counted without values or
   assert.equal(serialized.includes('OUTSIDE_SHOULD_NOT_APPEAR'), false);
   // Capture rows never include outside control values.
   assert.equal(JSON.stringify(captured.rows).includes('OUTSIDE_SHOULD_NOT_APPEAR'), false);
+});
+
+test('outside-table breakdown splits visibility and kind without leaking attributes or values (synthetic)', () => {
+  // Synthetic HTML only — not live sujain markup.
+  const paymentTable = table({
+    headers: ['회차', '약정금액'],
+    bodyRows: [],
+  });
+  const outside = [
+    control('INPUT', {
+      type: 'text',
+      name: 'unitPickerName_LEAK',
+      id: 'unitPickerId_LEAK',
+      value: 'UNIT_VALUE_LEAK',
+      placeholder: 'PLACEHOLDER_LEAK',
+      'aria-label': 'ARIA_LEAK',
+      class: 'class-leak',
+    }),
+    control('INPUT', { type: 'number', value: '42_LEAK' }),
+    control('SELECT', {
+      name: 'selectName_LEAK',
+      value: 'opt-secret',
+      options: [{ textContent: 'OPTION_LABEL_LEAK', value: 'v1' }],
+      selectedIndex: 0,
+    }),
+    control('TEXTAREA', { name: 'notes_LEAK', value: 'TEXTAREA_VALUE_LEAK' }),
+    control('INPUT', { type: 'hidden', name: 'csrf_LEAK', value: 'HIDDEN_TOKEN_LEAK' }),
+    control('INPUT', { type: 'text', hidden: true, value: 'ATTR_HIDDEN_LEAK' }),
+    control('INPUT', { type: 'text', style: { display: 'none' }, value: 'DISPLAY_NONE_LEAK' }),
+    control('INPUT', { type: 'text', style: { visibility: 'hidden' }, value: 'VIS_HIDDEN_LEAK' }),
+    control('INPUT', { type: 'password', name: 'pw_LEAK', value: 'PASSWORD_LEAK' }),
+    control('INPUT', { type: 'submit', value: 'SUBMIT_LEAK' }),
+    control('INPUT', { type: 'checkbox', name: 'agree_LEAK', value: 'yes' }),
+    control('INPUT', { type: 'file', name: 'upload_LEAK' }),
+  ];
+  const captured = captureSujainTables(
+    'payment',
+    doc([paymentTable], { outsideControls: outside }),
+  );
+  assert.equal(captured.outsideTableFormControlCount, 12);
+  assert.deepEqual(captured.outsideTableFormControls, {
+    visibleInput: 2,
+    visibleSelect: 1,
+    visibleTextarea: 1,
+    hidden: 4,
+    other: 4,
+  });
+  const sum = Object.values(captured.outsideTableFormControls).reduce((a, b) => a + b, 0);
+  assert.equal(sum, captured.outsideTableFormControlCount);
+
+  const layout = sanitizePageLayoutDiagnostic({
+    sourcePage: 'payment',
+    tableCount: captured.tableCount,
+    tableHeaders: captured.tableHeaders,
+    rawRowCount: 0,
+    eligibleRowCount: 0,
+    tables: captured.tables,
+    outsideTableFormControlCount: captured.outsideTableFormControlCount,
+    outsideTableFormControls: captured.outsideTableFormControls,
+    iframeCount: 0,
+    iframePaths: [],
+    pagePath: 'https://www.sujain.co.kr/mypage/payment',
+  });
+  assert.ok(layout);
+  const text = JSON.stringify(layout);
+  const fragment = formatLayoutWarnFragment({ payment: layout });
+  assert.match(
+    fragment,
+    /out=12\[vi=2,vs=1,vt=1,h=4,o=4\]/,
+  );
+  for (const leak of [
+    'UNIT_VALUE_LEAK',
+    'unitPickerName_LEAK',
+    'unitPickerId_LEAK',
+    'PLACEHOLDER_LEAK',
+    'ARIA_LEAK',
+    'class-leak',
+    '42_LEAK',
+    'selectName_LEAK',
+    'OPTION_LABEL_LEAK',
+    'opt-secret',
+    'notes_LEAK',
+    'TEXTAREA_VALUE_LEAK',
+    'csrf_LEAK',
+    'HIDDEN_TOKEN_LEAK',
+    'ATTR_HIDDEN_LEAK',
+    'DISPLAY_NONE_LEAK',
+    'VIS_HIDDEN_LEAK',
+    'pw_LEAK',
+    'PASSWORD_LEAK',
+    'SUBMIT_LEAK',
+    'agree_LEAK',
+    'upload_LEAK',
+    'password',
+    'checkbox',
+    'submit',
+  ]) {
+    assert.equal(text.includes(leak), false, `layout JSON leaked ${leak}`);
+    assert.equal(fragment.includes(leak), false, `warn fragment leaked ${leak}`);
+  }
+  // Password is never treated as a visible data field.
+  assert.equal(layout.outsideTableFormControls.visibleInput >= 0, true);
+  assert.equal(layout.outsideTableFormControls.other >= 1, true);
 });

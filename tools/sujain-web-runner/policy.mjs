@@ -122,10 +122,26 @@ function sanitizeTableLayoutStats(value) {
 }
 
 /**
+ * Outside-table control buckets (counts only). Never types beyond the five
+ * allowlisted keys, never names/ids/values. Missing/partial objects default to 0.
+ */
+export function sanitizeOutsideTableFormControls(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  return {
+    visibleInput: sanitizeNonNegInt(source?.visibleInput, 1000),
+    visibleSelect: sanitizeNonNegInt(source?.visibleSelect, 1000),
+    visibleTextarea: sanitizeNonNegInt(source?.visibleTextarea, 1000),
+    hidden: sanitizeNonNegInt(source?.hidden, 1000),
+    other: sanitizeNonNegInt(source?.other, 1000),
+  };
+}
+
+/**
  * One scrape page: tableCount + header texts + raw/eligible row counts +
  * per-table raw/pre-skip/form-control counts + outside-table input count +
- * iframe count/paths + sanitized page path. Never includes cell values,
- * form-control values, query strings, or arbitrary extra keys.
+ * outside-table visibility/kind breakdown + iframe count/paths + sanitized
+ * page path. Never includes cell values, form-control values, query strings,
+ * or arbitrary extra keys.
  */
 export function sanitizePageLayoutDiagnostic(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -153,6 +169,7 @@ export function sanitizePageLayoutDiagnostic(value) {
     eligibleRowCount: sanitizeNonNegInt(value.eligibleRowCount, 1000),
     tables: sanitizeTableLayoutStats(value.tables),
     outsideTableFormControlCount: sanitizeNonNegInt(value.outsideTableFormControlCount, 1000),
+    outsideTableFormControls: sanitizeOutsideTableFormControls(value.outsideTableFormControls),
     iframeCount: sanitizeNonNegInt(value.iframeCount, 100),
     iframePaths: sanitizeIframePaths(value.iframePaths),
     pagePath: sanitizeLayoutPagePath(value.pagePath),
@@ -181,6 +198,7 @@ export function sanitizeLayoutDiagnostics(layout) {
       eligibleRowCount: sanitized.eligibleRowCount,
       tables: sanitized.tables,
       outsideTableFormControlCount: sanitized.outsideTableFormControlCount,
+      outsideTableFormControls: sanitized.outsideTableFormControls,
       iframeCount: sanitized.iframeCount,
       iframePaths: sanitized.iframePaths,
       pagePath: sanitized.pagePath,
@@ -190,9 +208,18 @@ export function sanitizeLayoutDiagnostics(layout) {
 }
 
 /**
+ * Compact outside-table breakdown for warn lines.
+ * Example: out=12[vi=2,vs=1,vt=0,h=5,o=4]
+ */
+export function formatOutsideTableFormControlsFragment(count, breakdown) {
+  const b = sanitizeOutsideTableFormControls(breakdown);
+  return `out=${sanitizeNonNegInt(count, 1000)}[vi=${b.visibleInput},vs=${b.visibleSelect},vt=${b.visibleTextarea},h=${b.hidden},o=${b.other}]`;
+}
+
+/**
  * Compact warn-line fragment. Header texts + counts + sanitized path only —
  * never cell values, form values, or query strings.
- * Example: layout=payment:t=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,p=3,i=0];out=0;ifr=0;path=https://www.sujain.co.kr/mypage/payment|unit-items:…
+ * Example: layout=payment:t=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,p=3,i=0];out=0[vi=0,vs=0,vt=0,h=0,o=0];ifr=0;path=https://www.sujain.co.kr/mypage/payment|unit-items:…
  */
 export function formatLayoutWarnFragment(layout) {
   const sanitized = sanitizeLayoutDiagnostics(layout);
@@ -208,8 +235,12 @@ export function formatLayoutWarnFragment(layout) {
       .map((stats) => `[r=${stats.rawRowCount},p=${stats.preSkipRowCount},i=${stats.formControlCount}]`)
       .join(',');
     const pathText = entry.pagePath || '-';
+    const outText = formatOutsideTableFormControlsFragment(
+      entry.outsideTableFormControlCount,
+      entry.outsideTableFormControls,
+    );
     parts.push(
-      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount};tables=${tableText || '[]'};out=${entry.outsideTableFormControlCount};ifr=${entry.iframeCount};path=${pathText}`,
+      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount};tables=${tableText || '[]'};${outText};ifr=${entry.iframeCount};path=${pathText}`,
     );
   }
   if (parts.length === 0) return '';
