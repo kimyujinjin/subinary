@@ -20,17 +20,30 @@ export class SujainBrowserError extends Error {
 
 export type SujainCredentials = { loginId: string; password: string };
 
-const failureReasonSchema = z.enum(['chromium_launch_failed']);
+/** Allowlisted runner/client reasons only — never credentials, URLs with secrets, or raw stderr. */
+const failureReasonSchema = z.enum([
+  'chromium_launch_failed',
+  'response_validation_failed',
+  'response_too_large',
+]);
+
+/** Match tools/sujain-web-runner collect.mjs caps and responseSchema below. */
+export const SUJAIN_CELL_MAX = 200;
+export const SUJAIN_HEADER_MAX = 100;
+/** Must fit schema-max JSON after cell/header truncation (100×20×200 + headers). */
+export const SUJAIN_STDOUT_MAX_BYTES = 1_048_576;
+
+const rowSchema = z.object({
+  cells: z.array(z.string().max(SUJAIN_CELL_MAX)).max(20),
+  headers: z.array(z.string().max(SUJAIN_HEADER_MAX)).max(20).optional(),
+  sourcePage: z.enum(['payment', 'unit-items']),
+}).strict();
 
 const responseSchema = z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     capturedAt: z.string().datetime({ offset: true }),
-    rows: z.array(z.object({
-      cells: z.array(z.string().max(200)).max(20),
-      headers: z.array(z.string().max(100)).max(20).optional(),
-      sourcePage: z.enum(['payment', 'unit-items']),
-    }).strict()).max(100),
+    rows: z.array(rowSchema).max(100),
   }).strict(),
   z.object({
     ok: z.literal(false),
@@ -38,6 +51,45 @@ const responseSchema = z.discriminatedUnion('ok', [
     reason: failureReasonSchema.optional(),
   }).strict(),
 ]);
+
+function clipText(value: unknown, max: number): string | null {
+  if (typeof value !== 'string') return null;
+  const clipped = value.replace(/\s+/gu, ' ').trim();
+  return clipped.length <= max ? clipped : clipped.slice(0, max);
+}
+
+/**
+ * Coerce runner ok:true rows to schema caps. Truncates overlong strings;
+ * returns null when the shape cannot be salvaged without inventing data.
+ */
+export function coerceSujainRunnerRows(rows: unknown): SujainRawRow[] | null {
+  if (!Array.isArray(rows)) return null;
+  const out: SujainRawRow[] = [];
+  for (const row of rows.slice(0, 100)) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+    const record = row as Record<string, unknown>;
+    if (record.sourcePage !== 'payment' && record.sourcePage !== 'unit-items') return null;
+    if (!Array.isArray(record.cells)) return null;
+    const cells: string[] = [];
+    for (const cell of record.cells.slice(0, 20)) {
+      const clipped = clipText(cell, SUJAIN_CELL_MAX);
+      if (clipped === null) return null;
+      cells.push(clipped);
+    }
+    let headers: string[] | undefined;
+    if (record.headers !== undefined) {
+      if (!Array.isArray(record.headers)) return null;
+      headers = [];
+      for (const header of record.headers.slice(0, 20)) {
+        const clipped = clipText(header, SUJAIN_HEADER_MAX);
+        if (clipped === null) return null;
+        headers.push(clipped);
+      }
+    }
+    out.push({ cells, headers, sourcePage: record.sourcePage });
+  }
+  return out;
+}
 
 const STDERR_KEEP = /sandbox|no-sandbox|chromium|chrome|playwright|headless|zygote|executable|permission denied|cannot open|\berror\b/i;
 
@@ -155,7 +207,11 @@ export class SujainBrowserClient {
       child.stdin.on('error', () => { stop(); finish('operation_unknown'); });
       child.stdout.on('data', (chunk: Buffer) => {
         bytes += chunk.byteLength;
-        if (bytes > 65_536) { stop(); finish('operation_unknown'); return; }
+        if (bytes > SUJAIN_STDOUT_MAX_BYTES) {
+          stop();
+          finish('operation_unknown', undefined, 'response_too_large');
+          return;
+        }
         output += chunk.toString('utf8');
       });
       child.stderr.on('data', (chunk: Buffer) => {
@@ -170,12 +226,47 @@ export class SujainBrowserClient {
         let success: { capturedAt: string; rows: SujainRawRow[] } | undefined;
         if (code === 0) {
           try {
-            const parsed = responseSchema.safeParse(JSON.parse(output));
+            const raw: unknown = JSON.parse(output);
+            const parsed = responseSchema.safeParse(raw);
             if (parsed.success) {
               if (parsed.data.ok) success = { capturedAt: parsed.data.capturedAt, rows: parsed.data.rows };
               else payload = { error: parsed.data.error, reason: parsed.data.reason };
+            } else if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+              const record = raw as Record<string, unknown>;
+              if (record.ok === true && typeof record.capturedAt === 'string') {
+                const coerced = coerceSujainRunnerRows(record.rows);
+                const again = coerced
+                  ? responseSchema.safeParse({
+                    ok: true,
+                    capturedAt: record.capturedAt,
+                    rows: coerced,
+                  })
+                  : null;
+                if (again?.success && again.data.ok) {
+                  success = { capturedAt: again.data.capturedAt, rows: again.data.rows };
+                } else {
+                  payload = { error: 'operation_unknown', reason: 'response_validation_failed' };
+                }
+              } else if (record.ok === false) {
+                const errorParsed = housingBrandSyncErrorSchema.safeParse(record.error);
+                if (errorParsed.success) {
+                  const reasonParsed = failureReasonSchema.safeParse(record.reason);
+                  payload = {
+                    error: errorParsed.data,
+                    ...(reasonParsed.success ? { reason: reasonParsed.data } : {}),
+                  };
+                } else {
+                  payload = { error: 'operation_unknown', reason: 'response_validation_failed' };
+                }
+              } else {
+                payload = { error: 'operation_unknown', reason: 'response_validation_failed' };
+              }
+            } else {
+              payload = { error: 'operation_unknown', reason: 'response_validation_failed' };
             }
-          } catch { /* fall through to classify */ }
+          } catch {
+            payload = { error: 'operation_unknown', reason: 'response_validation_failed' };
+          }
         }
         if (success) { finish(undefined, success); return; }
         const failure = classifySujainRunnerFailure(code, payload, stderr);

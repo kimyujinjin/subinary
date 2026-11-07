@@ -272,3 +272,24 @@ test('scoped selectors prefer #id/#pw over later type=text fields', async () => 
   assert.match(String(fills[0][1]), /#id|userid/);
   assert.match(String(fills[1][1]), /#pw|userpwd/);
 });
+
+test('long synthetic cell and header strings are truncated to API schema caps', async () => {
+  const longCell = `synthetic-cell-${'x'.repeat(250)}`;
+  const longHeader = `synthetic-header-${'y'.repeat(120)}`;
+  assert.ok(longCell.length > 200);
+  assert.ok(longHeader.length > 100);
+  const f = officialLoginPage({
+    afterClick: 'navigate',
+    paymentRows: [{
+      cells: [longCell, '1,000'],
+      headers: [longHeader, '금액'],
+      sourcePage: 'payment',
+    }],
+  });
+  const result = await readSujainPages(f.page, job());
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].cells[0].length, 200);
+  assert.equal(result.rows[0].headers[0].length, 100);
+  assert.equal(result.rows[0].cells[1], '1,000');
+  assert.equal(result.rows[0].headers[1], '금액');
+});
