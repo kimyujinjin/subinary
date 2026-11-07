@@ -99,11 +99,34 @@ async function evaluateTableRows(page, sourcePage) {
   return normalizeCapturedRows(raw);
 }
 
+/** Cap for waiting until a scrape table paints at least one non-empty data cell. */
+function tableWaitMs() {
+  const raw = process.env.SUJAIN_TABLE_WAIT_MS;
+  if (raw !== undefined && raw !== '') {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) return Math.min(n, 60_000);
+  }
+  return 15_000;
+}
+
+function rowHasDataCell(row) {
+  return Array.isArray(row?.cells) && row.cells.some((cell) => text(cell));
+}
+
+async function pauseBetweenTablePolls(page, ms) {
+  if (typeof page.waitForTimeout === 'function') {
+    await page.waitForTimeout(ms);
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Read tables after a scrape goto. Some mypage targets fire a follow-up
  * same-tab navigation after DOMContentLoaded; the first evaluate then throws a
- * plain Error ("Execution context was destroyed"). Wait for load, then retry
- * evaluate once after the next document settles.
+ * plain Error ("Execution context was destroyed"). Wait for load, retry evaluate
+ * once after the next document settles, and keep polling until a non-empty data
+ * cell appears (AJAX fill) or the wait budget expires.
  */
 async function tableRows(page, sourcePage) {
   try {
@@ -112,18 +135,33 @@ async function tableRows(page, sourcePage) {
     // load may already have fired or never will (long-lived connections).
   }
 
-  try {
-    return await evaluateTableRows(page, sourcePage);
-  } catch (error) {
-    if (!isExecutionContextDestroyedError(error)) throw error;
+  const deadline = Date.now() + tableWaitMs();
+  let destroyedRetried = false;
+  let last = [];
+
+  while (true) {
     try {
-      await page.waitForLoadState('domcontentloaded', { timeout: 10_000 });
-    } catch {
-      throw error;
+      last = await evaluateTableRows(page, sourcePage);
+    } catch (error) {
+      if (!isExecutionContextDestroyedError(error) || destroyedRetried) throw error;
+      destroyedRetried = true;
+      try {
+        await page.waitForLoadState('domcontentloaded', { timeout: 10_000 });
+      } catch {
+        throw error;
+      }
+      if (isLoginUrl(page.url())) throw new SujainReadError('authentication_required');
+      continue;
     }
-    if (isLoginUrl(page.url())) throw new SujainReadError('authentication_required');
-    return evaluateTableRows(page, sourcePage);
+
+    if (last.some(rowHasDataCell)) return last;
+
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await pauseBetweenTablePolls(page, Math.min(250, remaining));
   }
+
+  return last;
 }
 
 /**
@@ -229,18 +267,13 @@ export async function readSujainPages(page, job, diagnostics = null) {
   }
 
   if (rows.length === 0) {
-    // 표 칸 이름을 단정하지 못한 상태 — 빈 결과와 이유를 상위에서 남긴다.
-    rows.push({
-      cells: [],
-      headers: [],
-      sourcePage: 'payment',
-    });
+    // Both scrape pages waited and still had no table data — do not report
+    // ok:true with [] (that becomes an empty confirm list that looks unchanged).
+    throw new SujainReadError('unsupported_layout');
   }
 
   return {
     capturedAt: new Date().toISOString(),
-    rows: normalizeCapturedRows(
-      rows.filter((row) => row.cells.length > 0 || text((row.headers ?? []).join(''))),
-    ),
+    rows: normalizeCapturedRows(rows),
   };
 }

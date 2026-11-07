@@ -209,7 +209,11 @@ export function parseSujainRows(rows: SujainRawRow[]): SujainParseResult {
   };
 }
 
-/** 기존 일정과 맞춰 변경 칸만 남긴다. 같으면 목록에서 빼지 않고 changedFields만 비운다. */
+/**
+ * 기존 일정과 맞춰 확인 목록을 만든다.
+ * - 값이 같고 unread도 없으면 목록에서 뺀다 (달라진 값만).
+ * - 이름은 맞았지만 금액 등을 못 읽은 행은 unread와 함께 남겨 미확인으로 보이게 한다.
+ */
 export function matchFetchedItems(
   fetched: HousingBrandFetchedItem[],
   existing: Array<{
@@ -256,5 +260,9 @@ export function matchFetchedItems(
     if (item.label !== null && item.label !== match.label) changedFields.push('label');
     if (item.installment !== null && item.installment !== match.installment) changedFields.push('installment');
     return { ...item, matchedPaymentId: match.id, changedFields };
-  }).filter((item) => item.matchedPaymentId === null || item.changedFields.length > 0);
+  }).filter((item) => (
+    item.matchedPaymentId === null
+    || item.changedFields.length > 0
+    || item.unreadFields.length > 0
+  ));
 }
