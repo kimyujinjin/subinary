@@ -17,7 +17,7 @@ import { schema, type Db } from '@family/database';
 import { DB } from '../database/database.constants';
 import { FinanceVault, type VaultContext } from '../finance-connections/finance-vault';
 import { SujainBrowserClient, SujainBrowserError } from './sujain-browser';
-import { matchFetchedItems } from './sujain-parse';
+import { isSujainUnsupportedLayout, matchFetchedItems } from './sujain-parse';
 
 type Executor = Pick<Db, 'select' | 'insert' | 'update' | 'delete'>;
 type ConnectionRow = typeof schema.housingBrandConnections.$inferSelect;
@@ -360,6 +360,24 @@ export class HousingBrandSyncService {
       }
 
       const parsed = this.browser.parseRows(capture.rows);
+      // Contact/profile tables are skipped in parse. If nothing readable remains,
+      // fail with unsupported_layout — do not store a contact list as options or
+      // return a silent empty «connected» success.
+      if (isSujainUnsupportedLayout(parsed)) {
+        const code = 'unsupported_layout';
+        const message = publicErrorMessage(code);
+        const failed = await this.markFailure(
+          prepared.connection.id,
+          prepared.connection.version,
+          code,
+          null,
+        );
+        throw new BadRequestException({
+          message,
+          ...(failed ? { connection: toConnection(failed, userId) } : {}),
+        });
+      }
+
       const matched = matchFetchedItems(parsed.items, prepared.payments.map((payment) => ({
         id: payment.id,
         kind: payment.kind,

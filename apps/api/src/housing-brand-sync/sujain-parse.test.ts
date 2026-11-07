@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchFetchedItems, parseSujainRows } from './sujain-parse';
+import { isSujainUnsupportedLayout, matchFetchedItems, parseSujainRows } from './sujain-parse';
 
 describe('sujain parse (synthetic only)', () => {
   it('reads payment and option rows together without inventing missing numbers', () => {
@@ -180,5 +180,110 @@ describe('sujain parse (synthetic only)', () => {
     expect(matched[0]?.changedFields).toEqual([]);
     expect(matched[0]?.unreadFields.some((field) => field.field === 'scheduledAmount')).toBe(true);
     expect(matched[0]?.scheduledAmount).toBeNull();
+  });
+
+  it('does not treat a unit-items member-profile/contact table as options', () => {
+    // Name-like headers alone are not enough to call every unit-items table an option list.
+    const result = parseSujainRows([
+      {
+        sourcePage: 'unit-items',
+        headers: ['항목', '내용'],
+        cells: ['이름', '합성 회원'],
+      },
+      {
+        sourcePage: 'unit-items',
+        headers: ['항목', '내용'],
+        cells: ['휴대전화', '000-0000-0000'],
+      },
+      {
+        sourcePage: 'unit-items',
+        headers: ['항목', '내용'],
+        cells: ['주소', '합성 주소'],
+      },
+      {
+        sourcePage: 'unit-items',
+        headers: ['항목', '내용'],
+        cells: ['이메일', 'synthetic@example.com'],
+      },
+    ]);
+    expect(result.items).toEqual([]);
+    expect(result.unreadCount).toBe(0);
+    expect(result.unreadReasons).toEqual([]);
+    expect(result.eligibleRowCount).toBe(0);
+  });
+
+  it('still reads a synthetic option table with 품목 and 금액 on unit-items', () => {
+    const result = parseSujainRows([
+      {
+        sourcePage: 'unit-items',
+        headers: ['품목', '금액'],
+        cells: ['합성 항목 A', '500,000'],
+      },
+    ]);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      kind: 'option',
+      label: '합성 항목 A',
+      scheduledAmount: '500000',
+    });
+    expect(result.eligibleRowCount).toBe(1);
+  });
+
+  it('does not turn a payment-page contact table into items or kind-unreads', () => {
+    const result = parseSujainRows([
+      {
+        sourcePage: 'payment',
+        headers: ['항목', '내용'],
+        cells: ['이름', '합성 회원'],
+      },
+      {
+        sourcePage: 'payment',
+        headers: ['항목', '내용'],
+        cells: ['휴대전화', '000-0000-0000'],
+      },
+      {
+        sourcePage: 'payment',
+        headers: ['항목', '내용'],
+        cells: ['주소', '합성 주소'],
+      },
+      {
+        sourcePage: 'payment',
+        headers: ['항목', '내용'],
+        cells: ['이메일', 'synthetic@example.com'],
+      },
+    ]);
+    expect(result.items).toEqual([]);
+    expect(result.unreadCount).toBe(0);
+    expect(result.unreadReasons.some((reason) => /계약금·중도금·잔금·옵션/.test(reason))).toBe(false);
+    expect(result.eligibleRowCount).toBe(0);
+  });
+
+  it('marks junk-only scrape rows as an unsupported layout (no silent empty success)', () => {
+    const result = parseSujainRows([
+      {
+        sourcePage: 'payment',
+        headers: ['이름'],
+        cells: ['합성 회원'],
+      },
+      {
+        sourcePage: 'unit-items',
+        headers: ['항목', '내용'],
+        cells: ['이메일', 'synthetic@example.com'],
+      },
+    ]);
+    expect(result.items).toEqual([]);
+    expect(result.eligibleRowCount).toBe(0);
+    expect(isSujainUnsupportedLayout(result)).toBe(true);
+  });
+
+  it('does not treat a readable option scrape as unsupported layout', () => {
+    const result = parseSujainRows([
+      {
+        sourcePage: 'unit-items',
+        headers: ['품목', '금액'],
+        cells: ['합성 항목 A', '1'],
+      },
+    ]);
+    expect(isSujainUnsupportedLayout(result)).toBe(false);
   });
 });
