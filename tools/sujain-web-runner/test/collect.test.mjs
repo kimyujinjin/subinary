@@ -6,11 +6,17 @@ import { SujainReadError } from '../policy.mjs';
 /**
  * Fake Playwright page shaped like https://www.sujain.co.kr/login:
  * form#frm, input#id[name=userid], input#pw[name=userpwd], a.btnLogin (not type=submit).
+ *
+ * afterClick modes:
+ * - navigate: leave /login without a dialog (legacy happy path)
+ * - alert: failure/extra-auth dialog without leaving login
+ * - success-alert: official success — land on /login/result + alert, then /index after dismiss
  */
 function officialLoginPage({
   hasLoginControl = true,
   afterClick = 'navigate',
   alertMessage = '아이디 또는 비밀번호가 일치하지 않습니다.',
+  hasCaptchaOrExtraAuthText = false,
   paymentRows = [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }],
 } = {}) {
   const actions = [];
@@ -31,6 +37,29 @@ function officialLoginPage({
     return parts.some((part) => /^((form#frm|form\[id=["']frm["']\])\s+)?a\.btnLogin\b/.test(part)
       || part === 'a.btnLogin'
       || part.endsWith('a.btnLogin')) ? 1 : 0;
+  }
+
+  function emitDialog(message, { afterDismissUrl = null } = {}) {
+    const dialog = {
+      message: () => message,
+      async dismiss() {
+        actions.push(['dialog-dismiss']);
+        if (afterDismissUrl) {
+          setTimeout(() => {
+            url = afterDismissUrl;
+          }, 0);
+        }
+      },
+      async accept() {
+        actions.push(['dialog-accept']);
+        if (afterDismissUrl) {
+          setTimeout(() => {
+            url = afterDismissUrl;
+          }, 0);
+        }
+      },
+    };
+    if (dialogHandler) dialogHandler(dialog);
   }
 
   function locator(selector, parent = null) {
@@ -57,8 +86,10 @@ function officialLoginPage({
         if (/btnLogin|type="submit"|type='submit'|has-text\("로그인"\)/.test(selector)) {
           return loginControlCount(selector);
         }
-        if (/캡차|자동입력|추가|2단계|본인/.test(selector)) return 0;
-        if (/실패|오류|틀렸|일치하지/.test(selector)) return afterClick === 'alert' ? 1 : 0;
+        if (/캡차|자동입력|추가|2단계|본인/.test(selector)) return hasCaptchaOrExtraAuthText ? 1 : 0;
+        if (/실패|오류|틀렸|일치하지/.test(selector)) {
+          return afterClick === 'alert' && /실패|오류|틀렸|일치하지|아이디|비밀번호/u.test(alertMessage) ? 1 : 0;
+        }
         return 0;
       },
       async fill(value, _options) {
@@ -79,17 +110,14 @@ function officialLoginPage({
           setTimeout(() => {
             url = 'https://www.sujain.co.kr/';
           }, 0);
+        } else if (afterClick === 'success-alert') {
+          // Official path: form submit → /login/result, then success alert; 확인 → /index.
+          url = 'https://www.sujain.co.kr/login/result';
+          setTimeout(() => {
+            emitDialog(alertMessage, { afterDismissUrl: 'https://www.sujain.co.kr/index' });
+          }, 0);
         } else if (afterClick === 'alert') {
-          const dialog = {
-            message: () => alertMessage,
-            async dismiss() {
-              actions.push(['dialog-dismiss']);
-            },
-            async accept() {
-              actions.push(['dialog-accept']);
-            },
-          };
-          if (dialogHandler) dialogHandler(dialog);
+          emitDialog(alertMessage);
         }
       },
     };
@@ -193,6 +221,46 @@ test('failure alert after ajax login maps to credentials_invalid', async () => {
   );
   assert.equal(f.actions.some((row) => row[0] === 'login-control-activated'), true);
   assert.equal(f.actions.some((row) => row[0] === 'dialog-dismiss'), true);
+  assert.equal(f.actions.some((row) => row[0] === 'goto' && String(row[1]).includes('payment')), false);
+});
+
+test('official success alert on /login/result is not authentication_required', async () => {
+  const f = officialLoginPage({
+    afterClick: 'success-alert',
+    alertMessage: '정상적으로 로그인 되었습니다.',
+  });
+  const result = await readSujainPages(f.page, job());
+  assert.equal(f.actions.some((row) => row[0] === 'login-control-activated'), true);
+  assert.equal(f.actions.some((row) => row[0] === 'dialog-dismiss'), true);
+  assert.ok(result.rows.length >= 1);
+  assert.equal(
+    f.actions.some((row) => row[0] === 'goto' && String(row[1]).includes('payment')),
+    true,
+  );
+});
+
+test('extra-auth dialog after login click stays authentication_required', async () => {
+  const f = officialLoginPage({
+    afterClick: 'alert',
+    alertMessage: '추가 인증이 필요합니다. 본인인증을 진행해 주세요.',
+  });
+  await assert.rejects(
+    () => readSujainPages(f.page, job()),
+    (error) => error instanceof SujainReadError && error.code === 'authentication_required',
+  );
+  assert.equal(f.actions.some((row) => row[0] === 'dialog-dismiss'), true);
+  assert.equal(f.actions.some((row) => row[0] === 'goto' && String(row[1]).includes('payment')), false);
+});
+
+test('captcha or 본인인증 page text after login stays authentication_required', async () => {
+  const f = officialLoginPage({
+    afterClick: 'navigate',
+    hasCaptchaOrExtraAuthText: true,
+  });
+  await assert.rejects(
+    () => readSujainPages(f.page, job()),
+    (error) => error instanceof SujainReadError && error.code === 'authentication_required',
+  );
   assert.equal(f.actions.some((row) => row[0] === 'goto' && String(row[1]).includes('payment')), false);
 });
 

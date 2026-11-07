@@ -5,6 +5,38 @@ function text(value) {
   return (value ?? '').replace(/\s+/gu, ' ').trim();
 }
 
+/** Official ajax failure alerts — not the post-login success toast. */
+function isCredentialFailureDialog(message) {
+  return /실패|오류|틀렸|일치하지|아이디|비밀번호|잘못|없/u.test(message)
+    && !isLoginSuccessDialog(message);
+}
+
+/**
+ * Official /login/result alert after loginproc success.
+ * Must not be treated as extra auth (authentication_required).
+ */
+function isLoginSuccessDialog(message) {
+  return /정상적으로\s*로그인/u.test(message);
+}
+
+async function waitUntilLeftLogin(page, timeout = 15_000) {
+  try {
+    await page.waitForURL(
+      (next) => {
+        try {
+          const href = typeof next === 'string' ? next : next.href;
+          return !isLoginUrl(href);
+        } catch {
+          return false;
+        }
+      },
+      { timeout },
+    );
+  } catch {
+    throw new SujainReadError('authentication_required');
+  }
+}
+
 async function tableRows(page, sourcePage) {
   return page.evaluate((pageKind) => {
     const out = [];
@@ -75,9 +107,15 @@ async function fillLogin(page, credentials) {
   if (outcome?.kind === 'dialog') {
     const message = text(outcome.dialog.message?.() ?? '');
     await outcome.dialog.dismiss().catch(() => null);
-    if (/실패|오류|틀렸|일치하지|아이디|비밀번호|잘못|없/u.test(message)) {
+    if (isCredentialFailureDialog(message)) {
       throw new SujainReadError('credentials_invalid');
     }
+    // Success alert on /login/result: dismiss, then wait past login URLs (/index etc.).
+    if (isLoginSuccessDialog(message)) {
+      await waitUntilLeftLogin(page);
+      return;
+    }
+    // Real captcha / 2FA / extra-auth dialogs stay authentication_required.
     throw new SujainReadError('authentication_required');
   }
 }
