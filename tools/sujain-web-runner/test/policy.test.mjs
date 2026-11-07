@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { allowedRequest, chromiumSandboxEnabled, validateJob, SujainReadError } from '../policy.mjs';
+import { allowedRequest, chromiumSandboxEnabled, isLoginUrl, validateJob, SujainReadError } from '../policy.mjs';
 
 test('allows only sujain hosts', () => {
   assert.equal(allowedRequest('https://www.sujain.co.kr/mypage/payment'), true);
@@ -9,6 +9,16 @@ test('allows only sujain hosts', () => {
   assert.equal(allowedRequest('https://bank.shinhan.com/'), false);
   assert.equal(allowedRequest('https://hoban.co.kr/'), false);
   assert.equal(allowedRequest('https://evil.example/www.sujain.co.kr'), false);
+});
+
+test('isLoginUrl treats /login/result as still in the login flow until home', () => {
+  // Official success lands on /login/result with a success alert; waiters must not
+  // treat that intermediate as "left login" or the race classifies the alert as extra auth.
+  assert.equal(isLoginUrl('https://www.sujain.co.kr/login'), true);
+  assert.equal(isLoginUrl('https://www.sujain.co.kr/login/result'), true);
+  assert.equal(isLoginUrl('https://www.sujain.co.kr/index'), false);
+  assert.equal(isLoginUrl('https://www.sujain.co.kr/'), false);
+  assert.equal(isLoginUrl('https://www.sujain.co.kr/mypage/payment'), false);
 });
 
 test('rejects non-sujain provider and keeps secrets out of thrown messages', () => {
