@@ -53,12 +53,19 @@ const runnerStageSchema = z.enum([
   'scrape_unit_items',
 ]);
 
+/** Per-table counts only — never form-control values. */
+const tableLayoutStatsSchema = z.object({
+  rawRowCount: z.number().int().min(0).max(1000),
+  formControlCount: z.number().int().min(0).max(1000),
+}).strict();
+
 /** Safe layout snapshot: table counts + header texts + row counts. Never cell values. */
 const pageLayoutSchema = z.object({
   tableCount: z.number().int().min(0).max(100),
   tableHeaders: z.array(z.array(z.string().max(SUJAIN_HEADER_MAX)).max(20)).max(20),
   rawRowCount: z.number().int().min(0).max(1000),
   eligibleRowCount: z.number().int().min(0).max(1000),
+  tables: z.array(tableLayoutStatsSchema).max(20),
 }).strict();
 
 const layoutDiagnosticsSchema = z.object({
@@ -215,8 +222,11 @@ export function formatLayoutWarnFragment(
     const headerText = entry.tableHeaders
       .map((cols) => `[${cols.join('|')}]`)
       .join(',');
+    const tableText = entry.tables
+      .map((stats) => `[r=${stats.rawRowCount},i=${stats.formControlCount}]`)
+      .join(',');
     parts.push(
-      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount}`,
+      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount};tables=${tableText || '[]'}`,
     );
   }
   if (parts.length === 0) return '';

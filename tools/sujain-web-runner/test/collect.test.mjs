@@ -633,10 +633,12 @@ test('unsupported_layout diagnostics include table counts and header texts only'
   assert.deepEqual(diagnostics.layout.payment.tableHeaders, [['항목', '내용']]);
   assert.equal(diagnostics.layout.payment.rawRowCount, 2);
   assert.equal(diagnostics.layout.payment.eligibleRowCount, 0);
+  assert.deepEqual(diagnostics.layout.payment.tables, [{ rawRowCount: 2, formControlCount: 0 }]);
   assert.equal(diagnostics.layout['unit-items'].tableCount, 1);
   assert.deepEqual(diagnostics.layout['unit-items'].tableHeaders, [['항목', '내용']]);
   assert.equal(diagnostics.layout['unit-items'].rawRowCount, 2);
   assert.equal(diagnostics.layout['unit-items'].eligibleRowCount, 0);
+  assert.deepEqual(diagnostics.layout['unit-items'].tables, [{ rawRowCount: 2, formControlCount: 0 }]);
 
   const serialized = JSON.stringify(diagnostics.layout);
   const warnFragment = formatLayoutWarnFragment(diagnostics.layout);
@@ -653,8 +655,8 @@ test('unsupported_layout diagnostics include table counts and header texts only'
     assert.equal(serialized.includes(leak), false, `layout JSON leaked ${leak}`);
     assert.equal(warnFragment.includes(leak), false, `warn fragment leaked ${leak}`);
   }
-  assert.match(warnFragment, /layout=payment:t=1;h=\[항목\|내용\];raw=2;eligible=0/);
-  assert.match(warnFragment, /unit-items:t=1;h=\[항목\|내용\];raw=2;eligible=0/);
+  assert.match(warnFragment, /layout=payment:t=1;h=\[항목\|내용\];raw=2;eligible=0;tables=\[r=2,i=0\]/);
+  assert.match(warnFragment, /unit-items:t=1;h=\[항목\|내용\];raw=2;eligible=0;tables=\[r=2,i=0\]/);
   // Layout diagnostic object never carries a cells key.
   assert.equal(Object.hasOwn(diagnostics.layout.payment, 'cells'), false);
   assert.equal(Object.hasOwn(diagnostics.layout['unit-items'], 'cells'), false);
@@ -667,6 +669,7 @@ test('layout diagnostic builder never copies cell values from a capture payload'
     tableHeaders: [['항목', '금액']],
     rawRowCount: 1,
     eligibleRowCount: 0,
+    tables: [{ rawRowCount: 1, formControlCount: 4 }],
     cells: ['합성 회원', '000-0000-0000', '500,000'],
     rows: [{ cells: ['합성 회원', '500,000'], headers: ['항목', '금액'] }],
   });
@@ -675,6 +678,7 @@ test('layout diagnostic builder never copies cell values from a capture payload'
   assert.deepEqual(diagnostic.tableHeaders, [['항목', '금액']]);
   assert.equal(diagnostic.rawRowCount, 1);
   assert.equal(diagnostic.eligibleRowCount, 0);
+  assert.deepEqual(diagnostic.tables, [{ rawRowCount: 1, formControlCount: 4 }]);
   assert.equal(Object.hasOwn(diagnostic, 'cells'), false);
   assert.equal(Object.hasOwn(diagnostic, 'rows'), false);
   const text = JSON.stringify(diagnostic);
@@ -687,6 +691,10 @@ test('normalizeTableEvaluateResult accepts production object shape and array fix
   const fromObject = normalizeTableEvaluateResult({
     tableCount: 2,
     tableHeaders: [['항목', '내용'], ['구분', '금액']],
+    tables: [
+      { rawRowCount: 1, formControlCount: 0 },
+      { rawRowCount: 1, formControlCount: 8 },
+    ],
     rows: [
       { cells: ['이름', '합성 회원'], headers: ['항목', '내용'], sourcePage: 'payment' },
       { cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' },
@@ -694,6 +702,10 @@ test('normalizeTableEvaluateResult accepts production object shape and array fix
   });
   assert.equal(fromObject.tableCount, 2);
   assert.deepEqual(fromObject.tableHeaders, [['항목', '내용'], ['구분', '금액']]);
+  assert.deepEqual(fromObject.tables, [
+    { rawRowCount: 1, formControlCount: 0 },
+    { rawRowCount: 1, formControlCount: 8 },
+  ]);
   assert.equal(fromObject.rows.length, 2);
 
   const fromArray = normalizeTableEvaluateResult([
@@ -701,7 +713,53 @@ test('normalizeTableEvaluateResult accepts production object shape and array fix
   ]);
   assert.equal(fromArray.tableCount, 1);
   assert.deepEqual(fromArray.tableHeaders, [['항목', '내용']]);
+  assert.deepEqual(fromArray.tables, [{ rawRowCount: 1, formControlCount: 0 }]);
   assert.equal(fromArray.rows.length, 1);
+});
+
+test('input-backed payment rows from evaluate object are kept as eligible scrape rows', async () => {
+  const paymentEvaluate = {
+    tableCount: 2,
+    tableHeaders: [
+      ['회차', '약정일자', '약정금액', '납부일자', '납부원금', '연체료', '할인료', '실납부금'],
+      ['이름*'],
+    ],
+    tables: [
+      { rawRowCount: 1, formControlCount: 8 },
+      { rawRowCount: 4, formControlCount: 0 },
+    ],
+    rows: [
+      {
+        cells: ['1', '2026-06-01', '10000000', '2026-06-02', '9000000', '0', '0', '9000000'],
+        headers: ['회차', '약정일자', '약정금액', '납부일자', '납부원금', '연체료', '할인료', '실납부금'],
+        sourcePage: 'payment',
+      },
+      { cells: ['합성 회원'], headers: ['이름*'], sourcePage: 'payment' },
+      { cells: ['000-0000-0000'], headers: ['이름*'], sourcePage: 'payment' },
+      { cells: ['합성 주소'], headers: ['이름*'], sourcePage: 'payment' },
+      { cells: ['synthetic@example.com'], headers: ['이름*'], sourcePage: 'payment' },
+    ],
+  };
+  const f = officialLoginPage({
+    afterClick: 'navigate',
+    paymentRows: paymentEvaluate,
+    unitItemsRows: [
+      { cells: ['합성 항목 A', '500'], headers: ['품목', '금액'], sourcePage: 'unit-items' },
+    ],
+  });
+  const diagnostics = { stage: 'context', layout: {} };
+  const result = await readSujainPages(f.page, job(), diagnostics);
+  assert.ok(result.rows.some((row) => row.sourcePage === 'payment' && row.cells[2] === '10000000'));
+  assert.equal(result.rows.some((row) => row.cells[0] === '합성 회원'), false);
+  assert.equal(diagnostics.layout.payment.eligibleRowCount, 1);
+  assert.deepEqual(diagnostics.layout.payment.tables, [
+    { rawRowCount: 1, formControlCount: 8 },
+    { rawRowCount: 4, formControlCount: 0 },
+  ]);
+  const warnFragment = formatLayoutWarnFragment(diagnostics.layout);
+  assert.match(warnFragment, /tables=\[r=1,i=8\],\[r=4,i=0\]/);
+  assert.equal(warnFragment.includes('10000000'), false);
+  assert.equal(warnFragment.includes('합성 회원'), false);
 });
 
 test('contact rows do not hide a later eligible option table during the wait', async () => {

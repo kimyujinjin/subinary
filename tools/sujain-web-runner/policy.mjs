@@ -69,8 +69,25 @@ function sanitizeNonNegInt(value, max) {
 }
 
 /**
- * One scrape page: tableCount + header texts + raw/eligible row counts.
- * Never includes cell values, URLs, or arbitrary extra keys.
+ * Per-table counts only — never input values, names, or amounts.
+ */
+function sanitizeTableLayoutStats(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const entry of value.slice(0, LAYOUT_TABLE_MAX)) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    out.push({
+      rawRowCount: sanitizeNonNegInt(entry.rawRowCount, 1000),
+      formControlCount: sanitizeNonNegInt(entry.formControlCount, 1000),
+    });
+  }
+  return out;
+}
+
+/**
+ * One scrape page: tableCount + header texts + raw/eligible row counts +
+ * per-table raw/form-control counts. Never includes cell values, URLs, or
+ * arbitrary extra keys.
  */
 export function sanitizePageLayoutDiagnostic(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -96,6 +113,7 @@ export function sanitizePageLayoutDiagnostic(value) {
     tableHeaders,
     rawRowCount: sanitizeNonNegInt(value.rawRowCount, 1000),
     eligibleRowCount: sanitizeNonNegInt(value.eligibleRowCount, 1000),
+    tables: sanitizeTableLayoutStats(value.tables),
   };
 }
 
@@ -119,14 +137,15 @@ export function sanitizeLayoutDiagnostics(layout) {
       tableHeaders: sanitized.tableHeaders,
       rawRowCount: sanitized.rawRowCount,
       eligibleRowCount: sanitized.eligibleRowCount,
+      tables: sanitized.tables,
     };
   }
   return Object.keys(out).length > 0 ? out : null;
 }
 
 /**
- * Compact warn-line fragment. Header texts only — never cell values.
- * Example: layout=payment:t=1;h=[항목|내용];raw=2;eligible=0|unit-items:t=0;h=[];raw=0;eligible=0
+ * Compact warn-line fragment. Header texts + counts only — never cell values.
+ * Example: layout=payment:t=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,i=0]|unit-items:t=0;h=[];raw=0;eligible=0;tables=[]
  */
 export function formatLayoutWarnFragment(layout) {
   const sanitized = sanitizeLayoutDiagnostics(layout);
@@ -138,8 +157,11 @@ export function formatLayoutWarnFragment(layout) {
     const headerText = entry.tableHeaders
       .map((cols) => `[${cols.join('|')}]`)
       .join(',');
+    const tableText = entry.tables
+      .map((stats) => `[r=${stats.rawRowCount},i=${stats.formControlCount}]`)
+      .join(',');
     parts.push(
-      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount}`,
+      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount};tables=${tableText || '[]'}`,
     );
   }
   if (parts.length === 0) return '';

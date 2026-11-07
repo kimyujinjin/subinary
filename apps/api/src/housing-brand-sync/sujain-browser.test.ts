@@ -201,12 +201,14 @@ describe('sujain runner diagnostics without credentials', () => {
         tableHeaders: [['항목', '내용']],
         rawRowCount: 2,
         eligibleRowCount: 0,
+        tables: [{ rawRowCount: 2, formControlCount: 0 }],
       },
       'unit-items': {
         tableCount: 1,
         tableHeaders: [['품목', '금액']],
         rawRowCount: 1,
         eligibleRowCount: 1,
+        tables: [{ rawRowCount: 1, formControlCount: 0 }],
       },
     };
     expect(classifySujainRunnerFailure(
@@ -245,17 +247,19 @@ describe('sujain runner diagnostics without credentials', () => {
         tableHeaders: [['항목', '내용']],
         rawRowCount: 2,
         eligibleRowCount: 0,
+        tables: [{ rawRowCount: 2, formControlCount: 0 }],
       },
       'unit-items': {
         tableCount: 0,
         tableHeaders: [],
         rawRowCount: 0,
         eligibleRowCount: 0,
+        tables: [],
       },
     };
     const fragment = formatLayoutWarnFragment(layout);
-    expect(fragment).toContain('layout=payment:t=1;h=[항목|내용];raw=2;eligible=0');
-    expect(fragment).toContain('unit-items:t=0;h=[];raw=0;eligible=0');
+    expect(fragment).toContain('layout=payment:t=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,i=0]');
+    expect(fragment).toContain('unit-items:t=0;h=[];raw=0;eligible=0;tables=[]');
     expect(fragment).not.toContain('합성 회원');
     expect(fragment).not.toContain('000-0000-0000');
     expect(fragment).not.toContain('1,000');
@@ -263,7 +267,14 @@ describe('sujain runner diagnostics without credentials', () => {
       'stage=scrape_unit_items layout=payment:',
     );
     expect(coerceSujainLayoutDiagnostics({
-      payment: { tableCount: 1, tableHeaders: [['금액']], rawRowCount: 0, eligibleRowCount: 0, cells: ['합성 회원'] },
+      payment: {
+        tableCount: 1,
+        tableHeaders: [['금액']],
+        rawRowCount: 0,
+        eligibleRowCount: 0,
+        tables: [],
+        cells: ['합성 회원'],
+      },
     })).toBeNull();
     expect(coerceSujainLayoutDiagnostics(layout)).toEqual(layout);
   });
@@ -493,12 +504,14 @@ describe('sujain child transport with synthetic streams', () => {
           tableHeaders: [['항목', '내용']],
           rawRowCount: 2,
           eligibleRowCount: 0,
+          tables: [{ rawRowCount: 2, formControlCount: 0 }],
         },
         'unit-items': {
           tableCount: 1,
           tableHeaders: [['항목', '내용']],
           rawRowCount: 2,
           eligibleRowCount: 0,
+          tables: [{ rawRowCount: 2, formControlCount: 0 }],
         },
       },
     }));
@@ -511,8 +524,8 @@ describe('sujain child transport with synthetic streams', () => {
     expect(joined).toMatch(
       /sujain runner failed code=unsupported_layout reason=none stage=scrape_unit_items layout=/,
     );
-    expect(joined).toContain('payment:t=1;h=[항목|내용];raw=2;eligible=0');
-    expect(joined).toContain('unit-items:t=1;h=[항목|내용];raw=2;eligible=0');
+    expect(joined).toContain('payment:t=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,i=0]');
+    expect(joined).toContain('unit-items:t=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,i=0]');
     expect(joined).not.toContain('합성 회원');
     expect(joined).not.toContain('000-0000-0000');
     expect(joined).not.toContain('synthetic@example.com');
