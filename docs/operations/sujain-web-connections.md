@@ -18,6 +18,8 @@
 
 전체 Chromium·ffmpeg는 넣지 않고 headless shell만 둔다(홈서버 디스크). 시스템 라이브러리는 이미지 빌드 시 `playwright-core install-deps chromium`으로 맞춘다.
 
+`chromium` 심볼릭 링크 대상은 Playwright `playwright-core@1.62.0` 레지스트리 기준이다. `linux-x64`는 `chrome-headless-shell`, 홈 Mac 운영 빌드(`linux/arm64`)는 `chrome-linux/headless_shell`이다. Dockerfile은 두 이름을 모두 찾아 링크한다.
+
 ## Compose 연결
 
 `docker-compose.prod.yml`의 **api** 서비스만 아래를 넣는다(worker/web과 공유 이미지는 빌드 산출물을 갖지만, 스위치·경로는 api에만 연결한다).
