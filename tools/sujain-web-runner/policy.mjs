@@ -16,6 +16,15 @@ export class SujainReadError extends Error {
   }
 }
 
+/**
+ * Chromium refuses `--no-sandbox` only when it is missing as root.
+ * Production API containers run as uid 0 with no USER directive, so keep the
+ * Playwright sandbox on for non-root and turn it off only for root/Docker.
+ */
+export function chromiumSandboxEnabled(getuid = process.getuid) {
+  return typeof getuid !== 'function' || getuid() !== 0;
+}
+
 const exact = (value, keys) => value && typeof value === 'object' && !Array.isArray(value)
   && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 const full = (pattern, value) => typeof value === 'string' && pattern.exec(value)?.[0] === value;

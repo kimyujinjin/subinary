@@ -22,6 +22,10 @@ import { Label } from "@/components/ui/label";
 import { InlineNotice } from "@/components/widgets/inline-notice";
 import { useAuth } from "@/lib/auth-context";
 import { housingBrandApi } from "@/lib/housing-brand-client";
+import {
+  connectionFromSyncError,
+  housingBrandSyncErrorMessage,
+} from "./housing-brand-sync-error";
 import { displayManualKrw, PAYMENT_LABELS } from "./model";
 
 type Props = {
@@ -117,8 +121,20 @@ export function HousingBrandPanel({
       const initial: Record<string, boolean> = {};
       for (const item of result.items) initial[item.key] = false;
       setSelected(initial);
-    } catch {
-      setError("수자인 조회를 끝내지 못했어요. 공식 페이지에서 추가 인증이 있는지도 확인해 주세요.");
+    } catch (error) {
+      const message = housingBrandSyncErrorMessage(error);
+      setError(message);
+      const refreshed = connectionFromSyncError(error);
+      if (refreshed) onConnectionChange(refreshed);
+      else if (connection) {
+        // markFailure bumps version server-side; keep the local row usable for retry.
+        onConnectionChange({
+          ...connection,
+          status: "failed",
+          statusMessage: message,
+          version: connection.version + 1,
+        });
+      }
     } finally {
       setBusy(null);
     }

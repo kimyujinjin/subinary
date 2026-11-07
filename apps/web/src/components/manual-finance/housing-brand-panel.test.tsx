@@ -100,4 +100,20 @@ describe("HousingBrandPanel", () => {
     expect(html).toContain("주택을 먼저 저장한 뒤");
     expect(html).not.toContain("수자인 연결 저장");
   });
+
+  it("renders the persisted connection status message instead of a hardcoded extra-auth line", () => {
+    const html = renderToStaticMarkup(
+      <HousingBrandPanel
+        householdId="33333333-3333-4333-8333-333333333333"
+        planId="22222222-2222-4222-8222-222222222222"
+        planVersion={1}
+        connection={connection("failed")}
+        canEdit
+        onConnectionChange={() => undefined}
+        onApplied={() => undefined}
+      />
+    );
+    expect(html).toContain("수자인 조회를 끝내지 못했어요.");
+    expect(html).not.toContain("공식 페이지에서 추가 인증");
+  });
 });

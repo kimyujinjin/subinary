@@ -1,8 +1,10 @@
-import { SujainReadError, allowedRequest, validateJob } from './policy.mjs';
+import { SujainReadError, allowedRequest, chromiumSandboxEnabled, validateJob } from './policy.mjs';
 import { readSujainPages } from './collect.mjs';
 
 let browser, context, job;
 let closing = false;
+/** Fixed reason codes only — never Chromium stderr, URLs with secrets, or credentials. */
+let failureReason;
 async function close() {
   if (closing) return;
   closing = true;
@@ -23,13 +25,18 @@ try {
   try { ({ chromium } = await import('playwright-core')); } catch { throw new SujainReadError('runtime_unavailable'); }
   const executablePath = process.env.SUJAIN_WEB_BROWSER_EXECUTABLE;
   if (!executablePath?.startsWith('/')) throw new SujainReadError('runtime_unavailable');
-  browser = await chromium.launch({
-    executablePath,
-    headless: true,
-    chromiumSandbox: true,
-    timeout: 20_000,
-    env: { PATH: process.env.PATH ?? '/usr/bin:/bin', TZ: 'Asia/Seoul' },
-  });
+  try {
+    browser = await chromium.launch({
+      executablePath,
+      headless: true,
+      chromiumSandbox: chromiumSandboxEnabled(),
+      timeout: 20_000,
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', TZ: 'Asia/Seoul' },
+    });
+  } catch {
+    failureReason = 'chromium_launch_failed';
+    throw new SujainReadError('runtime_unavailable');
+  }
   context = await browser.newContext({ acceptDownloads: false, serviceWorkers: 'block' });
   await context.route('**/*', (route) => (allowedRequest(route.request().url()) ? route.continue() : route.abort()));
   const page = await context.newPage();
@@ -37,10 +44,12 @@ try {
   const capture = await readSujainPages(page, job);
   process.stdout.write(JSON.stringify({ ok: true, ...capture }));
 } catch (error) {
-  process.stdout.write(JSON.stringify({
+  const payload = {
     ok: false,
     error: error instanceof SujainReadError ? error.code : 'operation_unknown',
-  }));
+  };
+  if (failureReason && payload.error === 'runtime_unavailable') payload.reason = failureReason;
+  process.stdout.write(JSON.stringify(payload));
 } finally {
   if (job?.credentials) {
     job.credentials.password = '';

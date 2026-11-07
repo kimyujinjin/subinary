@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { allowedRequest, validateJob, SujainReadError } from '../policy.mjs';
+import { readFile } from 'node:fs/promises';
+import { allowedRequest, chromiumSandboxEnabled, validateJob, SujainReadError } from '../policy.mjs';
 
 test('allows only sujain hosts', () => {
   assert.equal(allowedRequest('https://www.sujain.co.kr/mypage/payment'), true);
@@ -23,4 +24,21 @@ test('accepts synthetic sujain credentials shape', () => {
     credentials: { loginId: 'synthetic.id', password: 'SYNTHETIC_SECRET' },
   });
   assert.equal(job.provider, 'sujain');
+});
+
+test('disables Chromium sandbox only when running as root (production API container)', () => {
+  assert.equal(chromiumSandboxEnabled(() => 0), false);
+  assert.equal(chromiumSandboxEnabled(() => 1000), true);
+  assert.equal(chromiumSandboxEnabled(undefined), true);
+});
+
+test('runner turns sandbox off via policy and maps launch failure to runtime_unavailable', async () => {
+  const runtime = await readFile(new URL('../run.mjs', import.meta.url), 'utf8');
+  assert.match(runtime, /chromiumSandboxEnabled\(\)/);
+  assert.match(runtime, /chromium_launch_failed/);
+  assert.match(runtime, /runtime_unavailable/);
+  assert.doesNotMatch(runtime, /chromiumSandbox:\s*true/);
+  assert.doesNotMatch(runtime, /console\.(log|error|info|debug|warn)/);
+  assert.doesNotMatch(runtime, /BANK_WEB_/);
+  assert.doesNotMatch(runtime, /--no-sandbox/);
 });
