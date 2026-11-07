@@ -14,11 +14,21 @@ function control(tagName, attrs = {}) {
     value: attrs.value ?? '',
     options: attrs.options,
     selectedIndex: attrs.selectedIndex ?? 0,
+    parentElement: null,
     getAttribute(key) {
       if (key === 'type') return attrs.type ?? (tagName === 'INPUT' ? 'text' : null);
       if (key === 'id') return attrs.id ?? null;
       if (key === 'name') return attrs.name ?? null;
       return attrs[key] ?? null;
+    },
+    closest(sel) {
+      if (sel !== 'table') return null;
+      let node = this.parentElement;
+      while (node) {
+        if (String(node.tagName || '').toLowerCase() === 'table') return node;
+        node = node.parentElement;
+      }
+      return null;
     },
   };
   return el;
@@ -60,7 +70,8 @@ function table({ headers = [], bodyRows = [], extraControls = [] }) {
   }
   formControls.push(...extraControls);
 
-  return {
+  const tableEl = {
+    tagName: 'TABLE',
     querySelectorAll(sel) {
       if (sel === 'thead th, tr:first-child th') return headerCells;
       if (sel === 'tbody tr, tr') return [headerRow, ...bodyRows];
@@ -68,12 +79,34 @@ function table({ headers = [], bodyRows = [], extraControls = [] }) {
       return [];
     },
   };
+  for (const el of formControls) {
+    el.parentElement = tableEl;
+  }
+  return tableEl;
 }
 
-function doc(tables) {
+function iframe(src) {
+  return {
+    tagName: 'IFRAME',
+    src,
+    getAttribute(key) {
+      return key === 'src' ? src : null;
+    },
+  };
+}
+
+function doc(tables, { outsideControls = [], iframes = [] } = {}) {
   return {
     querySelectorAll(sel) {
       if (sel === 'table') return tables;
+      if (sel === 'input, select, textarea') {
+        const inside = [];
+        for (const t of tables) {
+          inside.push(...t.querySelectorAll('input, select, textarea'));
+        }
+        return [...inside, ...outsideControls];
+      }
+      if (sel === 'iframe') return iframes;
       return [];
     },
   };
@@ -100,7 +133,11 @@ test('회차/약정금액 table with amounts in inputs is captured and eligible'
   assert.equal(captured.tableCount, 1);
   assert.deepEqual(captured.tableHeaders[0], paymentHeaders);
   assert.equal(captured.rows.length, 1);
-  assert.deepEqual(captured.tables, [{ rawRowCount: 1, formControlCount: 8 }]);
+  // header row + 1 body row = preSkip 2; raw keeps the body row only.
+  assert.deepEqual(captured.tables, [{ rawRowCount: 1, preSkipRowCount: 2, formControlCount: 8 }]);
+  assert.equal(captured.outsideTableFormControlCount, 0);
+  assert.equal(captured.iframeCount, 0);
+  assert.deepEqual(captured.iframePaths, []);
   assert.equal(isEligibleSujainCapturedRow(captured.rows[0]), true);
   assert.equal(captured.rows[0].cells[2], '10000000');
   assert.equal(captured.rows[0].cells[0], '1');
@@ -119,7 +156,7 @@ test('이름* contact table with synthetic text cells remains ineligible', () =>
   const captured = captureSujainTables('payment', doc([contactTable]));
   assert.equal(captured.rows.length, 4);
   assert.equal(captured.rows.every((rowItem) => !isEligibleSujainCapturedRow(rowItem)), true);
-  assert.deepEqual(captured.tables, [{ rawRowCount: 4, formControlCount: 0 }]);
+  assert.deepEqual(captured.tables, [{ rawRowCount: 4, preSkipRowCount: 5, formControlCount: 0 }]);
 });
 
 test('layout diagnostics include per-table counts and never cell or input values', () => {
@@ -147,13 +184,18 @@ test('layout diagnostics include per-table counts and never cell or input values
     rawRowCount: captured.rows.length,
     eligibleRowCount: captured.rows.filter(isEligibleSujainCapturedRow).length,
     tables: captured.tables,
+    outsideTableFormControlCount: captured.outsideTableFormControlCount,
+    iframeCount: captured.iframeCount,
+    iframePaths: captured.iframePaths,
+    pagePath: 'https://www.sujain.co.kr/mypage/payment?session=SECRET_TOKEN#top',
     cells: captured.rows.flatMap((r) => r.cells),
   });
   assert.ok(layout);
   assert.deepEqual(layout.tables, [
-    { rawRowCount: 1, formControlCount: 8 },
-    { rawRowCount: 4, formControlCount: 0 },
+    { rawRowCount: 1, preSkipRowCount: 2, formControlCount: 8 },
+    { rawRowCount: 4, preSkipRowCount: 5, formControlCount: 0 },
   ]);
+  assert.equal(layout.pagePath, 'https://www.sujain.co.kr/mypage/payment');
   const text = JSON.stringify(layout);
   const fragment = formatLayoutWarnFragment({ payment: layout });
   for (const leak of [
@@ -162,13 +204,15 @@ test('layout diagnostics include per-table counts and never cell or input values
     '000-0000-0000',
     '합성 주소',
     'synthetic@example.com',
+    'SECRET_TOKEN',
+    '?session=',
   ]) {
     assert.equal(text.includes(leak), false, `layout JSON leaked ${leak}`);
     assert.equal(fragment.includes(leak), false, `warn fragment leaked ${leak}`);
   }
   assert.match(
     fragment,
-    /payment:t=2;h=\[회차\|약정일자\|약정금액\|납부일자\|납부원금\|연체료\|할인료\|실납부금\],\[이름\*\];raw=5;eligible=1;tables=\[r=1,i=8\],\[r=4,i=0\]/,
+    /payment:t=2;h=\[회차\|약정일자\|약정금액\|납부일자\|납부원금\|연체료\|할인료\|실납부금\],\[이름\*\];raw=5;eligible=1;tables=\[r=1,p=2,i=8\],\[r=4,p=5,i=0\];out=0;ifr=0;path=https:\/\/www\.sujain\.co\.kr\/mypage\/payment/,
   );
 });
 
@@ -229,5 +273,52 @@ test('empty payment table with inputs still reports formControlCount for diagnos
   const captured = captureSujainTables('payment', doc([emptyBody]));
   assert.equal(captured.rows.length, 0);
   assert.deepEqual(captured.tableHeaders[0], ['회차', '약정금액']);
-  assert.deepEqual(captured.tables, [{ rawRowCount: 0, formControlCount: 2 }]);
+  // header-only tr remains in preSkip; raw stays 0 after skips.
+  assert.deepEqual(captured.tables, [{ rawRowCount: 0, preSkipRowCount: 1, formControlCount: 2 }]);
+});
+
+test('preSkipRowCount keeps empty-cell rows that rawRowCount drops', () => {
+  const paymentTable = table({
+    headers: ['회차', '약정금액'],
+    bodyRows: [
+      row([cell([], ''), cell([], '')]),
+      row([cell([], ''), cell([], '')]),
+    ],
+  });
+  const captured = captureSujainTables('payment', doc([paymentTable]));
+  assert.equal(captured.rows.length, 0);
+  // header + 2 empty body rows counted before skip; raw stays 0.
+  assert.deepEqual(captured.tables, [{ rawRowCount: 0, preSkipRowCount: 3, formControlCount: 0 }]);
+});
+
+test('outside-table form controls and iframe paths are counted without values or query strings', () => {
+  const paymentTable = table({
+    headers: ['회차', '약정금액'],
+    bodyRows: [],
+  });
+  const outside = [
+    control('INPUT', { value: 'OUTSIDE_SHOULD_NOT_APPEAR' }),
+    control('SELECT', { value: 'also-secret' }),
+    control('TEXTAREA', { value: 'still-secret' }),
+  ];
+  const frames = [
+    iframe('https://www.sujain.co.kr/embed/unit?token=SESSION_SECRET#frag'),
+    iframe('/mypage/picker?x=1'),
+  ];
+  const captured = captureSujainTables(
+    'payment',
+    doc([paymentTable], { outsideControls: outside, iframes: frames }),
+  );
+  assert.equal(captured.outsideTableFormControlCount, 3);
+  assert.equal(captured.iframeCount, 2);
+  assert.deepEqual(captured.iframePaths, [
+    'https://www.sujain.co.kr/embed/unit',
+    '/mypage/picker',
+  ]);
+  const serialized = JSON.stringify(captured.iframePaths);
+  assert.equal(serialized.includes('SESSION_SECRET'), false);
+  assert.equal(serialized.includes('?'), false);
+  assert.equal(serialized.includes('OUTSIDE_SHOULD_NOT_APPEAR'), false);
+  // Capture rows never include outside control values.
+  assert.equal(JSON.stringify(captured.rows).includes('OUTSIDE_SHOULD_NOT_APPEAR'), false);
 });
