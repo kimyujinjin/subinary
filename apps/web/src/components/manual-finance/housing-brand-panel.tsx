@@ -24,6 +24,7 @@ import { useAuth } from "@/lib/auth-context";
 import { housingBrandApi } from "@/lib/housing-brand-client";
 import {
   connectionFromSyncError,
+  housingBrandLocalErrorNotice,
   housingBrandSyncErrorMessage,
 } from "./housing-brand-sync-error";
 import { displayManualKrw, PAYMENT_LABELS } from "./model";
@@ -170,6 +171,8 @@ export function HousingBrandPanel({
     }
   }
 
+  const localErrorNotice = housingBrandLocalErrorNotice(error, connection?.statusMessage);
+
   return (
     <section className="grid min-w-0 gap-3" aria-label="수자인 신축 조회">
       <div>
@@ -259,7 +262,7 @@ export function HousingBrandPanel({
           </Button>
         </div>
       ) : null}
-      {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
+      {localErrorNotice ? <InlineNotice tone="error">{localErrorNotice}</InlineNotice> : null}
       {preview ? (
         <div className="rounded-card grid min-w-0 gap-3 border p-3" aria-label="신축 조회 확인 목록">
           <div>

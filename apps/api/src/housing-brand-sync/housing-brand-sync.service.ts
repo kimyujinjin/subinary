@@ -114,7 +114,8 @@ function toConnection(row: ConnectionRow, viewerUserId: string): HousingBrandCon
   };
 }
 
-function publicErrorMessage(code: string, reason: string | null = null): string {
+/** Public copy for brand-sync failure codes. Exported for unit tests. */
+export function publicErrorMessage(code: string, reason: string | null = null): string {
   switch (code) {
     case 'credentials_invalid':
       return '수자인 로그인에 실패했어요. 아이디와 비밀번호를 다시 확인해 주세요.';
@@ -123,7 +124,8 @@ function publicErrorMessage(code: string, reason: string | null = null): string 
     case 'network_error':
       return '수자인 페이지에 연결하지 못했어요. 잠시 후 다시 눌러 주세요.';
     case 'unsupported_layout':
-      return '수자인 표 구성을 읽지 못했어요. 못 읽은 칸은 비워 두었어요.';
+      // Login control / page chrome failures use this code before any table is read.
+      return '수자인 로그인 화면 구성을 읽지 못했어요. 공식 페이지 레이아웃이 바뀌었을 수 있어요.';
     case 'runtime_unavailable':
       return reason === 'chromium_launch_failed'
         ? '신축 조회 브라우저를 시작하지 못했어요.'
