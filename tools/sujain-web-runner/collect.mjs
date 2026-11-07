@@ -56,7 +56,18 @@ async function waitUntilLeftLogin(page, timeout = 15_000) {
   }
 }
 
-async function tableRows(page, sourcePage) {
+/**
+ * Playwright's fixed English phrase when a same-tab navigation tears down the
+ * world mid-evaluate. Used only for one retry gate — never logged or returned.
+ */
+function isExecutionContextDestroyedError(error) {
+  if (!error || typeof error !== 'object') return false;
+  if (error.name !== 'Error') return false;
+  const message = typeof error.message === 'string' ? error.message : '';
+  return /Execution context was destroyed/u.test(message);
+}
+
+async function evaluateTableRows(page, sourcePage) {
   const raw = await page.evaluate((pageKind) => {
     const cellMax = 200;
     const headerMax = 100;
@@ -86,6 +97,33 @@ async function tableRows(page, sourcePage) {
     return out.slice(0, 100);
   }, sourcePage);
   return normalizeCapturedRows(raw);
+}
+
+/**
+ * Read tables after a scrape goto. Some mypage targets fire a follow-up
+ * same-tab navigation after DOMContentLoaded; the first evaluate then throws a
+ * plain Error ("Execution context was destroyed"). Wait for load, then retry
+ * evaluate once after the next document settles.
+ */
+async function tableRows(page, sourcePage) {
+  try {
+    await page.waitForLoadState('load', { timeout: 10_000 });
+  } catch {
+    // load may already have fired or never will (long-lived connections).
+  }
+
+  try {
+    return await evaluateTableRows(page, sourcePage);
+  } catch (error) {
+    if (!isExecutionContextDestroyedError(error)) throw error;
+    try {
+      await page.waitForLoadState('domcontentloaded', { timeout: 10_000 });
+    } catch {
+      throw error;
+    }
+    if (isLoginUrl(page.url())) throw new SujainReadError('authentication_required');
+    return evaluateTableRows(page, sourcePage);
+  }
 }
 
 /**

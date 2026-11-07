@@ -18,6 +18,7 @@ function officialLoginPage({
   alertMessage = '아이디 또는 비밀번호가 일치하지 않습니다.',
   hasCaptchaOrExtraAuthText = false,
   paymentRows = [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }],
+  unitItemsRows = [],
 } = {}) {
   const actions = [];
   let url = 'https://www.sujain.co.kr/login';
@@ -173,6 +174,7 @@ function officialLoginPage({
     async evaluate(fn, sourcePage) {
       actions.push(['evaluate', sourcePage]);
       if (sourcePage === 'payment') return paymentRows;
+      if (sourcePage === 'unit-items') return unitItemsRows;
       return [];
     },
   };
@@ -324,4 +326,110 @@ test('records login stage while fillLogin runs', async () => {
     (error) => error instanceof SujainReadError && error.code === 'unsupported_layout',
   );
   assert.equal(diagnostics.stage, 'login');
+});
+
+test('unit-items evaluate survives one destroyed execution context after goto', async () => {
+  // Production after #30: scrape_unit_items + errorName=Error while payment rows already
+  // reached evaluate. Playwright throws a plain Error when a follow-up navigation
+  // destroys the document mid-evaluate; retry after the next document settles.
+  const unitRows = [{
+    cells: ['synthetic-option', '500'],
+    headers: ['품목', '금액'],
+    sourcePage: 'unit-items',
+  }];
+  const f = officialLoginPage({ afterClick: 'navigate', unitItemsRows: unitRows });
+  let unitEvalAttempts = 0;
+  const originalEvaluate = f.page.evaluate.bind(f.page);
+  f.page.evaluate = async (fn, sourcePage) => {
+    if (sourcePage === 'unit-items') {
+      unitEvalAttempts += 1;
+      if (unitEvalAttempts === 1) {
+        const err = new Error('Execution context was destroyed, most likely because of a navigation.');
+        err.name = 'Error';
+        throw err;
+      }
+    }
+    return originalEvaluate(fn, sourcePage);
+  };
+
+  const diagnostics = { stage: 'context' };
+  const result = await readSujainPages(f.page, job(), diagnostics);
+  assert.equal(unitEvalAttempts, 2);
+  assert.equal(diagnostics.stage, 'scrape_unit_items');
+  assert.ok(result.rows.some((row) => row.sourcePage === 'payment'));
+  assert.ok(result.rows.some((row) => row.sourcePage === 'unit-items' && row.cells[0] === 'synthetic-option'));
+  assert.equal(
+    f.actions.some((row) => row[0] === 'waitForLoadState'),
+    true,
+  );
+  assert.equal(
+    f.actions.some((row) => row[0] === 'goto' && String(row[1]).includes('unit-items')),
+    true,
+  );
+});
+
+test('unit-items destroyed-context retry that lands on login is authentication_required', async () => {
+  const f = officialLoginPage({ afterClick: 'navigate' });
+  let unitEvalAttempts = 0;
+  f.page.evaluate = async (_fn, sourcePage) => {
+    if (sourcePage !== 'unit-items') {
+      return [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }];
+    }
+    unitEvalAttempts += 1;
+    const err = new Error('Execution context was destroyed, most likely because of a navigation.');
+    err.name = 'Error';
+    // Simulate the follow-up navigation bouncing the session back to login.
+    f.page.url = () => 'https://www.sujain.co.kr/login';
+    throw err;
+  };
+  // After the destroyed-context wait, url() already reports login.
+  const originalWait = f.page.waitForLoadState.bind(f.page);
+  f.page.waitForLoadState = async (state, options) => {
+    await originalWait(state, options);
+  };
+
+  await assert.rejects(
+    () => readSujainPages(f.page, job()),
+    (error) => error instanceof SujainReadError && error.code === 'authentication_required',
+  );
+  assert.equal(unitEvalAttempts, 1);
+});
+
+test('non-navigation evaluate Error on unit-items still propagates as runner_exception shape', async () => {
+  const f = officialLoginPage({ afterClick: 'navigate' });
+  f.page.evaluate = async (_fn, sourcePage) => {
+    if (sourcePage === 'payment') {
+      return [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }];
+    }
+    const err = new Error('synthetic unrelated evaluate failure');
+    err.name = 'Error';
+    throw err;
+  };
+  await assert.rejects(
+    () => readSujainPages(f.page, job()),
+    (error) => error instanceof Error
+      && error.name === 'Error'
+      && String(error.message) === 'synthetic unrelated evaluate failure',
+  );
+});
+
+test('unit-items destroyed-context retry is only once — second destroy still fails', async () => {
+  const f = officialLoginPage({ afterClick: 'navigate' });
+  let unitEvalAttempts = 0;
+  f.page.evaluate = async (_fn, sourcePage) => {
+    if (sourcePage === 'payment') {
+      return [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }];
+    }
+    unitEvalAttempts += 1;
+    const err = new Error('Execution context was destroyed, most likely because of a navigation.');
+    err.name = 'Error';
+    throw err;
+  };
+  await assert.rejects(
+    () => readSujainPages(f.page, job()),
+    (error) => error instanceof Error
+      && error.name === 'Error'
+      && /Execution context was destroyed/u.test(String(error.message)),
+  );
+  assert.equal(unitEvalAttempts, 2);
 });
