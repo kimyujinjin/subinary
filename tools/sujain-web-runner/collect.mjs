@@ -1,4 +1,5 @@
 import { SujainReadError, isLoginUrl, sanitizePageLayoutDiagnostic } from './policy.mjs';
+import { captureSujainTables } from './table-capture.mjs';
 import { SUJAIN_URLS } from './urls.mjs';
 
 /** Must match apps/api sujain-browser responseSchema string caps. */
@@ -41,7 +42,8 @@ export function isEligibleSujainCapturedRow(row) {
 
 /**
  * Safe layout snapshot for one scrape page: table counts + header texts + row
- * counts only. Never includes cell values (names, phones, amounts, dates).
+ * counts + per-table raw/form-control counts only. Never includes cell values
+ * (names, phones, amounts, dates) or input values.
  */
 export function buildPageLayoutDiagnostic({
   sourcePage,
@@ -49,6 +51,7 @@ export function buildPageLayoutDiagnostic({
   tableHeaders,
   rawRowCount,
   eligibleRowCount,
+  tables,
 }) {
   return sanitizePageLayoutDiagnostic({
     sourcePage: sourcePage === 'unit-items' ? 'unit-items' : 'payment',
@@ -56,13 +59,39 @@ export function buildPageLayoutDiagnostic({
     tableHeaders,
     rawRowCount,
     eligibleRowCount,
+    tables,
+  });
+}
+
+function normalizeTableStats(rawTables, fallbackHeaders, rows) {
+  if (Array.isArray(rawTables)) {
+    const out = [];
+    for (const entry of rawTables.slice(0, 20)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      const rawN = Number(entry.rawRowCount);
+      const formN = Number(entry.formControlCount);
+      out.push({
+        rawRowCount: Number.isFinite(rawN) && rawN >= 0 ? Math.min(Math.trunc(rawN), 1000) : 0,
+        formControlCount: Number.isFinite(formN) && formN >= 0 ? Math.min(Math.trunc(formN), 1000) : 0,
+      });
+    }
+    return out;
+  }
+  // Array-shaped evaluate fixtures have no per-table form counts — derive raw
+  // counts from captured rows per header set; formControlCount stays 0.
+  const headers = Array.isArray(fallbackHeaders) ? fallbackHeaders : [];
+  return headers.slice(0, 20).map((cols) => {
+    const key = (Array.isArray(cols) ? cols : []).join('\u0001');
+    const rawRowCount = rows.filter((row) => row.headers.join('\u0001') === key).length;
+    return { rawRowCount: Math.min(rawRowCount, 1000), formControlCount: 0 };
   });
 }
 
 /**
  * Normalize page.evaluate output. Production returns
- * `{ tableCount, tableHeaders, rows }`; older/simple test fixtures may return a
- * bare row array — derive header sets from those rows, never invent cell text.
+ * `{ tableCount, tableHeaders, tables, rows }`; older/simple test fixtures may
+ * return a bare row array — derive header sets from those rows, never invent
+ * cell text.
  */
 export function normalizeTableEvaluateResult(raw) {
   if (Array.isArray(raw)) {
@@ -75,14 +104,16 @@ export function normalizeTableEvaluateResult(raw) {
       seen.add(key);
       tableHeaders.push(row.headers.slice(0, 20));
     }
+    const headers = tableHeaders.slice(0, 20);
     return {
-      tableCount: tableHeaders.length,
-      tableHeaders: tableHeaders.slice(0, 20),
+      tableCount: headers.length,
+      tableHeaders: headers,
+      tables: normalizeTableStats(undefined, headers, rows),
       rows,
     };
   }
   if (!raw || typeof raw !== 'object') {
-    return { tableCount: 0, tableHeaders: [], rows: [] };
+    return { tableCount: 0, tableHeaders: [], tables: [], rows: [] };
   }
   const tableHeaders = [];
   if (Array.isArray(raw.tableHeaders)) {
@@ -97,10 +128,12 @@ export function normalizeTableEvaluateResult(raw) {
   const tableCount = Number.isFinite(tableCountRaw) && tableCountRaw >= 0
     ? Math.min(Math.trunc(tableCountRaw), 100)
     : tableHeaders.length;
+  const rows = normalizeCapturedRows(raw.rows);
   return {
     tableCount,
     tableHeaders,
-    rows: normalizeCapturedRows(raw.rows),
+    tables: normalizeTableStats(raw.tables, tableHeaders, rows),
+    rows,
   };
 }
 
@@ -148,42 +181,9 @@ function isExecutionContextDestroyedError(error) {
 }
 
 async function evaluateTableRows(page, sourcePage) {
-  const raw = await page.evaluate((pageKind) => {
-    const cellMax = 200;
-    const headerMax = 100;
-    const clipText = (value, max) => {
-      const clipped = (value ?? '').replace(/\s+/gu, ' ').trim();
-      return clipped.length <= max ? clipped : clipped.slice(0, max);
-    };
-    const allTables = Array.from(document.querySelectorAll('table'));
-    const tableHeaders = [];
-    const out = [];
-    for (const table of allTables.slice(0, 20)) {
-      const headerCells = Array.from(table.querySelectorAll('thead th, tr:first-child th'))
-        .map((cell) => clipText(cell.textContent, headerMax))
-        .filter(Boolean);
-      tableHeaders.push(headerCells.slice(0, 20));
-      const bodyRows = Array.from(table.querySelectorAll('tbody tr, tr')).slice(0, 50);
-      for (const row of bodyRows) {
-        const cells = Array.from(row.querySelectorAll('th, td'))
-          .map((cell) => clipText(cell.textContent, cellMax));
-        if (cells.length === 0 || cells.every((cell) => !cell)) continue;
-        // 헤더만 있는 줄은 건너뛴다.
-        if (headerCells.length && cells.join('|') === headerCells.join('|')) continue;
-        out.push({
-          cells: cells.slice(0, 20),
-          headers: headerCells.slice(0, 20),
-          sourcePage: pageKind,
-        });
-      }
-    }
-    return {
-      // Full DOM table count (not capped) so empty/non-scraped tables still show.
-      tableCount: Math.min(allTables.length, 100),
-      tableHeaders,
-      rows: out.slice(0, 100),
-    };
-  }, sourcePage);
+  // captureSujainTables is self-contained (no closures) so Playwright can
+  // serialize it into the page. It reads form-control values when td text is empty.
+  const raw = await page.evaluate(captureSujainTables, sourcePage);
 
   const normalized = normalizeTableEvaluateResult(raw);
   const eligible = normalized.rows.filter(isEligibleSujainCapturedRow);
@@ -193,6 +193,7 @@ async function evaluateTableRows(page, sourcePage) {
     tableHeaders: normalized.tableHeaders,
     rawRowCount: normalized.rows.length,
     eligibleRowCount: eligible.length,
+    tables: normalized.tables,
   });
   return { rows: eligible, layout };
 }
@@ -243,6 +244,7 @@ async function tableRows(page, sourcePage) {
       tableHeaders: [],
       rawRowCount: 0,
       eligibleRowCount: 0,
+      tables: [],
     }),
   };
 

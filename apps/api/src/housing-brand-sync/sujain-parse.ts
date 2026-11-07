@@ -135,10 +135,12 @@ export function parseSujainRows(rows: SujainRawRow[]): SujainParseResult {
     }
 
     // `/예정(?!일)/` — 납부예정일 같은 날짜 칸에 `/예정/`이 맞지 않게 한다.
-    const amountIdx = headerIndex(row.headers, [/예정(?!일)/u, /금액/u, /분양가/u, /대금/u]);
-    const dueIdx = headerIndex(row.headers, [/예정일/u, /납부일/u, /납입일/u, /일자/u]);
-    const paidIdx = headerIndex(row.headers, [/납부액/u, /납입액/u, /이미\s*낸/u, /수납/u]);
-    const paidDateIdx = headerIndex(row.headers, [/실\s*납/u, /납부\s*완료/u, /수납일/u]);
+    // Live 분양대금 headers (evidence): 회차|약정일자|약정금액|납부일자|납부원금|…|실납부금
+    const amountIdx = headerIndex(row.headers, [/예정(?!일)/u, /약정금액/u, /금액/u, /분양가/u, /대금/u]);
+    const dueIdx = headerIndex(row.headers, [/약정일/u, /예정일/u, /납부일/u, /납입일/u, /일자/u]);
+    const paidIdx = headerIndex(row.headers, [/납부원금/u, /실납부금/u, /납부액/u, /납입액/u, /이미\s*낸/u, /수납(?!일)/u]);
+    // Do not let `/실\s*납/` steal 실납부금 (paid amount). Prefer 납부일자 for paid date.
+    const paidDateIdx = headerIndex(row.headers, [/납부일자/u, /실\s*납부일/u, /납부\s*완료/u, /수납일/u]);
     const installmentIdx = headerIndex(row.headers, [/회차/u, /차수/u]);
     const nameIdx = headerIndex(row.headers, [/품목/u, /항목/u, /명칭/u, /이름/u]);
 

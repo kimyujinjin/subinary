@@ -286,4 +286,48 @@ describe('sujain parse (synthetic only)', () => {
     ]);
     expect(isSujainUnsupportedLayout(result)).toBe(false);
   });
+
+  it('maps live 분양대금 headers 약정금액/납부원금/실납부금/약정일자/납부일자', () => {
+    // Kind text is synthetic cell content for detectKind only — not inventing 회차→계약금.
+    const result = parseSujainRows([
+      {
+        sourcePage: 'payment',
+        headers: ['회차', '약정일자', '약정금액', '납부일자', '납부원금', '연체료', '할인료', '실납부금'],
+        cells: ['계약금', '2026-06-01', '10,000,000', '2026-06-02', '9,000,000', '0', '0', '9,000,000'],
+      },
+    ]);
+    expect(result.eligibleRowCount).toBe(1);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      kind: 'contract',
+      scheduledAmount: '10000000',
+      dueDate: '2026-06-01',
+      paidAmount: '9000000',
+      paidDate: '2026-06-02',
+      actualPaidDate: '2026-06-02',
+    });
+  });
+
+  it('does not invent kind from 회차 alone on a live-shaped payment row', () => {
+    const result = parseSujainRows([
+      {
+        sourcePage: 'payment',
+        headers: ['회차', '약정일자', '약정금액', '납부일자', '납부원금', '연체료', '할인료', '실납부금'],
+        cells: ['1', '2026-06-01', '10,000,000', '2026-06-02', '9,000,000', '0', '0', '9,000,000'],
+      },
+    ]);
+    expect(result.eligibleRowCount).toBe(1);
+    expect(result.items).toEqual([]);
+    expect(result.unreadReasons.some((reason) => /계약금·중도금·잔금·옵션/.test(reason))).toBe(true);
+  });
+
+  it('keeps 이름* contact rows ineligible', () => {
+    expect(parseSujainRows([
+      {
+        sourcePage: 'payment',
+        headers: ['이름*'],
+        cells: ['합성 회원'],
+      },
+    ]).eligibleRowCount).toBe(0);
+  });
 });
