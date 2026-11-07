@@ -3,6 +3,7 @@ import {
   allowedRequest,
   chromiumSandboxEnabled,
   classifyUntypedRunnerError,
+  sanitizeLayoutDiagnostics,
   sanitizeRunnerStage,
   validateJob,
 } from './policy.mjs';
@@ -12,8 +13,11 @@ let browser, context, job;
 let closing = false;
 /** Fixed reason codes only — never Chromium stderr, URLs with secrets, or credentials. */
 let failureReason;
-/** Allowlisted stage token only — never URLs or page text. */
-const diagnostics = { stage: 'stdin' };
+/**
+ * Allowlisted stage token + optional safe layout snapshots (header texts / counts only).
+ * Never URLs, credentials, or data-cell values.
+ */
+const diagnostics = { stage: 'stdin', layout: {} };
 async function close() {
   if (closing) return;
   closing = true;
@@ -72,6 +76,8 @@ try {
   }
   const stage = sanitizeRunnerStage(diagnostics.stage);
   if (stage) payload.stage = stage;
+  const layout = sanitizeLayoutDiagnostics(diagnostics.layout);
+  if (layout) payload.layout = layout;
   process.stdout.write(JSON.stringify(payload));
 } finally {
   if (job?.credentials) {

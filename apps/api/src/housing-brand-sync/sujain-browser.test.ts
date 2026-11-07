@@ -9,7 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   SujainBrowserClient,
   classifySujainRunnerFailure,
+  coerceSujainLayoutDiagnostics,
   coerceSujainRunnerRows,
+  formatLayoutWarnFragment,
   formatSujainRunnerWarnExtras,
   sanitizeSujainRunnerStderr,
 } from './sujain-browser';
@@ -84,6 +86,7 @@ describe('sujain runner diagnostics without credentials', () => {
       reason: 'chromium_launch_failed',
       errorName: null,
       stage: null,
+      layout: null,
     });
   });
 
@@ -97,6 +100,7 @@ describe('sujain runner diagnostics without credentials', () => {
       reason: 'chromium_launch_failed',
       errorName: null,
       stage: null,
+      layout: null,
     });
   });
 
@@ -110,6 +114,7 @@ describe('sujain runner diagnostics without credentials', () => {
       reason: 'response_validation_failed',
       errorName: null,
       stage: null,
+      layout: null,
     });
     expect(classifySujainRunnerFailure(
       0,
@@ -120,6 +125,7 @@ describe('sujain runner diagnostics without credentials', () => {
       reason: 'response_too_large',
       errorName: null,
       stage: null,
+      layout: null,
     });
   });
 
@@ -129,6 +135,7 @@ describe('sujain runner diagnostics without credentials', () => {
       reason: 'runner_exit_nonzero',
       errorName: null,
       stage: null,
+      layout: null,
     });
   });
 
@@ -142,6 +149,7 @@ describe('sujain runner diagnostics without credentials', () => {
       reason: 'parent_deadline',
       errorName: null,
       stage: null,
+      layout: null,
     });
     expect(classifySujainRunnerFailure(
       0,
@@ -152,6 +160,7 @@ describe('sujain runner diagnostics without credentials', () => {
       reason: 'playwright_timeout',
       errorName: null,
       stage: null,
+      layout: null,
     });
     expect(classifySujainRunnerFailure(
       0,
@@ -162,6 +171,7 @@ describe('sujain runner diagnostics without credentials', () => {
       reason: 'runner_exception',
       errorName: null,
       stage: null,
+      layout: null,
     });
   });
 
@@ -180,6 +190,39 @@ describe('sujain runner diagnostics without credentials', () => {
       reason: 'runner_exception',
       errorName: 'TargetClosedError',
       stage: 'scrape_payment',
+      layout: null,
+    });
+  });
+
+  it('preserves safe layout diagnostics from runner JSON', () => {
+    const layout = {
+      payment: {
+        tableCount: 1,
+        tableHeaders: [['항목', '내용']],
+        rawRowCount: 2,
+        eligibleRowCount: 0,
+      },
+      'unit-items': {
+        tableCount: 1,
+        tableHeaders: [['품목', '금액']],
+        rawRowCount: 1,
+        eligibleRowCount: 1,
+      },
+    };
+    expect(classifySujainRunnerFailure(
+      0,
+      {
+        error: 'unsupported_layout',
+        stage: 'scrape_unit_items',
+        layout,
+      },
+      '',
+    )).toEqual({
+      code: 'unsupported_layout',
+      reason: null,
+      errorName: null,
+      stage: 'scrape_unit_items',
+      layout,
     });
   });
 
@@ -193,6 +236,36 @@ describe('sujain runner diagnostics without credentials', () => {
     expect(formatSujainRunnerWarnExtras('bad name!', 'scrape_payment')).toBe('stage=scrape_payment');
     expect(formatSujainRunnerWarnExtras('Error', 'https://evil.example')).toBe('errorName=Error');
     expect(formatSujainRunnerWarnExtras(null, null)).toBe('');
+  });
+
+  it('formats layout warn fragment with header texts and counts, never cell values', () => {
+    const layout = {
+      payment: {
+        tableCount: 1,
+        tableHeaders: [['항목', '내용']],
+        rawRowCount: 2,
+        eligibleRowCount: 0,
+      },
+      'unit-items': {
+        tableCount: 0,
+        tableHeaders: [],
+        rawRowCount: 0,
+        eligibleRowCount: 0,
+      },
+    };
+    const fragment = formatLayoutWarnFragment(layout);
+    expect(fragment).toContain('layout=payment:t=1;h=[항목|내용];raw=2;eligible=0');
+    expect(fragment).toContain('unit-items:t=0;h=[];raw=0;eligible=0');
+    expect(fragment).not.toContain('합성 회원');
+    expect(fragment).not.toContain('000-0000-0000');
+    expect(fragment).not.toContain('1,000');
+    expect(formatSujainRunnerWarnExtras(null, 'scrape_unit_items', layout)).toContain(
+      'stage=scrape_unit_items layout=payment:',
+    );
+    expect(coerceSujainLayoutDiagnostics({
+      payment: { tableCount: 1, tableHeaders: [['금액']], rawRowCount: 0, eligibleRowCount: 0, cells: ['합성 회원'] },
+    })).toBeNull();
+    expect(coerceSujainLayoutDiagnostics(layout)).toEqual(layout);
   });
 
   it('truncates synthetic overlong cells without inventing values', () => {
@@ -403,6 +476,47 @@ describe('sujain child transport with synthetic streams', () => {
     expect(joined).not.toContain('Execution context');
     expect(joined).not.toContain('Synthetic!123');
     expect(joined).not.toContain('synthetic-id');
+    warn.mockRestore();
+  });
+
+  it('warns unsupported_layout with safe layout headers/counts and never cell values', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const test = child();
+    const pending = client().read(credentials(), new AbortController().signal);
+    test.process.stdout.write(JSON.stringify({
+      ok: false,
+      error: 'unsupported_layout',
+      stage: 'scrape_unit_items',
+      layout: {
+        payment: {
+          tableCount: 1,
+          tableHeaders: [['항목', '내용']],
+          rawRowCount: 2,
+          eligibleRowCount: 0,
+        },
+        'unit-items': {
+          tableCount: 1,
+          tableHeaders: [['항목', '내용']],
+          rawRowCount: 2,
+          eligibleRowCount: 0,
+        },
+      },
+    }));
+    test.close(0);
+    await expect(pending).rejects.toMatchObject({
+      code: 'unsupported_layout',
+      reason: null,
+    });
+    const joined = warn.mock.calls.flat().join('\n');
+    expect(joined).toMatch(
+      /sujain runner failed code=unsupported_layout reason=none stage=scrape_unit_items layout=/,
+    );
+    expect(joined).toContain('payment:t=1;h=[항목|내용];raw=2;eligible=0');
+    expect(joined).toContain('unit-items:t=1;h=[항목|내용];raw=2;eligible=0');
+    expect(joined).not.toContain('합성 회원');
+    expect(joined).not.toContain('000-0000-0000');
+    expect(joined).not.toContain('synthetic@example.com');
+    expect(joined).not.toContain('Synthetic!123');
     warn.mockRestore();
   });
 

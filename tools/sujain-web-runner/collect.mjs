@@ -1,4 +1,4 @@
-import { SujainReadError, isLoginUrl } from './policy.mjs';
+import { SujainReadError, isLoginUrl, sanitizePageLayoutDiagnostic } from './policy.mjs';
 import { SUJAIN_URLS } from './urls.mjs';
 
 /** Must match apps/api sujain-browser responseSchema string caps. */
@@ -37,6 +37,71 @@ export function isEligibleSujainCapturedRow(row) {
   const cells = Array.isArray(row?.cells) ? row.cells : [];
   const joined = [...headers, ...cells].join(' ');
   return /계약금|중도금|잔금|옵션|유상|설치\s*품목/u.test(joined);
+}
+
+/**
+ * Safe layout snapshot for one scrape page: table counts + header texts + row
+ * counts only. Never includes cell values (names, phones, amounts, dates).
+ */
+export function buildPageLayoutDiagnostic({
+  sourcePage,
+  tableCount,
+  tableHeaders,
+  rawRowCount,
+  eligibleRowCount,
+}) {
+  return sanitizePageLayoutDiagnostic({
+    sourcePage: sourcePage === 'unit-items' ? 'unit-items' : 'payment',
+    tableCount,
+    tableHeaders,
+    rawRowCount,
+    eligibleRowCount,
+  });
+}
+
+/**
+ * Normalize page.evaluate output. Production returns
+ * `{ tableCount, tableHeaders, rows }`; older/simple test fixtures may return a
+ * bare row array — derive header sets from those rows, never invent cell text.
+ */
+export function normalizeTableEvaluateResult(raw) {
+  if (Array.isArray(raw)) {
+    const rows = normalizeCapturedRows(raw);
+    const seen = new Set();
+    const tableHeaders = [];
+    for (const row of rows) {
+      const key = row.headers.join('\u0001');
+      if (!row.headers.length || seen.has(key)) continue;
+      seen.add(key);
+      tableHeaders.push(row.headers.slice(0, 20));
+    }
+    return {
+      tableCount: tableHeaders.length,
+      tableHeaders: tableHeaders.slice(0, 20),
+      rows,
+    };
+  }
+  if (!raw || typeof raw !== 'object') {
+    return { tableCount: 0, tableHeaders: [], rows: [] };
+  }
+  const tableHeaders = [];
+  if (Array.isArray(raw.tableHeaders)) {
+    for (const headers of raw.tableHeaders.slice(0, 20)) {
+      if (!Array.isArray(headers)) continue;
+      tableHeaders.push(
+        headers.slice(0, 20).map((header) => clip(header, SUJAIN_HEADER_MAX)).filter(Boolean),
+      );
+    }
+  }
+  const tableCountRaw = Number(raw.tableCount);
+  const tableCount = Number.isFinite(tableCountRaw) && tableCountRaw >= 0
+    ? Math.min(Math.trunc(tableCountRaw), 100)
+    : tableHeaders.length;
+  return {
+    tableCount,
+    tableHeaders,
+    rows: normalizeCapturedRows(raw.rows),
+  };
 }
 
 /** Official ajax failure alerts — not the post-login success toast. */
@@ -90,11 +155,14 @@ async function evaluateTableRows(page, sourcePage) {
       const clipped = (value ?? '').replace(/\s+/gu, ' ').trim();
       return clipped.length <= max ? clipped : clipped.slice(0, max);
     };
+    const allTables = Array.from(document.querySelectorAll('table'));
+    const tableHeaders = [];
     const out = [];
-    for (const table of Array.from(document.querySelectorAll('table')).slice(0, 20)) {
+    for (const table of allTables.slice(0, 20)) {
       const headerCells = Array.from(table.querySelectorAll('thead th, tr:first-child th'))
         .map((cell) => clipText(cell.textContent, headerMax))
         .filter(Boolean);
+      tableHeaders.push(headerCells.slice(0, 20));
       const bodyRows = Array.from(table.querySelectorAll('tbody tr, tr')).slice(0, 50);
       for (const row of bodyRows) {
         const cells = Array.from(row.querySelectorAll('th, td'))
@@ -109,9 +177,24 @@ async function evaluateTableRows(page, sourcePage) {
         });
       }
     }
-    return out.slice(0, 100);
+    return {
+      // Full DOM table count (not capped) so empty/non-scraped tables still show.
+      tableCount: Math.min(allTables.length, 100),
+      tableHeaders,
+      rows: out.slice(0, 100),
+    };
   }, sourcePage);
-  return normalizeCapturedRows(raw).filter(isEligibleSujainCapturedRow);
+
+  const normalized = normalizeTableEvaluateResult(raw);
+  const eligible = normalized.rows.filter(isEligibleSujainCapturedRow);
+  const layout = buildPageLayoutDiagnostic({
+    sourcePage,
+    tableCount: normalized.tableCount,
+    tableHeaders: normalized.tableHeaders,
+    rawRowCount: normalized.rows.length,
+    eligibleRowCount: eligible.length,
+  });
+  return { rows: eligible, layout };
 }
 
 /** Cap for waiting until a scrape table paints at least one non-empty data cell. */
@@ -152,7 +235,16 @@ async function tableRows(page, sourcePage) {
 
   const deadline = Date.now() + tableWaitMs();
   let destroyedRetried = false;
-  let last = [];
+  let last = {
+    rows: [],
+    layout: buildPageLayoutDiagnostic({
+      sourcePage,
+      tableCount: 0,
+      tableHeaders: [],
+      rawRowCount: 0,
+      eligibleRowCount: 0,
+    }),
+  };
 
   while (true) {
     try {
@@ -169,7 +261,7 @@ async function tableRows(page, sourcePage) {
       continue;
     }
 
-    if (last.some(rowHasDataCell)) return last;
+    if (last.rows.some(rowHasDataCell)) return last;
 
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
@@ -266,6 +358,12 @@ export async function readSujainPages(page, job, diagnostics = null) {
   }
 
   const rows = [];
+  if (diagnostics && typeof diagnostics === 'object' && !Array.isArray(diagnostics)) {
+    diagnostics.layout = diagnostics.layout && typeof diagnostics.layout === 'object'
+      ? diagnostics.layout
+      : {};
+  }
+
   for (const [url, sourcePage] of [
     [SUJAIN_URLS.payment, 'payment'],
     [SUJAIN_URLS.unitItems, 'unit-items'],
@@ -277,8 +375,12 @@ export async function readSujainPages(page, job, diagnostics = null) {
       throw new SujainReadError('network_error');
     }
     if (isLoginUrl(page.url())) throw new SujainReadError('authentication_required');
-    const pageRows = await tableRows(page, sourcePage);
-    for (const row of pageRows) rows.push(row);
+    const captured = await tableRows(page, sourcePage);
+    if (diagnostics && typeof diagnostics === 'object' && diagnostics.layout
+      && captured.layout) {
+      diagnostics.layout[sourcePage] = captured.layout;
+    }
+    for (const row of captured.rows) rows.push(row);
   }
 
   if (rows.length === 0) {
