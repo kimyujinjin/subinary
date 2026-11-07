@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isEligibleSujainCapturedRow, readSujainPages } from '../collect.mjs';
-import { SujainReadError } from '../policy.mjs';
+import {
+  buildPageLayoutDiagnostic,
+  isEligibleSujainCapturedRow,
+  normalizeTableEvaluateResult,
+  readSujainPages,
+} from '../collect.mjs';
+import { formatLayoutWarnFragment, SujainReadError } from '../policy.mjs';
 
 /**
  * Fake Playwright page shaped like https://www.sujain.co.kr/login:
@@ -594,6 +599,109 @@ test('contact-only tables on both pages are unsupported_layout, not scrape succe
     if (previous === undefined) delete process.env.SUJAIN_TABLE_WAIT_MS;
     else process.env.SUJAIN_TABLE_WAIT_MS = previous;
   }
+});
+
+test('unsupported_layout diagnostics include table counts and header texts only', async () => {
+  const contactPayment = [
+    { cells: ['이름', '합성 회원'], headers: ['항목', '내용'], sourcePage: 'payment' },
+    { cells: ['휴대전화', '000-0000-0000'], headers: ['항목', '내용'], sourcePage: 'payment' },
+  ];
+  const contactUnit = [
+    { cells: ['주소', '합성 주소'], headers: ['항목', '내용'], sourcePage: 'unit-items' },
+    { cells: ['이메일', 'synthetic@example.com'], headers: ['항목', '내용'], sourcePage: 'unit-items' },
+  ];
+  const f = officialLoginPage({
+    afterClick: 'navigate',
+    paymentRows: contactPayment,
+    unitItemsRows: contactUnit,
+  });
+  const diagnostics = { stage: 'context', layout: {} };
+  const previous = process.env.SUJAIN_TABLE_WAIT_MS;
+  process.env.SUJAIN_TABLE_WAIT_MS = '50';
+  try {
+    await assert.rejects(
+      () => readSujainPages(f.page, job(), diagnostics),
+      (error) => error instanceof SujainReadError && error.code === 'unsupported_layout',
+    );
+  } finally {
+    if (previous === undefined) delete process.env.SUJAIN_TABLE_WAIT_MS;
+    else process.env.SUJAIN_TABLE_WAIT_MS = previous;
+  }
+
+  assert.equal(diagnostics.stage, 'scrape_unit_items');
+  assert.equal(diagnostics.layout.payment.tableCount, 1);
+  assert.deepEqual(diagnostics.layout.payment.tableHeaders, [['항목', '내용']]);
+  assert.equal(diagnostics.layout.payment.rawRowCount, 2);
+  assert.equal(diagnostics.layout.payment.eligibleRowCount, 0);
+  assert.equal(diagnostics.layout['unit-items'].tableCount, 1);
+  assert.deepEqual(diagnostics.layout['unit-items'].tableHeaders, [['항목', '내용']]);
+  assert.equal(diagnostics.layout['unit-items'].rawRowCount, 2);
+  assert.equal(diagnostics.layout['unit-items'].eligibleRowCount, 0);
+
+  const serialized = JSON.stringify(diagnostics.layout);
+  const warnFragment = formatLayoutWarnFragment(diagnostics.layout);
+  for (const leak of [
+    '합성 회원',
+    '000-0000-0000',
+    '합성 주소',
+    'synthetic@example.com',
+    '이름',
+    '휴대전화',
+    '주소',
+    '이메일',
+  ]) {
+    assert.equal(serialized.includes(leak), false, `layout JSON leaked ${leak}`);
+    assert.equal(warnFragment.includes(leak), false, `warn fragment leaked ${leak}`);
+  }
+  assert.match(warnFragment, /layout=payment:t=1;h=\[항목\|내용\];raw=2;eligible=0/);
+  assert.match(warnFragment, /unit-items:t=1;h=\[항목\|내용\];raw=2;eligible=0/);
+  // Layout diagnostic object never carries a cells key.
+  assert.equal(Object.hasOwn(diagnostics.layout.payment, 'cells'), false);
+  assert.equal(Object.hasOwn(diagnostics.layout['unit-items'], 'cells'), false);
+});
+
+test('layout diagnostic builder never copies cell values from a capture payload', () => {
+  const diagnostic = buildPageLayoutDiagnostic({
+    sourcePage: 'payment',
+    tableCount: 1,
+    tableHeaders: [['항목', '금액']],
+    rawRowCount: 1,
+    eligibleRowCount: 0,
+    cells: ['합성 회원', '000-0000-0000', '500,000'],
+    rows: [{ cells: ['합성 회원', '500,000'], headers: ['항목', '금액'] }],
+  });
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.tableCount, 1);
+  assert.deepEqual(diagnostic.tableHeaders, [['항목', '금액']]);
+  assert.equal(diagnostic.rawRowCount, 1);
+  assert.equal(diagnostic.eligibleRowCount, 0);
+  assert.equal(Object.hasOwn(diagnostic, 'cells'), false);
+  assert.equal(Object.hasOwn(diagnostic, 'rows'), false);
+  const text = JSON.stringify(diagnostic);
+  assert.equal(text.includes('합성 회원'), false);
+  assert.equal(text.includes('000-0000-0000'), false);
+  assert.equal(text.includes('500,000'), false);
+});
+
+test('normalizeTableEvaluateResult accepts production object shape and array fixtures', () => {
+  const fromObject = normalizeTableEvaluateResult({
+    tableCount: 2,
+    tableHeaders: [['항목', '내용'], ['구분', '금액']],
+    rows: [
+      { cells: ['이름', '합성 회원'], headers: ['항목', '내용'], sourcePage: 'payment' },
+      { cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' },
+    ],
+  });
+  assert.equal(fromObject.tableCount, 2);
+  assert.deepEqual(fromObject.tableHeaders, [['항목', '내용'], ['구분', '금액']]);
+  assert.equal(fromObject.rows.length, 2);
+
+  const fromArray = normalizeTableEvaluateResult([
+    { cells: ['이름', '합성 회원'], headers: ['항목', '내용'], sourcePage: 'payment' },
+  ]);
+  assert.equal(fromArray.tableCount, 1);
+  assert.deepEqual(fromArray.tableHeaders, [['항목', '내용']]);
+  assert.equal(fromArray.rows.length, 1);
 });
 
 test('contact rows do not hide a later eligible option table during the wait', async () => {

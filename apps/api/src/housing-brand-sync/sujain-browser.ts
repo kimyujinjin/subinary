@@ -32,6 +32,12 @@ const failureReasonSchema = z.enum([
   'runner_exit_nonzero',
 ]);
 
+/** Match tools/sujain-web-runner collect.mjs caps and responseSchema below. */
+export const SUJAIN_CELL_MAX = 200;
+export const SUJAIN_HEADER_MAX = 100;
+/** Must fit schema-max JSON after cell/header truncation (100×20×200 + headers). */
+export const SUJAIN_STDOUT_MAX_BYTES = 1_048_576;
+
 /** Letters-only capped error.name from the runner — never message/stack. */
 const runnerErrorNameSchema = z.string().regex(/^[A-Za-z]{1,40}$/u);
 
@@ -47,18 +53,28 @@ const runnerStageSchema = z.enum([
   'scrape_unit_items',
 ]);
 
+/** Safe layout snapshot: table counts + header texts + row counts. Never cell values. */
+const pageLayoutSchema = z.object({
+  tableCount: z.number().int().min(0).max(100),
+  tableHeaders: z.array(z.array(z.string().max(SUJAIN_HEADER_MAX)).max(20)).max(20),
+  rawRowCount: z.number().int().min(0).max(1000),
+  eligibleRowCount: z.number().int().min(0).max(1000),
+}).strict();
+
+const layoutDiagnosticsSchema = z.object({
+  payment: pageLayoutSchema.optional(),
+  'unit-items': pageLayoutSchema.optional(),
+}).strict();
+
+export type SujainLayoutDiagnostics = z.infer<typeof layoutDiagnosticsSchema>;
+
 type RunnerFailurePayload = {
   error: HousingBrandSyncError;
   reason?: z.infer<typeof failureReasonSchema>;
   errorName?: z.infer<typeof runnerErrorNameSchema>;
   stage?: z.infer<typeof runnerStageSchema>;
+  layout?: SujainLayoutDiagnostics;
 };
-
-/** Match tools/sujain-web-runner collect.mjs caps and responseSchema below. */
-export const SUJAIN_CELL_MAX = 200;
-export const SUJAIN_HEADER_MAX = 100;
-/** Must fit schema-max JSON after cell/header truncation (100×20×200 + headers). */
-export const SUJAIN_STDOUT_MAX_BYTES = 1_048_576;
 
 const rowSchema = z.object({
   cells: z.array(z.string().max(SUJAIN_CELL_MAX)).max(20),
@@ -78,6 +94,7 @@ const responseSchema = z.discriminatedUnion('ok', [
     reason: failureReasonSchema.optional(),
     errorName: runnerErrorNameSchema.optional(),
     stage: runnerStageSchema.optional(),
+    layout: layoutDiagnosticsSchema.optional(),
   }).strict(),
 ]);
 
@@ -144,6 +161,7 @@ export function classifySujainRunnerFailure(
   reason: string | null;
   errorName: string | null;
   stage: string | null;
+  layout: SujainLayoutDiagnostics | null;
 } {
   if (payload) {
     return {
@@ -151,6 +169,7 @@ export function classifySujainRunnerFailure(
       reason: payload.reason ?? null,
       errorName: payload.errorName ?? null,
       stage: payload.stage ?? null,
+      layout: payload.layout ?? null,
     };
   }
   if (/Running as root without --no-sandbox|No usable sandbox|chromium.?sandbox/i.test(stderr)) {
@@ -159,6 +178,7 @@ export function classifySujainRunnerFailure(
       reason: 'chromium_launch_failed',
       errorName: null,
       stage: null,
+      layout: null,
     };
   }
   if (exitCode !== 0) {
@@ -167,6 +187,7 @@ export function classifySujainRunnerFailure(
       reason: 'runner_exit_nonzero',
       errorName: null,
       stage: null,
+      layout: null,
     };
   }
   return {
@@ -174,13 +195,39 @@ export function classifySujainRunnerFailure(
     reason: 'response_validation_failed',
     errorName: null,
     stage: null,
+    layout: null,
   };
+}
+
+/**
+ * Compact layout fragment for warn logs. Header texts + counts only — never cells.
+ * Mirrors tools/sujain-web-runner/policy.mjs formatLayoutWarnFragment.
+ */
+export function formatLayoutWarnFragment(
+  layout: SujainLayoutDiagnostics | null | undefined,
+): string {
+  const parsed = layoutDiagnosticsSchema.safeParse(layout);
+  if (!parsed.success) return '';
+  const parts: string[] = [];
+  for (const page of ['payment', 'unit-items'] as const) {
+    const entry = parsed.data[page];
+    if (!entry) continue;
+    const headerText = entry.tableHeaders
+      .map((cols) => `[${cols.join('|')}]`)
+      .join(',');
+    parts.push(
+      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount}`,
+    );
+  }
+  if (parts.length === 0) return '';
+  return `layout=${parts.join('|')}`.slice(0, 800);
 }
 
 /** Build warn line fragments from allowlisted tokens only. */
 export function formatSujainRunnerWarnExtras(
   errorName: string | null | undefined,
   stage: string | null | undefined,
+  layout?: SujainLayoutDiagnostics | null,
 ): string {
   const parts: string[] = [];
   if (typeof errorName === 'string' && runnerErrorNameSchema.safeParse(errorName).success) {
@@ -189,7 +236,15 @@ export function formatSujainRunnerWarnExtras(
   if (typeof stage === 'string' && runnerStageSchema.safeParse(stage).success) {
     parts.push(`stage=${stage}`);
   }
+  const layoutText = formatLayoutWarnFragment(layout);
+  if (layoutText) parts.push(layoutText);
   return parts.join(' ');
+}
+
+/** Coerce a runner layout payload; drop anything that is not allowlisted shape. */
+export function coerceSujainLayoutDiagnostics(value: unknown): SujainLayoutDiagnostics | null {
+  const parsed = layoutDiagnosticsSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 /**
@@ -251,7 +306,11 @@ export class SujainBrowserClient {
         error?: HousingBrandSyncError,
         payload?: { capturedAt: string; rows: SujainRawRow[] },
         reason: string | null = null,
-        extras: { errorName?: string | null; stage?: string | null } = {},
+        extras: {
+          errorName?: string | null;
+          stage?: string | null;
+          layout?: SujainLayoutDiagnostics | null;
+        } = {},
       ) => {
         if (settled) return;
         settled = true;
@@ -261,7 +320,11 @@ export class SujainBrowserClient {
         output = '';
         stderr = '';
         if (error || !payload) {
-          const extrasText = formatSujainRunnerWarnExtras(extras.errorName, extras.stage);
+          const extrasText = formatSujainRunnerWarnExtras(
+            extras.errorName,
+            extras.stage,
+            extras.layout,
+          );
           const base = `sujain runner failed code=${error ?? 'operation_unknown'} reason=${reason ?? 'none'}`;
           const withExtras = extrasText ? `${base} ${extrasText}` : base;
           if (diagnostic) {
@@ -315,6 +378,7 @@ export class SujainBrowserClient {
                   ...(parsed.data.reason ? { reason: parsed.data.reason } : {}),
                   ...(parsed.data.errorName ? { errorName: parsed.data.errorName } : {}),
                   ...(parsed.data.stage ? { stage: parsed.data.stage } : {}),
+                  ...(parsed.data.layout ? { layout: parsed.data.layout } : {}),
                 };
               }
             } else if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
@@ -339,11 +403,13 @@ export class SujainBrowserClient {
                   const reasonParsed = failureReasonSchema.safeParse(record.reason);
                   const errorNameParsed = runnerErrorNameSchema.safeParse(record.errorName);
                   const stageParsed = runnerStageSchema.safeParse(record.stage);
+                  const layout = coerceSujainLayoutDiagnostics(record.layout);
                   payload = {
                     error: errorParsed.data,
                     ...(reasonParsed.success ? { reason: reasonParsed.data } : {}),
                     ...(errorNameParsed.success ? { errorName: errorNameParsed.data } : {}),
                     ...(stageParsed.success ? { stage: stageParsed.data } : {}),
+                    ...(layout ? { layout } : {}),
                   };
                 } else {
                   payload = { error: 'operation_unknown', reason: 'response_validation_failed' };
@@ -363,6 +429,7 @@ export class SujainBrowserClient {
         finish(failure.code, undefined, failure.reason, {
           errorName: failure.errorName,
           stage: failure.stage,
+          layout: failure.layout,
         });
       });
       child.stdin.end(JSON.stringify({

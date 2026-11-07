@@ -45,6 +45,108 @@ export function sanitizeRunnerStage(stage) {
   return typeof stage === 'string' && RUNNER_STAGES.has(stage) ? stage : null;
 }
 
+const LAYOUT_PAGES = new Set(['payment', 'unit-items']);
+const LAYOUT_HEADER_MAX = 100;
+const LAYOUT_TABLE_MAX = 20;
+const LAYOUT_HEADER_CELLS_MAX = 20;
+
+/**
+ * Header cell text only — never data-cell values.
+ * Drops URL/query-like strings that could carry credentials or PII.
+ */
+export function sanitizeLayoutHeaderText(value) {
+  if (typeof value !== 'string') return null;
+  const clipped = value.replace(/\s+/gu, ' ').trim().slice(0, LAYOUT_HEADER_MAX);
+  if (!clipped) return null;
+  if (/https?:\/\//iu.test(clipped) || /[?&=]/u.test(clipped)) return null;
+  return clipped;
+}
+
+function sanitizeNonNegInt(value, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(Math.trunc(n), max);
+}
+
+/**
+ * One scrape page: tableCount + header texts + raw/eligible row counts.
+ * Never includes cell values, URLs, or arbitrary extra keys.
+ */
+export function sanitizePageLayoutDiagnostic(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const sourcePage = LAYOUT_PAGES.has(value.sourcePage) ? value.sourcePage : null;
+  if (!sourcePage) return null;
+
+  const tableHeaders = [];
+  if (Array.isArray(value.tableHeaders)) {
+    for (const headers of value.tableHeaders.slice(0, LAYOUT_TABLE_MAX)) {
+      if (!Array.isArray(headers)) continue;
+      const cleaned = [];
+      for (const header of headers.slice(0, LAYOUT_HEADER_CELLS_MAX)) {
+        const text = sanitizeLayoutHeaderText(header);
+        if (text) cleaned.push(text);
+      }
+      tableHeaders.push(cleaned);
+    }
+  }
+
+  return {
+    sourcePage,
+    tableCount: sanitizeNonNegInt(value.tableCount, 100),
+    tableHeaders,
+    rawRowCount: sanitizeNonNegInt(value.rawRowCount, 1000),
+    eligibleRowCount: sanitizeNonNegInt(value.eligibleRowCount, 1000),
+  };
+}
+
+/**
+ * `{ payment?: PageLayout, 'unit-items'?: PageLayout }` with allowlisted keys only.
+ */
+export function sanitizeLayoutDiagnostics(layout) {
+  if (!layout || typeof layout !== 'object' || Array.isArray(layout)) return null;
+  const out = {};
+  for (const page of LAYOUT_PAGES) {
+    if (!Object.hasOwn(layout, page)) continue;
+    const pageValue = layout[page];
+    const sanitized = sanitizePageLayoutDiagnostic(
+      pageValue && typeof pageValue === 'object'
+        ? { ...pageValue, sourcePage: page }
+        : null,
+    );
+    if (!sanitized) continue;
+    out[page] = {
+      tableCount: sanitized.tableCount,
+      tableHeaders: sanitized.tableHeaders,
+      rawRowCount: sanitized.rawRowCount,
+      eligibleRowCount: sanitized.eligibleRowCount,
+    };
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * Compact warn-line fragment. Header texts only — never cell values.
+ * Example: layout=payment:t=1;h=[항목|내용];raw=2;eligible=0|unit-items:t=0;h=[];raw=0;eligible=0
+ */
+export function formatLayoutWarnFragment(layout) {
+  const sanitized = sanitizeLayoutDiagnostics(layout);
+  if (!sanitized) return '';
+  const parts = [];
+  for (const page of ['payment', 'unit-items']) {
+    const entry = sanitized[page];
+    if (!entry) continue;
+    const headerText = entry.tableHeaders
+      .map((cols) => `[${cols.join('|')}]`)
+      .join(',');
+    parts.push(
+      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount}`,
+    );
+  }
+  if (parts.length === 0) return '';
+  // Cap total fragment length so a noisy page cannot flood logs.
+  return `layout=${parts.join('|')}`.slice(0, 800);
+}
+
 /**
  * Allowlisted reason (+ optional errorName) for non-SujainReadError throws.
  * Uses sanitized error.name only — never message, stack, URL, or page text.
