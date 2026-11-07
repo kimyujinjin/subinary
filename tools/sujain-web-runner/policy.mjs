@@ -17,6 +17,19 @@ export class SujainReadError extends Error {
 }
 
 /**
+ * Allowlisted reason for non-SujainReadError throws.
+ * Uses error.name only — never message, stack, URL, or page text.
+ */
+export function classifyUntypedRunnerError(error) {
+  if (error instanceof SujainReadError) return null;
+  const name = error && typeof error === 'object' && typeof error.name === 'string'
+    ? error.name
+    : '';
+  if (name === 'TimeoutError') return 'playwright_timeout';
+  return 'runner_exception';
+}
+
+/**
  * Chromium refuses `--no-sandbox` only when it is missing as root.
  * Production API containers run as uid 0 with no USER directive, so keep the
  * Playwright sandbox on for non-root and turn it off only for root/Docker.

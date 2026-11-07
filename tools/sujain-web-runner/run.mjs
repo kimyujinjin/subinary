@@ -1,4 +1,10 @@
-import { SujainReadError, allowedRequest, chromiumSandboxEnabled, validateJob } from './policy.mjs';
+import {
+  SujainReadError,
+  allowedRequest,
+  chromiumSandboxEnabled,
+  classifyUntypedRunnerError,
+  validateJob,
+} from './policy.mjs';
 import { readSujainPages } from './collect.mjs';
 
 let browser, context, job;
@@ -48,7 +54,12 @@ try {
     ok: false,
     error: error instanceof SujainReadError ? error.code : 'operation_unknown',
   };
-  if (failureReason && payload.error === 'runtime_unavailable') payload.reason = failureReason;
+  if (failureReason && payload.error === 'runtime_unavailable') {
+    payload.reason = failureReason;
+  } else {
+    const untyped = classifyUntypedRunnerError(error);
+    if (untyped) payload.reason = untyped;
+  }
   process.stdout.write(JSON.stringify(payload));
 } finally {
   if (job?.credentials) {

@@ -25,6 +25,11 @@ const failureReasonSchema = z.enum([
   'chromium_launch_failed',
   'response_validation_failed',
   'response_too_large',
+  'parent_deadline',
+  'stdin_error',
+  'playwright_timeout',
+  'runner_exception',
+  'runner_exit_nonzero',
 ]);
 
 /** Match tools/sujain-web-runner collect.mjs caps and responseSchema below. */
@@ -117,8 +122,8 @@ export function classifySujainRunnerFailure(
   if (/Running as root without --no-sandbox|No usable sandbox|chromium.?sandbox/i.test(stderr)) {
     return { code: 'runtime_unavailable', reason: 'chromium_launch_failed' };
   }
-  if (exitCode !== 0) return { code: 'operation_unknown', reason: null };
-  return { code: 'operation_unknown', reason: null };
+  if (exitCode !== 0) return { code: 'operation_unknown', reason: 'runner_exit_nonzero' };
+  return { code: 'operation_unknown', reason: 'response_validation_failed' };
 }
 
 /**
@@ -200,11 +205,11 @@ export class SujainBrowserClient {
           hard.unref();
         }
       };
-      const abort = () => { stop(); finish('operation_unknown'); };
+      const abort = () => { stop(); finish('operation_unknown', undefined, 'parent_deadline'); };
       const timer = setTimeout(abort, 60_000);
       signal.addEventListener('abort', abort, { once: true });
       child.on('error', () => { this.#active = false; finish('runtime_unavailable'); });
-      child.stdin.on('error', () => { stop(); finish('operation_unknown'); });
+      child.stdin.on('error', () => { stop(); finish('operation_unknown', undefined, 'stdin_error'); });
       child.stdout.on('data', (chunk: Buffer) => {
         bytes += chunk.byteLength;
         if (bytes > SUJAIN_STDOUT_MAX_BYTES) {
