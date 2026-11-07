@@ -46,6 +46,12 @@ docker exec family-memory-ai-api-1 sh -c 'test "$SUJAIN_WEB_CONNECTIONS_ENABLED"
 3. 앱에서 수자인 자격증명이 금고에 저장된 뒤 「확인」을 누른다. 런타임/실행 파일/`playwright-core` 부재만으로 `runtime_unavailable`(「신축 조회 실행 환경이 준비되지 않았어요.」)에 바로 떨어지지 않아야 한다.
 4. 실제 수자인 로그인·화면 구조·추가 인증 성공 여부는 반영 후 화면에서 확인한다. 이 문서는 로그인 성공을 보증하지 않는다.
 
+## Chromium 샌드박스(루트 컨테이너)
+
+운영 API 이미지는 `USER` 없이 uid 0으로 돈다. Chromium은 루트에서 샌드박스를 켠 채 시작하지 못하므로, `tools/sujain-web-runner`는 **uid 0일 때만** Playwright `chromiumSandbox`를 끈다. 비루트에서는 샌드박스를 유지한다. 신한 `bank-web-runner` 정책은 바꾸지 않는다.
+
+Chromium 기동 실패는 `runtime_unavailable` + 고정 사유 `chromium_launch_failed`로 매핑한다(자격증명·원문 stderr는 응답/DB에 넣지 않는다). API는 stderr에서 Chromium/Playwright 신호만 짧게 골라 경고 로그에 남긴다. 화면의 「확인」 실패는 서버 `message`(및 갱신된 `connection.statusMessage`)를 보여 주며, 예전에 하드코딩했던 「추가 인증」 문구로 덮지 않는다.
+
 ## 끄기
 
 호스트 `.env`(compose 보간용)에 `SUJAIN_WEB_CONNECTIONS_ENABLED=false`를 두고 api를 재생성한다. runner 바이너리는 이미지에 남아 있어도 API는 조회를 시작하지 않는다.

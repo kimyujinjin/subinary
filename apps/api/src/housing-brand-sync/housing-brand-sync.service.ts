@@ -114,7 +114,7 @@ function toConnection(row: ConnectionRow, viewerUserId: string): HousingBrandCon
   };
 }
 
-function publicErrorMessage(code: string): string {
+function publicErrorMessage(code: string, reason: string | null = null): string {
   switch (code) {
     case 'credentials_invalid':
       return '수자인 로그인에 실패했어요. 아이디와 비밀번호를 다시 확인해 주세요.';
@@ -125,7 +125,9 @@ function publicErrorMessage(code: string): string {
     case 'unsupported_layout':
       return '수자인 표 구성을 읽지 못했어요. 못 읽은 칸은 비워 두었어요.';
     case 'runtime_unavailable':
-      return '신축 조회 실행 환경이 준비되지 않았어요.';
+      return reason === 'chromium_launch_failed'
+        ? '신축 조회 브라우저를 시작하지 못했어요.'
+        : '신축 조회 실행 환경이 준비되지 않았어요.';
     case 'not_connected':
       return '이 주택에 연결된 수자인 계정이 없어요.';
     default:
@@ -338,8 +340,18 @@ export class HousingBrandSyncService {
         capture = await this.browser.read(credentials, controller.signal);
       } catch (error) {
         const code = error instanceof SujainBrowserError ? error.code : 'operation_unknown';
-        await this.markFailure(prepared.connection.id, prepared.connection.version, code);
-        throw new BadRequestException(publicErrorMessage(code));
+        const reason = error instanceof SujainBrowserError ? error.reason : null;
+        const message = publicErrorMessage(code, reason);
+        const failed = await this.markFailure(
+          prepared.connection.id,
+          prepared.connection.version,
+          code,
+          reason,
+        );
+        throw new BadRequestException({
+          message,
+          ...(failed ? { connection: toConnection(failed, userId) } : {}),
+        });
       } finally {
         credentials.loginId = '';
         credentials.password = '';
@@ -397,17 +409,23 @@ export class HousingBrandSyncService {
     }
   }
 
-  private async markFailure(connectionId: string, version: number, code: string): Promise<void> {
-    await this.db.update(schema.housingBrandConnections).set({
+  private async markFailure(
+    connectionId: string,
+    version: number,
+    code: string,
+    reason: string | null = null,
+  ): Promise<ConnectionRow | null> {
+    const [row] = await this.db.update(schema.housingBrandConnections).set({
       status: code === 'authentication_required' ? 'needs_confirmation' : 'failed',
-      statusMessage: publicErrorMessage(code),
+      statusMessage: publicErrorMessage(code, reason),
       lastFetchAt: new Date(),
       updatedAt: new Date(),
       version: version + 1,
     }).where(and(
       eq(schema.housingBrandConnections.id, connectionId),
       eq(schema.housingBrandConnections.version, version),
-    ));
+    )).returning();
+    return row ?? null;
   }
 
   async apply(
