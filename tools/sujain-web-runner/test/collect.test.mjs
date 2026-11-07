@@ -18,7 +18,9 @@ function officialLoginPage({
   alertMessage = '아이디 또는 비밀번호가 일치하지 않습니다.',
   hasCaptchaOrExtraAuthText = false,
   paymentRows = [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }],
-  unitItemsRows = [],
+  // Default a synthetic unit-items row so happy-path tests do not burn the full
+  // table-wait budget on an intentionally empty options page.
+  unitItemsRows = [{ cells: ['synthetic-option', '100'], headers: ['품목', '금액'], sourcePage: 'unit-items' }],
 } = {}) {
   const actions = [];
   let url = 'https://www.sujain.co.kr/login';
@@ -134,6 +136,10 @@ function officialLoginPage({
     locator,
     async waitForLoadState(state, _options) {
       actions.push(['waitForLoadState', state]);
+    },
+    async waitForTimeout(ms) {
+      actions.push(['waitForTimeout', ms]);
+      await new Promise((resolve) => setTimeout(resolve, Math.min(Number(ms) || 0, 5)));
     },
     waitForEvent(event, _options) {
       actions.push(['waitForEvent', event]);
@@ -289,11 +295,12 @@ test('long synthetic cell and header strings are truncated to API schema caps', 
     }],
   });
   const result = await readSujainPages(f.page, job());
-  assert.equal(result.rows.length, 1);
-  assert.equal(result.rows[0].cells[0].length, 200);
-  assert.equal(result.rows[0].headers[0].length, 100);
-  assert.equal(result.rows[0].cells[1], '1,000');
-  assert.equal(result.rows[0].headers[1], '금액');
+  const payment = result.rows.find((row) => row.sourcePage === 'payment');
+  assert.ok(payment);
+  assert.equal(payment.cells[0].length, 200);
+  assert.equal(payment.headers[0].length, 100);
+  assert.equal(payment.cells[1], '1,000');
+  assert.equal(payment.headers[1], '금액');
 });
 
 test('records scrape_payment stage before table evaluate without leaking page text', async () => {
@@ -432,4 +439,105 @@ test('unit-items destroyed-context retry is only once — second destroy still f
       && /Execution context was destroyed/u.test(String(error.message)),
   );
   assert.equal(unitEvalAttempts, 2);
+});
+
+test('waits when first evaluate is empty then returns rows after AJAX-like fill', async () => {
+  // After #31, load + one evaluate can succeed with 0 data rows while the table is
+  // still empty; production then stored last_preview.items=[] and looked like
+  // «바꿀 항목이 없어요.» Re-evaluate until a non-empty data cell appears.
+  const filledPayment = [{
+    cells: ['계약금', '1,000'],
+    headers: ['구분', '금액'],
+    sourcePage: 'payment',
+  }];
+  const filledUnit = [{
+    cells: ['synthetic-option', '500'],
+    headers: ['품목', '금액'],
+    sourcePage: 'unit-items',
+  }];
+  const f = officialLoginPage({
+    afterClick: 'navigate',
+    paymentRows: [],
+    unitItemsRows: [],
+  });
+  let paymentEvals = 0;
+  f.page.evaluate = async (_fn, sourcePage) => {
+    if (sourcePage === 'payment') {
+      paymentEvals += 1;
+      return paymentEvals >= 3 ? filledPayment : [];
+    }
+    return filledUnit;
+  };
+
+  const previous = process.env.SUJAIN_TABLE_WAIT_MS;
+  process.env.SUJAIN_TABLE_WAIT_MS = '2000';
+  let result;
+  try {
+    result = await readSujainPages(f.page, job());
+  } finally {
+    if (previous === undefined) delete process.env.SUJAIN_TABLE_WAIT_MS;
+    else process.env.SUJAIN_TABLE_WAIT_MS = previous;
+  }
+  assert.ok(paymentEvals >= 3);
+  assert.ok(result.rows.some((row) => row.cells[0] === '계약금'));
+  assert.equal(
+    f.actions.some((row) => row[0] === 'waitForTimeout' || row[0] === 'waitForLoadState'),
+    true,
+  );
+});
+
+test('destroyed-context then empty then data still yields rows', async () => {
+  const unitRows = [{
+    cells: ['synthetic-option', '500'],
+    headers: ['품목', '금액'],
+    sourcePage: 'unit-items',
+  }];
+  const f = officialLoginPage({
+    afterClick: 'navigate',
+    paymentRows: [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }],
+    unitItemsRows: [],
+  });
+  let unitEvalAttempts = 0;
+  f.page.evaluate = async (_fn, sourcePage) => {
+    if (sourcePage === 'payment') {
+      return [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }];
+    }
+    unitEvalAttempts += 1;
+    if (unitEvalAttempts === 1) {
+      const err = new Error('Execution context was destroyed, most likely because of a navigation.');
+      err.name = 'Error';
+      throw err;
+    }
+    // Post-destroy document is briefly empty (AJAX not yet painted).
+    if (unitEvalAttempts === 2) return [];
+    return unitRows;
+  };
+
+  const result = await readSujainPages(f.page, job());
+  assert.ok(unitEvalAttempts >= 3);
+  assert.ok(result.rows.some((row) => row.sourcePage === 'unit-items' && row.cells[0] === 'synthetic-option'));
+});
+
+test('both pages still empty after waiting is unsupported_layout, not silent empty success', async () => {
+  const f = officialLoginPage({
+    afterClick: 'navigate',
+    paymentRows: [],
+    unitItemsRows: [],
+  });
+  // Force short wait budget via env so the test does not sleep the full production timeout.
+  const previous = process.env.SUJAIN_TABLE_WAIT_MS;
+  process.env.SUJAIN_TABLE_WAIT_MS = '50';
+  try {
+    await assert.rejects(
+      () => readSujainPages(f.page, job()),
+      (error) => error instanceof SujainReadError && error.code === 'unsupported_layout',
+    );
+  } finally {
+    if (previous === undefined) delete process.env.SUJAIN_TABLE_WAIT_MS;
+    else process.env.SUJAIN_TABLE_WAIT_MS = previous;
+  }
+  assert.equal(
+    f.actions.some((row) => row[0] === 'goto' && String(row[1]).includes('unit-items')),
+    true,
+  );
 });

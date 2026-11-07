@@ -146,4 +146,39 @@ describe('sujain parse (synthetic only)', () => {
     ]);
     expect(matched).toEqual([]);
   });
+
+  it('keeps a matched option whose label matches but whose amount was unread', () => {
+    // Existing named option with null amount: scrape finds the same label but cannot
+    // map an amount column. That must stay on the confirm list (미확인), not vanish as
+    // «unchanged» — otherwise the user sees an empty list after a successful runner.
+    const parsed = parseSujainRows([
+      {
+        sourcePage: 'unit-items',
+        headers: ['품목', '비고'],
+        cells: ['합성 옵션 라벨', ''],
+      },
+    ]);
+    expect(parsed.items).toHaveLength(1);
+    expect(parsed.items[0]?.label).toBe('합성 옵션 라벨');
+    expect(parsed.items[0]?.scheduledAmount).toBeNull();
+    expect(parsed.items[0]?.unreadFields.some((field) => field.field === 'scheduledAmount')).toBe(true);
+
+    const matched = matchFetchedItems(parsed.items, [
+      {
+        id: '33333333-3333-4333-8333-333333333333',
+        kind: 'option',
+        installment: null,
+        label: '합성 옵션 라벨',
+        amount: null,
+        dueDate: null,
+        paidAmount: null,
+        paidDate: null,
+      },
+    ]);
+    expect(matched).toHaveLength(1);
+    expect(matched[0]?.matchedPaymentId).toBe('33333333-3333-4333-8333-333333333333');
+    expect(matched[0]?.changedFields).toEqual([]);
+    expect(matched[0]?.unreadFields.some((field) => field.field === 'scheduledAmount')).toBe(true);
+    expect(matched[0]?.scheduledAmount).toBeNull();
+  });
 });
