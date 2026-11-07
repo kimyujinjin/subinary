@@ -13,6 +13,20 @@ export function housingBrandSyncErrorMessage(error: unknown): string {
   return FALLBACK;
 }
 
+/**
+ * Sync failures also land on connection.statusMessage (top status area).
+ * Hide the below-confirm local notice when it would repeat that sentence.
+ * Connect/apply notices stay visible when they differ from status.
+ */
+export function housingBrandLocalErrorNotice(
+  localError: string | null,
+  statusMessage: string | null | undefined,
+): string | null {
+  if (!localError) return null;
+  if (statusMessage && localError === statusMessage) return null;
+  return localError;
+}
+
 /** Sync failures persist status on the connection; Nest may return it on the error body. */
 export function connectionFromSyncError(error: unknown): HousingBrandConnection | null {
   if (!(error instanceof ApiError) || !error.body || typeof error.body !== "object") {

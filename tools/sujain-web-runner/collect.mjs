@@ -30,18 +30,56 @@ async function tableRows(page, sourcePage) {
   }, sourcePage);
 }
 
+/**
+ * Official login uses form#frm + #id/#pw + a.btnLogin (ajax /login/loginproc then form submit).
+ * Prefer the site's own click handler; do not POST loginproc or strip CSRF ourselves.
+ */
 async function fillLogin(page, credentials) {
-  const user = page.locator('input[type="text"], input[name*="id" i], input[id*="id" i], input[name*="user" i]').first();
-  const pass = page.locator('input[type="password"]').first();
-  if (await user.count() === 0 || await pass.count() === 0) throw new SujainReadError('unsupported_layout');
+  const form = page.locator('form#frm').first();
+  const scope = (await form.count()) > 0 ? form : page;
+
+  const user = scope.locator('#id, input[name="userid"]').first();
+  const pass = scope.locator('#pw, input[name="userpwd"]').first();
+  if (await user.count() === 0 || await pass.count() === 0) {
+    throw new SujainReadError('unsupported_layout');
+  }
   await user.fill(credentials.loginId, { timeout: 5_000 });
   await pass.fill(credentials.password, { timeout: 5_000 });
-  const submit = page.locator('button[type="submit"], input[type="submit"], button:has-text("로그인")').first();
+
+  const submit = page.locator(
+    'form#frm a.btnLogin, a.btnLogin, button[type="submit"], input[type="submit"], button:has-text("로그인")',
+  ).first();
   if (await submit.count() === 0) throw new SujainReadError('unsupported_layout');
-  await Promise.all([
-    page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => null),
-    submit.click({ timeout: 5_000 }),
-  ]);
+
+  const dialogPromise = page.waitForEvent('dialog', { timeout: 15_000 })
+    .then((dialog) => ({ kind: 'dialog', dialog }));
+  const leftLoginPromise = page.waitForURL(
+    (next) => {
+      try {
+        const href = typeof next === 'string' ? next : next.href;
+        return !isLoginUrl(href);
+      } catch {
+        return false;
+      }
+    },
+    { timeout: 15_000 },
+  ).then(() => ({ kind: 'navigated' }));
+  // Loser rejection must not become an unhandled rejection after race settles.
+  dialogPromise.catch(() => {});
+  leftLoginPromise.catch(() => {});
+
+  await submit.click({ timeout: 5_000 });
+
+  const outcome = await Promise.race([dialogPromise, leftLoginPromise]).catch(() => null);
+
+  if (outcome?.kind === 'dialog') {
+    const message = text(outcome.dialog.message?.() ?? '');
+    await outcome.dialog.dismiss().catch(() => null);
+    if (/실패|오류|틀렸|일치하지|아이디|비밀번호|잘못|없/u.test(message)) {
+      throw new SujainReadError('credentials_invalid');
+    }
+    throw new SujainReadError('authentication_required');
+  }
 }
 
 /**
