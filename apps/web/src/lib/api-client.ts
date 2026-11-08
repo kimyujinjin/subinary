@@ -89,6 +89,7 @@ import type {
 } from "@family/contracts";
 
 import { isNative } from "./native";
+import { getPreviewResponse, isDashboardPreview } from "./preview-data";
 
 /** API 베이스 URL. 환경변수 우선, 로컬 개발 기본값 fallback. */
 const API =
@@ -284,6 +285,10 @@ export async function apiFetch<T>(
   options: ApiFetchOptions = {},
 ): Promise<T> {
   const { method = "GET", body, accessToken, signal, refreshToken } = options;
+
+  // /dashboard?preview=1 renders the real dashboard components with local fixtures.
+  // Keep it read-only and never let preview requests reach a real API.
+  if (isDashboardPreview()) return getPreviewResponse<T>(path, method);
 
   const headers: Record<string, string> = { accept: "application/json" };
   if (body !== undefined) headers["content-type"] = "application/json";

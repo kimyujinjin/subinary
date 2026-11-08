@@ -237,7 +237,8 @@
   /* 헤더는 테두리 없음(리뉴얼), 탭바는 border-t 1px 포함 — 누락하면 파생 레이아웃(AI 채팅 패널)이 1px 어긋나
    * 페이지 전체가 1px 스크롤되는 회귀가 있었다. */
   --app-header-h: calc(3.5rem + var(--safe-top));
-  --app-tabbar-h: calc(4rem + 1px + var(--safe-bottom));
+  /* Floating mobile tabs: 4rem contents + 0.5rem bottom offset. */
+  --app-tabbar-h: calc(4.5rem + var(--safe-bottom));
   --kb-inset: 0px;
 }
 
@@ -320,6 +321,17 @@ html.kb-open [data-fab] {
 /* 헤더 바로 밑 첫 섹션처럼 위에 띠가 필요 없는 곳에 명시적으로 붙인다. */
 .finance-panel.panel-flush-top {
   border-top-width: 0;
+}
+.app-header-home,
+.app-main-home {
+  background-color: var(--band);
+}
+.dashboard-home .finance-panel {
+  margin-inline: 0;
+  padding-block: 1.25rem;
+  border: 0;
+  border-radius: var(--radius-card);
+  box-shadow: none;
 }
 @media (min-width: 1024px) {
   :root {

@@ -42,6 +42,11 @@ import {
 } from "./query-persistence";
 import { isRetriableFailure, retryWithRefresh } from "./session-failure";
 import {
+  isDashboardPreview,
+  PREVIEW_HOUSEHOLD_ID,
+  PREVIEW_USER_ID,
+} from "./preview-data";
+import {
   authenticateBiometricResilient,
   getBiometricPref,
   type BiometricResult,
@@ -308,6 +313,22 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
   // 마운트 시 1회 부트스트랩: refresh 쿠키가 있으면 자동 로그인 복원.
   useEffect(() => {
     let cancelled = false;
+    if (isDashboardPreview()) {
+      setUser({
+        id: PREVIEW_USER_ID,
+        email: "preview@example.test",
+        name: "미리보기 사용자",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      setMemberships([
+        { householdId: PREVIEW_HOUSEHOLD_ID, name: "우리 가족", role: "owner", status: "active" },
+      ]);
+      setAccessToken("preview-read-only");
+      setStatus("authenticated");
+      return () => {
+        cancelled = true;
+      };
+    }
     void (async () => {
       try {
         const stored = await getStoredRefreshToken();
@@ -359,7 +380,7 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     return () => {
       cancelled = true;
     };
-  }, [clearSession, refreshSession, bootstrapAttempt, queryClient]);
+  }, [clearSession, refreshSession, bootstrapAttempt, queryClient, setAccessToken]);
 
   // 앱: 로그인된 동안 화면 데이터를 암호화해 저장한다(콜드 스타트 즉시 표시). 웹은 no-op.
   const userId = user?.id ?? null;

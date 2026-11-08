@@ -1,9 +1,10 @@
 "use client";
-/** 하단 탭 4개(홈·가계부·자산·전체). 설정은 '전체' 탭이다 — ADR-0037. */
-import { Bell, Home, Landmark, LayoutGrid, Receipt, type LucideIcon } from "lucide-react";
+/** 하단 탭(홈·머니플로우·가계부·자산·전체). 설정은 '전체' 탭이다 — ADR-0037. */
+import { Bell, GitBranch, Home, Landmark, LayoutGrid, Receipt, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useTheme } from "next-themes";
 
 import { AppReadinessBoundary } from "@/components/app-readiness-boundary";
 import {
@@ -15,6 +16,7 @@ import { HouseholdSwitcher } from "@/components/household-switcher";
 import { activeTabFor, PRIMARY_TABS, type TabKey } from "@/lib/nav-tabs";
 import { useUnreadCount } from "@/lib/queries";
 import { cn } from "@/lib/utils";
+import { isDashboardPreview } from "@/lib/preview-data";
 
 interface NavItem {
   key: TabKey;
@@ -25,6 +27,7 @@ interface NavItem {
 
 const NAV_ICONS: Readonly<Record<TabKey, LucideIcon>> = {
   home: Home,
+  "money-flow": GitBranch,
   assets: Landmark,
   ledger: Receipt,
   all: LayoutGrid,
@@ -73,21 +76,23 @@ function NavigationItem({
   item,
   active,
   dot = false,
+  preview = false,
 }: {
   item: NavItem;
   active: boolean;
   dot?: boolean;
+  preview?: boolean;
 }) {
   const Icon = item.icon;
   return (
     <Link
-      href={item.href}
+      href={preview ? `${item.href}?preview=1` : item.href}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "text-micro flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-control px-1 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:min-h-12 lg:flex-row lg:justify-start lg:gap-3 lg:px-4 lg:py-3 lg:text-body",
+        "text-micro relative z-10 flex min-h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-full px-0.5 py-1.5 transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none lg:min-h-12 lg:flex-row lg:justify-start lg:gap-3 lg:rounded-control lg:px-4 lg:py-3 lg:text-body",
         // 비활성 라벨은 11px라 투명도를 얹으면 대비가 3.7:1로 떨어진다 — muted-foreground 그대로(5.7:1).
         active
-          ? "text-foreground font-semibold lg:bg-muted"
+          ? "text-primary font-semibold lg:bg-muted"
           : "text-muted-foreground hover:text-foreground lg:hover:bg-muted active:text-foreground"
       )}
     >
@@ -104,7 +109,7 @@ function NavigationItem({
           />
         ) : null}
       </span>
-      <span>{item.label}</span>
+      <span className="whitespace-nowrap">{item.label}</span>
       {/* 빈 span의 aria-label은 화면 읽기가 건너뛴다 — 점의 뜻은 숨은 글자로 탭 이름 뒤에 붙인다. */}
       {dot ? <span className="sr-only">, 새 거래가 있어요</span> : null}
     </Link>
@@ -112,21 +117,28 @@ function NavigationItem({
 }
 
 /** Mobile bottom tabs and a desktop rail share labels, destinations and order. */
-function PrimaryNav({ pathname }: { pathname: string }) {
+function PrimaryNav({ pathname, preview }: { pathname: string; preview: boolean }) {
   const activeTab = activeTabFor(pathname);
   const unseenCount = useActivityStore((s) => s.unseenCount);
+  const activeIndex = Math.max(0, NAV_ITEMS.findIndex((item) => item.key === activeTab));
   return (
     <nav
       aria-label="주 메뉴"
       data-bottom-nav
-      className="bg-card/95 fixed inset-x-0 bottom-0 z-40 border-t pb-[var(--safe-bottom)] backdrop-blur lg:inset-x-auto lg:top-[var(--app-header-h)] lg:bottom-0 lg:left-0 lg:w-52 lg:border-r lg:border-t-0 lg:bg-card lg:p-4"
+      className="bg-card/95 fixed inset-x-3 bottom-[calc(0.5rem+var(--safe-bottom))] z-40 rounded-full border border-border/70 p-1.5 shadow-[0_6px_24px_rgba(15,23,42,0.14)] backdrop-blur lg:inset-x-auto lg:top-[var(--app-header-h)] lg:bottom-0 lg:left-0 lg:w-52 lg:rounded-none lg:border-r lg:border-t-0 lg:bg-card lg:p-4 lg:shadow-none"
     >
-      <div className="mx-auto grid h-16 w-full max-w-lg grid-cols-4 items-center lg:h-auto lg:grid-cols-1 lg:gap-2">
+      <div className="relative mx-auto grid h-16 w-full max-w-lg grid-cols-5 items-center lg:h-auto lg:grid-cols-1 lg:gap-2">
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-2 left-0 z-0 w-1/5 rounded-full bg-muted transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none lg:hidden"
+          style={{ transform: `translateX(${activeIndex * 100}%)` }}
+        />
         {NAV_ITEMS.map((item) => (
           <NavigationItem
             key={item.href}
             item={item}
             active={activeTab === item.key}
+            preview={preview}
             dot={item.key === "ledger" && unseenCount > 0}
           />
         ))}
@@ -137,6 +149,21 @@ function PrimaryNav({ pathname }: { pathname: string }) {
 
 function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const pathname = usePathname();
+  const [preview, setPreview] = useState(false);
+  const { theme, setTheme } = useTheme();
+  const previousTheme = useRef<string | null>(null);
+  useEffect(() => {
+    const enabled = isDashboardPreview();
+    setPreview(enabled);
+    if (enabled && previousTheme.current === null) {
+      previousTheme.current = theme ?? "system";
+      setTheme("light");
+    } else if (!enabled && previousTheme.current !== null) {
+      const restore = previousTheme.current;
+      previousTheme.current = null;
+      setTheme(restore);
+    }
+  }, [pathname, theme, setTheme]);
   return (
     <div className="flex min-h-dvh flex-col">
       <a
@@ -146,7 +173,7 @@ function AppShell({ children }: Readonly<{ children: ReactNode }>) {
         본문으로 건너뛰기
       </a>
       {/* 웹과 Android가 제공하는 안전 영역을 셸 치수와 동일하게 반영한다. */}
-      <header className="bg-background/95 sticky top-0 z-30 pt-[var(--safe-top)] backdrop-blur">
+      <header className={`bg-background/95 sticky top-0 z-30 pt-[var(--safe-top)] backdrop-blur ${pathname === "/dashboard" ? "app-header-home" : ""}`}>
         <div className="flex h-14 items-center justify-between gap-2 px-4 lg:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <BrandMark />
@@ -158,7 +185,7 @@ function AppShell({ children }: Readonly<{ children: ReactNode }>) {
         </div>
       </header>
 
-      <PrimaryNav pathname={pathname} />
+      <PrimaryNav pathname={pathname} preview={preview} />
 
       {/* 하단 탭바 높이(safe-area 포함)만큼 pb 확보 + 여유 1.5rem.
           고정값(pb-28=112px)은 iPhone(inset 34px)에서 탭바 총높이(114px)보다 작아
@@ -173,7 +200,7 @@ function AppShell({ children }: Readonly<{ children: ReactNode }>) {
       <main
         id="app-main"
         tabIndex={-1}
-        className="min-w-0 flex-1 px-(--page-px) pt-4 pb-[calc(var(--app-tabbar-h)+1.5rem)] focus:outline-none lg:ml-52 lg:pt-6 lg:pb-8"
+        className={`min-w-0 flex-1 px-(--page-px) pt-4 pb-[calc(var(--app-tabbar-h)+1.5rem)] focus:outline-none lg:ml-52 lg:pt-6 lg:pb-8 ${pathname === "/dashboard" ? "app-main-home" : ""}`}
       >
         <PullToRefresh>
           <div className="mx-auto w-full max-w-6xl">{children}</div>

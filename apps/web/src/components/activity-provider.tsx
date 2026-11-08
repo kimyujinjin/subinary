@@ -34,6 +34,7 @@ import { formatMoney } from "@/lib/format";
 import { useHousehold } from "@/lib/household-context";
 import { initPushNotifications, retryPushRegistrationIfGranted } from "@/lib/native";
 import { invalidateTransactionScope } from "@/lib/queries";
+import { isDashboardPreview } from "@/lib/preview-data";
 import { nextBackoff, readSseStream } from "@/lib/realtime";
 import { isManualFinanceHint, refreshManualFinanceQueries, resetSharedManualFinanceQueries, revalidateSharedManualFinanceQueries } from "@/lib/manual-finance-realtime";
 
@@ -209,7 +210,7 @@ export function ActivityProvider() {
   // 등록은 native.ts가 세션당 1회로 고정하므로, 재로그인 시 재호출해 콜백만
   // 최신으로 갱신해도 안전하다.
   useEffect(() => {
-    if (status !== "authenticated") return;
+    if (isDashboardPreview() || status !== "authenticated") return;
     void initPushNotifications({
       onToken: (token, platform) => {
         void authedFetch((t) =>
@@ -237,7 +238,7 @@ export function ActivityProvider() {
 
   // SSE 연결 + 폴링 안전망 + 백/포그라운드 수명주기.
   useEffect(() => {
-    if (status !== "authenticated" || !householdId) return;
+    if (isDashboardPreview() || status !== "authenticated" || !householdId) return;
 
     let stopped = false;
     let running = false;

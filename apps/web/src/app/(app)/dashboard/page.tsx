@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useMemo } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import type { MemberColor, RecurringUpcomingResponse } from "@family/contracts";
 
 import { HomeConsumptionCard } from "@/components/home-consumption-card";
@@ -12,6 +12,7 @@ import {
   HomeWeeklyRecap,
 } from "@/components/home-insight-sections";
 import { HomeBudgetSummary } from "@/components/home-summary-rows";
+import { HomeGoalPreview } from "@/components/home-goal-preview";
 import { useTodoCounts } from "@/components/widgets";
 import { useAuth } from "@/lib/auth-context";
 import { currentMonth } from "@/lib/format";
@@ -67,9 +68,14 @@ export default function DashboardPage() {
 
 function HomeView() {
   const searchParams = useSearchParams();
+  const [previewMode, setPreviewMode] = useState(false);
+  useEffect(() => {
+    setPreviewMode(searchParams.get("preview") === "1");
+  }, [searchParams]);
   const router = useRouter();
   const thisMonth = currentMonth();
   const selectedMonth = searchParams.get("month");
+  const preview = searchParams.get("preview") === "1";
   const month =
     selectedMonth && isMonthKey(selectedMonth) ? selectedMonth : thisMonth;
   const isCurrentMonth = month === thisMonth;
@@ -99,12 +105,12 @@ function HomeView() {
     (next: string) => {
       router.replace(
         next === thisMonth
-          ? "/dashboard"
-          : `/dashboard?month=${encodeURIComponent(next)}`,
+          ? preview ? "/dashboard?preview=1" : "/dashboard"
+          : `/dashboard?month=${encodeURIComponent(next)}${preview ? "&preview=1" : ""}`,
         { scroll: false }
       );
     },
-    [router, thisMonth]
+    [router, thisMonth, preview]
   );
 
   // 페이스: 지난달 같은 시점까지의 합계. 지난달 기록이 아예 없으면 "더 썼어요"가 거짓이
@@ -182,8 +188,9 @@ function HomeView() {
   });
 
   return (
-    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-4">
+    <div className="dashboard-home mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-3">
       <h1 className="sr-only">홈</h1>
+      {previewMode ? <HomeGoalPreview /> : null}
       <HomeConsumptionCard
         month={month}
         isCurrentMonth={isCurrentMonth}

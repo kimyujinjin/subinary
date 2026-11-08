@@ -1,8 +1,9 @@
 /** Primary destinations share one route map with native back navigation. */
-export type TabKey = "home" | "assets" | "ledger" | "all";
+export type TabKey = "home" | "money-flow" | "ledger" | "assets" | "all";
 
 export const PRIMARY_TABS = [
   { key: "home", href: "/dashboard", label: "홈" },
+  { key: "money-flow", href: "/money-flow", label: "머니플로우" },
   { key: "ledger", href: "/transactions", label: "가계부" },
   { key: "assets", href: "/assets", label: "자산" },
   // ADR-0037: 설정은 헤더 아이콘이 아니라 하단 '전체' 탭이다.
@@ -20,7 +21,7 @@ const ACCOUNT_PATHS: ReadonlyArray<string> = [
   "/more", "/household", "/devices", "/categories", "/ai-operations", "/ai",
 ];
 
-/** Only these four destinations use Android's double-back exit behavior. */
+/** Primary destinations use Android's double-back exit behavior. */
 export const TAB_ROOTS: ReadonlyArray<string> = PRIMARY_TABS.map((tab) => tab.href);
 
 /** Capacitor exports may add trailing slashes. */
@@ -41,6 +42,7 @@ export function isTabRoot(pathname: string): boolean {
 
 export function activeTabFor(pathname: string): TabKey | null {
   if (isUnder(pathname, "/dashboard")) return "home";
+  if (isUnder(pathname, "/money-flow")) return "money-flow";
   if (ASSET_PATHS.some((p) => isUnder(pathname, p))) return "assets";
   if (["/transactions", "/ledger", "/budgets", ...TODO_PATHS, "/more/recurring"].some((p) => isUnder(pathname, p))) return "ledger";
   if (ACCOUNT_PATHS.some((p) => isUnder(pathname, p))) return "all";
