@@ -1,36 +1,66 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  SUJAIN_SEARCH_BUTTON,
+  SUJAIN_UNIT_SELECT,
   buildPageLayoutDiagnostic,
+  countUnitOptions,
   isEligibleSujainCapturedRow,
+  normalizeCapturedRows,
   normalizeTableEvaluateResult,
   readSujainPages,
 } from '../collect.mjs';
 import { formatLayoutWarnFragment, SujainReadError } from '../policy.mjs';
+import { SUJAIN_PAYMENT_HEADERS, sujainPaymentDocument } from './fake-dom.mjs';
+
+const PAYMENT_ROW = {
+  cells: ['계약금1차', '2024-01-10', '1,000', '2024-01-10', '1,000', '0', '0', '1,000'],
+  headers: SUJAIN_PAYMENT_HEADERS,
+  sourcePage: 'payment',
+  section: 'payment',
+};
 
 /**
  * Fake Playwright page shaped like https://www.sujain.co.kr/login:
  * form#frm, input#id[name=userid], input#pw[name=userpwd], a.btnLogin (not type=submit).
+ * After login it mimics /mypage/payment (2026-11-08 구조): select#preInsp(자리표시 + 세대
+ * option) and a [onclick*="searchPayment"] 조회 button. Tables are empty until 조회.
  *
  * afterClick modes:
  * - navigate: leave /login without a dialog (legacy happy path)
  * - alert: failure/extra-auth dialog without leaving login
  * - success-alert: official success — land on /login/result + alert, then /index after dismiss
+ *
+ * afterSearch modes: fill (default) · dialog (site alert during the click) · login · nothing
  */
 function officialLoginPage({
   hasLoginControl = true,
   afterClick = 'navigate',
   alertMessage = '아이디 또는 비밀번호가 일치하지 않습니다.',
   hasCaptchaOrExtraAuthText = false,
-  paymentRows = [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }],
-  // Default a synthetic unit-items row so happy-path tests do not burn the full
-  // table-wait budget on an intentionally empty options page.
-  unitItemsRows = [{ cells: ['synthetic-option', '100'], headers: ['품목', '금액'], sourcePage: 'unit-items' }],
+  paymentRows = [PAYMENT_ROW],
+  prePaymentRows = [],
+  paymentDoc = null,
+  units = 1,
+  hasUnitSelect = true,
+  hasSearchButton = true,
+  afterSearch = 'fill',
+  searchDialogMessage = '합성 조회 오류 알림입니다.',
+  paymentLoadDialogMessage = null,
 } = {}) {
   const actions = [];
   let url = 'https://www.sujain.co.kr/login';
   let dialogHandler = null;
   const filled = { id: '', pw: '' };
+  const dialogListeners = new Set();
+  let searched = false;
+  let selectedIndex = 0;
+  const unitSelect = {
+    options: [
+      { value: '', disabled: false },
+      ...Array.from({ length: units }, (_, index) => ({ value: `synthetic-unit-${index + 1}`, disabled: false })),
+    ],
+  };
 
   function matches(selector, name) {
     const parts = selector.split(',').map((part) => part.trim());
@@ -45,6 +75,17 @@ function officialLoginPage({
     return parts.some((part) => /^((form#frm|form\[id=["']frm["']\])\s+)?a\.btnLogin\b/.test(part)
       || part === 'a.btnLogin'
       || part.endsWith('a.btnLogin')) ? 1 : 0;
+  }
+
+  /** Alert routed to page.on('dialog') listeners (runner dialog watcher). */
+  function emitPageDialog(message) {
+    const dialog = {
+      message: () => message,
+      async dismiss() {
+        actions.push(['page-dialog-dismiss']);
+      },
+    };
+    for (const listener of dialogListeners) listener(dialog);
   }
 
   function emitDialog(message, { afterDismissUrl = null } = {}) {
@@ -80,6 +121,8 @@ function officialLoginPage({
         return locator(child, selector);
       },
       async count() {
+        if (selector === SUJAIN_UNIT_SELECT) return hasUnitSelect ? 1 : 0;
+        if (selector === SUJAIN_SEARCH_BUTTON) return hasSearchButton ? 1 : 0;
         if (matches(selector, 'form#frm') || selector === 'form#frm') return 1;
         if (
           /#id\b|name="userid"|input\[name="userid"\]/.test(selector)
@@ -109,8 +152,36 @@ function officialLoginPage({
           filled.pw = value;
         }
       },
+      async waitFor(options) {
+        actions.push(['waitFor', selector, options?.state]);
+        if (selector === SUJAIN_UNIT_SELECT && !hasUnitSelect) {
+          const err = new Error('synthetic waitFor timeout');
+          err.name = 'TimeoutError';
+          throw err;
+        }
+      },
+      async evaluate(fn) {
+        actions.push(['locator-evaluate', selector]);
+        if (selector !== SUJAIN_UNIT_SELECT) throw new Error('unsupported locator evaluate');
+        return fn(unitSelect);
+      },
+      async selectOption(values, options) {
+        actions.push(['selectOption', selector, values?.index, options?.force === true]);
+        selectedIndex = values?.index ?? 0;
+      },
       async click(_options) {
         actions.push(['click', full]);
+        if (selector === SUJAIN_SEARCH_BUTTON) {
+          actions.push(['search-click', selectedIndex]);
+          searched = true;
+          if (afterSearch === 'dialog') {
+            // Site alert opens during the click; the runner listener must dismiss it.
+            emitPageDialog(searchDialogMessage);
+          } else if (afterSearch === 'login') {
+            url = 'https://www.sujain.co.kr/login';
+          }
+          return;
+        }
         if (loginControlCount(selector) === 0) return;
         actions.push(['login-control-activated', full]);
         if (afterClick === 'navigate') {
@@ -136,9 +207,20 @@ function officialLoginPage({
     async goto(target) {
       actions.push(['goto', target]);
       url = target;
+      if (paymentLoadDialogMessage && String(target).includes('/mypage/payment')) {
+        emitPageDialog(paymentLoadDialogMessage);
+      }
     },
     url: () => url,
     locator,
+    on(event, listener) {
+      actions.push(['on', event]);
+      if (event === 'dialog') dialogListeners.add(listener);
+    },
+    off(event, listener) {
+      actions.push(['off', event]);
+      if (event === 'dialog') dialogListeners.delete(listener);
+    },
     async waitForLoadState(state, _options) {
       actions.push(['waitForLoadState', state]);
     },
@@ -183,15 +265,32 @@ function officialLoginPage({
       });
     },
     async evaluate(fn, sourcePage) {
-      actions.push(['evaluate', sourcePage]);
-      if (sourcePage === 'payment') return paymentRows;
-      if (sourcePage === 'unit-items') return unitItemsRows;
-      return [];
+      actions.push(['evaluate', sourcePage, searched]);
+      if (paymentDoc) return fn(sourcePage, paymentDoc({ searched }));
+      if (sourcePage !== 'payment') return [];
+      return searched ? paymentRows : prePaymentRows;
     },
   };
 
-  return { actions, page, filled };
+  return { actions, page, filled, dialogListeners };
 }
+
+async function withTableWait(ms, run) {
+  const previous = process.env.SUJAIN_TABLE_WAIT_MS;
+  process.env.SUJAIN_TABLE_WAIT_MS = String(ms);
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) delete process.env.SUJAIN_TABLE_WAIT_MS;
+    else process.env.SUJAIN_TABLE_WAIT_MS = previous;
+  }
+}
+
+const destroyedError = () => {
+  const err = new Error('Execution context was destroyed, most likely because of a navigation.');
+  err.name = 'Error';
+  return err;
+};
 
 const job = () => ({
   provider: 'sujain',
@@ -297,6 +396,7 @@ test('long synthetic cell and header strings are truncated to API schema caps', 
       cells: [longCell, '1,000'],
       headers: [longHeader, '금액'],
       sourcePage: 'payment',
+      section: 'payment',
     }],
   });
   const result = await readSujainPages(f.page, job());
@@ -311,15 +411,11 @@ test('long synthetic cell and header strings are truncated to API schema caps', 
 test('records scrape_payment stage before table evaluate without leaking page text', async () => {
   const diagnostics = { stage: 'context' };
   const f = officialLoginPage({ afterClick: 'navigate' });
-  const originalEvaluate = f.page.evaluate.bind(f.page);
-  f.page.evaluate = async (fn, sourcePage) => {
+  f.page.evaluate = async () => {
     assert.equal(diagnostics.stage, 'scrape_payment');
-    if (sourcePage === 'payment') {
-      const err = new Error('Execution context was destroyed synthetic page text');
-      err.name = 'Error';
-      throw err;
-    }
-    return originalEvaluate(fn, sourcePage);
+    const err = new Error('Execution context was destroyed synthetic page text');
+    err.name = 'Error';
+    throw err;
   };
   await assert.rejects(
     () => readSujainPages(f.page, job(), diagnostics),
@@ -340,79 +436,232 @@ test('records login stage while fillLogin runs', async () => {
   assert.equal(diagnostics.stage, 'login');
 });
 
-test('unit-items evaluate survives one destroyed execution context after goto', async () => {
-  // Production after #30: scrape_unit_items + errorName=Error while payment rows already
-  // reached evaluate. Playwright throws a plain Error when a follow-up navigation
-  // destroys the document mid-evaluate; retry after the next document settles.
-  const unitRows = [{
-    cells: ['synthetic-option', '500'],
-    headers: ['품목', '금액'],
-    sourcePage: 'unit-items',
-  }];
-  const f = officialLoginPage({ afterClick: 'navigate', unitItemsRows: unitRows });
-  let unitEvalAttempts = 0;
+test('selects the first real unit, clicks 조회, then reads the three st1 tables from the fake page', async () => {
+  const optionRows = [
+    ['계약금', '2024-01-10', '100,000', '2024-01-10', '100,000', '0', '0', '100,000'],
+    ['잔금', '2027-03-31', '900,000', '', '0', '0', '0', '0'],
+    ['계', '', '1,000,000', '', '100,000', '0', '0', '100,000'],
+  ];
+  const f = officialLoginPage({
+    afterClick: 'navigate',
+    paymentDoc: ({ searched }) => sujainPaymentDocument({
+      searched,
+      paymentRows: [
+        ['계약금1차', '2024-01-10', '1,000,000', '2024-01-10', '1,000,000', '0', '0', '1,000,000'],
+        ['중도금1차', '2024-06-10', '3,000,000', '2024-06-10', '3,000,000', '0', '0', '3,000,000'],
+        ['잔금', '2027-03-31', '9,000,000', '', '0', '0', '0', '0'],
+        ['계', '', '13,000,000', '', '4,000,000', '0', '0', '4,000,000'],
+      ],
+      options: [
+        { itemLabel: '합성 발코니 확장, [합성벽체]-침실2.3 분리형', rows: optionRows },
+        { itemLabel: '[합성에어컨]-거실,침실1(2개소)-합성전자', rows: optionRows },
+      ],
+    }),
+  });
+  const diagnostics = { stage: 'context', layout: {} };
+  const result = await readSujainPages(f.page, job(), diagnostics);
+
+  const order = f.actions
+    .filter((row) => ['goto', 'waitFor', 'selectOption', 'search-click', 'evaluate'].includes(row[0]))
+    .map((row) => row[0]);
+  assert.deepEqual(order.slice(0, 6), ['goto', 'goto', 'waitFor', 'selectOption', 'search-click', 'evaluate']);
+  // 자리표시(index 0)는 건너뛰고 첫 세대(index 1)를 고른다.
+  assert.deepEqual(f.actions.find((row) => row[0] === 'selectOption'), ['selectOption', SUJAIN_UNIT_SELECT, 1, true]);
+  // 조회 뒤에만 표를 읽는다.
+  assert.equal(f.actions.some((row) => row[0] === 'evaluate' && row[2] === false), false);
+  // 세대 내 설치 품목 화면은 가지 않는다.
+  assert.equal(f.actions.some((row) => row[0] === 'goto' && String(row[1]).includes('unit-items')), false);
+  assert.equal(diagnostics.stage, 'scrape_payment');
+
+  const payment = result.rows.filter((row) => row.section === 'payment');
+  const option = result.rows.filter((row) => row.section === 'option');
+  assert.deepEqual(payment.map((row) => row.cells[0]), ['계약금1차', '중도금1차', '잔금', '계']);
+  assert.equal(option.length, 6);
+  assert.deepEqual(
+    [...new Set(option.map((row) => row.itemLabel))],
+    ['합성 발코니 확장, [합성벽체]-침실2.3 분리형', '[합성에어컨]-거실,침실1(2개소)-합성전자'],
+  );
+  for (const row of result.rows) {
+    assert.equal(row.cells.length, 8);
+    assert.deepEqual(row.headers, SUJAIN_PAYMENT_HEADERS);
+    assert.equal(row.sourcePage, 'payment');
+  }
+  assert.equal(JSON.stringify(result).includes('합성 회원'), false);
+
+  const layout = diagnostics.layout.payment;
+  assert.equal(layout.searched, 1);
+  assert.equal(layout.units, 1);
+  assert.equal(layout.tableCount, 4);
+  assert.deepEqual(layout.tableHeaders, [SUJAIN_PAYMENT_HEADERS, SUJAIN_PAYMENT_HEADERS, SUJAIN_PAYMENT_HEADERS]);
+  const fragment = formatLayoutWarnFragment(diagnostics.layout);
+  assert.match(fragment, /^layout=payment:t=4;searched=1;units=1;h=/);
+  for (const leak of ['synthetic-unit-1', '합성단지', '1,000,000', '합성 발코니', '계약금1차']) {
+    assert.equal(JSON.stringify(layout).includes(leak), false, `layout leaked ${leak}`);
+    assert.equal(fragment.includes(leak), false, `fragment leaked ${leak}`);
+  }
+  // dialog 리스너는 끝나면 뗀다.
+  assert.equal(f.dialogListeners.size, 0);
+});
+
+test('several registered units: picks the first and keeps only the count in diagnostics', async () => {
+  const f = officialLoginPage({ afterClick: 'navigate', units: 3 });
+  const diagnostics = { stage: 'context', layout: {} };
+  const result = await readSujainPages(f.page, job(), diagnostics);
+  assert.ok(result.rows.length >= 1);
+  assert.deepEqual(f.actions.find((row) => row[0] === 'selectOption'), ['selectOption', SUJAIN_UNIT_SELECT, 1, true]);
+  assert.equal(f.actions.filter((row) => row[0] === 'search-click').length, 1);
+  assert.equal(diagnostics.layout.payment.units, 3);
+  assert.equal(JSON.stringify(diagnostics).includes('synthetic-unit'), false);
+});
+
+test('no registered unit (placeholder option only) is unit_not_registered without clicking 조회', async () => {
+  const f = officialLoginPage({ afterClick: 'navigate', units: 0 });
+  const diagnostics = { stage: 'context', layout: {} };
+  await withTableWait(50, () => assert.rejects(
+    () => readSujainPages(f.page, job(), diagnostics),
+    (error) => error instanceof SujainReadError && error.code === 'unit_not_registered',
+  ));
+  assert.equal(f.actions.some((row) => row[0] === 'selectOption'), false);
+  assert.equal(f.actions.some((row) => row[0] === 'search-click'), false);
+  assert.equal(diagnostics.stage, 'scrape_payment');
+  assert.equal(diagnostics.layout.payment.units, 0);
+  assert.equal(diagnostics.layout.payment.searched, 0);
+});
+
+test('missing unit select is unsupported_layout with a value-free layout snapshot', async () => {
+  const f = officialLoginPage({ afterClick: 'navigate', hasUnitSelect: false });
+  const diagnostics = { stage: 'context', layout: {} };
+  await withTableWait(50, () => assert.rejects(
+    () => readSujainPages(f.page, job(), diagnostics),
+    (error) => error instanceof SujainReadError && error.code === 'unsupported_layout',
+  ));
+  assert.equal(f.actions.some((row) => row[0] === 'search-click'), false);
+  assert.equal(diagnostics.layout.payment.searched, 0);
+  assert.equal(diagnostics.layout.payment.units, 0);
+  assert.equal(diagnostics.layout.payment.pagePath, 'https://www.sujain.co.kr/mypage/payment');
+});
+
+test('missing 조회 button is unsupported_layout after choosing the unit', async () => {
+  const f = officialLoginPage({ afterClick: 'navigate', hasSearchButton: false });
+  const diagnostics = { stage: 'context', layout: {} };
+  await assert.rejects(
+    () => readSujainPages(f.page, job(), diagnostics),
+    (error) => error instanceof SujainReadError && error.code === 'unsupported_layout',
+  );
+  assert.equal(f.actions.some((row) => row[0] === 'selectOption'), true);
+  assert.equal(f.actions.some((row) => row[0] === 'search-click'), false);
+  assert.equal(diagnostics.layout.payment.searched, 0);
+  assert.equal(diagnostics.layout.payment.units, 1);
+});
+
+test('site alert after 조회 is dismissed, never recorded, and maps to unsupported_layout', async () => {
+  const f = officialLoginPage({
+    afterClick: 'navigate',
+    afterSearch: 'dialog',
+    searchDialogMessage: '합성 조회 실패 알림 SYNTHETIC_DIALOG_TEXT',
+  });
+  const diagnostics = { stage: 'context', layout: {} };
+  await assert.rejects(
+    () => readSujainPages(f.page, job(), diagnostics),
+    (error) => error instanceof SujainReadError && error.code === 'unsupported_layout',
+  );
+  assert.equal(f.actions.some((row) => row[0] === 'page-dialog-dismiss'), true);
+  assert.equal(diagnostics.layout.payment.searched, 1);
+  assert.equal(JSON.stringify(diagnostics).includes('SYNTHETIC_DIALOG_TEXT'), false);
+  assert.equal(formatLayoutWarnFragment(diagnostics.layout).includes('SYNTHETIC_DIALOG_TEXT'), false);
+  assert.equal(f.dialogListeners.size, 0);
+});
+
+test('login/session alert after 조회 maps to authentication_required', async () => {
+  const f = officialLoginPage({
+    afterClick: 'navigate',
+    afterSearch: 'dialog',
+    searchDialogMessage: '로그인 후 이용해 주세요.',
+  });
+  await assert.rejects(
+    () => readSujainPages(f.page, job()),
+    (error) => error instanceof SujainReadError && error.code === 'authentication_required',
+  );
+  assert.equal(f.actions.some((row) => row[0] === 'page-dialog-dismiss'), true);
+});
+
+test('a notice alert while the payment page opens is dismissed and does not fail the read', async () => {
+  const f = officialLoginPage({
+    afterClick: 'navigate',
+    paymentLoadDialogMessage: '합성 안내 알림 SYNTHETIC_NOTICE',
+  });
+  const diagnostics = { stage: 'context', layout: {} };
+  const result = await readSujainPages(f.page, job(), diagnostics);
+  assert.ok(result.rows.length >= 1);
+  assert.equal(f.actions.some((row) => row[0] === 'page-dialog-dismiss'), true);
+  // 리스너는 결제 화면으로 가기 전에 붙고(goto 보다 먼저) 끝나면 뗀다.
+  const onIndex = f.actions.findIndex((row) => row[0] === 'on' && row[1] === 'dialog');
+  const paymentGotoIndex = f.actions.findIndex((row) => row[0] === 'goto' && String(row[1]).includes('/mypage/payment'));
+  assert.ok(onIndex >= 0 && onIndex < paymentGotoIndex);
+  assert.equal(f.dialogListeners.size, 0);
+  assert.equal(JSON.stringify(diagnostics).includes('SYNTHETIC_NOTICE'), false);
+});
+
+test('조회 that bounces to login is authentication_required', async () => {
+  const f = officialLoginPage({ afterClick: 'navigate', afterSearch: 'login' });
+  await assert.rejects(
+    () => readSujainPages(f.page, job()),
+    (error) => error instanceof SujainReadError && error.code === 'authentication_required',
+  );
+});
+
+test('countUnitOptions skips the empty placeholder and disabled options and returns no option text', () => {
+  const result = countUnitOptions({
+    options: [
+      { value: '', text: '선택' },
+      { value: 'synthetic-a', disabled: true, text: '합성단지 A' },
+      { value: ' ', text: '공백' },
+      { value: 'synthetic-b', text: '합성단지 B' },
+      { value: 'synthetic-c', text: '합성단지 C' },
+    ],
+  });
+  assert.deepEqual(result, { count: 2, firstIndex: 3 });
+  assert.deepEqual(countUnitOptions({ options: [{ value: '' }] }), { count: 0, firstIndex: -1 });
+  assert.deepEqual(countUnitOptions(null), { count: 0, firstIndex: -1 });
+});
+
+test('payment evaluate survives one destroyed execution context after 조회', async () => {
+  const f = officialLoginPage({ afterClick: 'navigate' });
+  let evalAttempts = 0;
   const originalEvaluate = f.page.evaluate.bind(f.page);
   f.page.evaluate = async (fn, sourcePage) => {
-    if (sourcePage === 'unit-items') {
-      unitEvalAttempts += 1;
-      if (unitEvalAttempts === 1) {
-        const err = new Error('Execution context was destroyed, most likely because of a navigation.');
-        err.name = 'Error';
-        throw err;
-      }
-    }
+    evalAttempts += 1;
+    if (evalAttempts === 1) throw destroyedError();
     return originalEvaluate(fn, sourcePage);
   };
 
   const diagnostics = { stage: 'context' };
   const result = await readSujainPages(f.page, job(), diagnostics);
-  assert.equal(unitEvalAttempts, 2);
-  assert.equal(diagnostics.stage, 'scrape_unit_items');
-  assert.ok(result.rows.some((row) => row.sourcePage === 'payment'));
-  assert.ok(result.rows.some((row) => row.sourcePage === 'unit-items' && row.cells[0] === 'synthetic-option'));
-  assert.equal(
-    f.actions.some((row) => row[0] === 'waitForLoadState'),
-    true,
-  );
-  assert.equal(
-    f.actions.some((row) => row[0] === 'goto' && String(row[1]).includes('unit-items')),
-    true,
-  );
+  assert.equal(evalAttempts, 2);
+  assert.equal(diagnostics.stage, 'scrape_payment');
+  assert.ok(result.rows.some((row) => row.cells[0] === '계약금1차'));
+  assert.equal(f.actions.some((row) => row[0] === 'waitForLoadState' && row[1] === 'domcontentloaded'), true);
 });
 
-test('unit-items destroyed-context retry that lands on login is authentication_required', async () => {
+test('destroyed-context retry that lands on login is authentication_required', async () => {
   const f = officialLoginPage({ afterClick: 'navigate' });
-  let unitEvalAttempts = 0;
-  f.page.evaluate = async (_fn, sourcePage) => {
-    if (sourcePage !== 'unit-items') {
-      return [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }];
-    }
-    unitEvalAttempts += 1;
-    const err = new Error('Execution context was destroyed, most likely because of a navigation.');
-    err.name = 'Error';
+  let evalAttempts = 0;
+  f.page.evaluate = async () => {
+    evalAttempts += 1;
     // Simulate the follow-up navigation bouncing the session back to login.
     f.page.url = () => 'https://www.sujain.co.kr/login';
-    throw err;
+    throw destroyedError();
   };
-  // After the destroyed-context wait, url() already reports login.
-  const originalWait = f.page.waitForLoadState.bind(f.page);
-  f.page.waitForLoadState = async (state, options) => {
-    await originalWait(state, options);
-  };
-
   await assert.rejects(
     () => readSujainPages(f.page, job()),
     (error) => error instanceof SujainReadError && error.code === 'authentication_required',
   );
-  assert.equal(unitEvalAttempts, 1);
+  assert.equal(evalAttempts, 1);
 });
 
-test('non-navigation evaluate Error on unit-items still propagates as runner_exception shape', async () => {
+test('non-navigation evaluate Error still propagates as runner_exception shape', async () => {
   const f = officialLoginPage({ afterClick: 'navigate' });
-  f.page.evaluate = async (_fn, sourcePage) => {
-    if (sourcePage === 'payment') {
-      return [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }];
-    }
+  f.page.evaluate = async () => {
     const err = new Error('synthetic unrelated evaluate failure');
     err.name = 'Error';
     throw err;
@@ -425,17 +674,12 @@ test('non-navigation evaluate Error on unit-items still propagates as runner_exc
   );
 });
 
-test('unit-items destroyed-context retry is only once — second destroy still fails', async () => {
+test('destroyed-context retry is only once — second destroy still fails', async () => {
   const f = officialLoginPage({ afterClick: 'navigate' });
-  let unitEvalAttempts = 0;
-  f.page.evaluate = async (_fn, sourcePage) => {
-    if (sourcePage === 'payment') {
-      return [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }];
-    }
-    unitEvalAttempts += 1;
-    const err = new Error('Execution context was destroyed, most likely because of a navigation.');
-    err.name = 'Error';
-    throw err;
+  let evalAttempts = 0;
+  f.page.evaluate = async () => {
+    evalAttempts += 1;
+    throw destroyedError();
   };
   await assert.rejects(
     () => readSujainPages(f.page, job()),
@@ -443,108 +687,62 @@ test('unit-items destroyed-context retry is only once — second destroy still f
       && error.name === 'Error'
       && /Execution context was destroyed/u.test(String(error.message)),
   );
-  assert.equal(unitEvalAttempts, 2);
+  assert.equal(evalAttempts, 2);
 });
 
-test('waits when first evaluate is empty then returns rows after AJAX-like fill', async () => {
-  // After #31, load + one evaluate can succeed with 0 data rows while the table is
-  // still empty; production then stored last_preview.items=[] and looked like
-  // «바꿀 항목이 없어요.» Re-evaluate until a non-empty data cell appears.
-  const filledPayment = [{
-    cells: ['계약금', '1,000'],
-    headers: ['구분', '금액'],
-    sourcePage: 'payment',
-  }];
-  const filledUnit = [{
-    cells: ['synthetic-option', '500'],
-    headers: ['품목', '금액'],
-    sourcePage: 'unit-items',
-  }];
-  const f = officialLoginPage({
-    afterClick: 'navigate',
-    paymentRows: [],
-    unitItemsRows: [],
-  });
-  let paymentEvals = 0;
-  f.page.evaluate = async (_fn, sourcePage) => {
-    if (sourcePage === 'payment') {
-      paymentEvals += 1;
-      return paymentEvals >= 3 ? filledPayment : [];
-    }
-    return filledUnit;
+test('waits when the first evaluate after 조회 is empty, then returns rows once they paint', async () => {
+  const f = officialLoginPage({ afterClick: 'navigate' });
+  let evals = 0;
+  f.page.evaluate = async () => {
+    evals += 1;
+    return evals >= 3 ? [PAYMENT_ROW] : [];
   };
-
-  const previous = process.env.SUJAIN_TABLE_WAIT_MS;
-  process.env.SUJAIN_TABLE_WAIT_MS = '2000';
-  let result;
-  try {
-    result = await readSujainPages(f.page, job());
-  } finally {
-    if (previous === undefined) delete process.env.SUJAIN_TABLE_WAIT_MS;
-    else process.env.SUJAIN_TABLE_WAIT_MS = previous;
-  }
-  assert.ok(paymentEvals >= 3);
-  assert.ok(result.rows.some((row) => row.cells[0] === '계약금'));
-  assert.equal(
-    f.actions.some((row) => row[0] === 'waitForTimeout' || row[0] === 'waitForLoadState'),
-    true,
-  );
+  const result = await withTableWait(2000, () => readSujainPages(f.page, job()));
+  assert.ok(evals >= 3);
+  assert.ok(result.rows.some((row) => row.cells[0] === '계약금1차'));
+  assert.equal(f.actions.some((row) => row[0] === 'waitForTimeout'), true);
 });
 
 test('destroyed-context then empty then data still yields rows', async () => {
-  const unitRows = [{
-    cells: ['synthetic-option', '500'],
-    headers: ['품목', '금액'],
-    sourcePage: 'unit-items',
-  }];
-  const f = officialLoginPage({
-    afterClick: 'navigate',
-    paymentRows: [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }],
-    unitItemsRows: [],
-  });
-  let unitEvalAttempts = 0;
-  f.page.evaluate = async (_fn, sourcePage) => {
-    if (sourcePage === 'payment') {
-      return [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }];
-    }
-    unitEvalAttempts += 1;
-    if (unitEvalAttempts === 1) {
-      const err = new Error('Execution context was destroyed, most likely because of a navigation.');
-      err.name = 'Error';
-      throw err;
-    }
-    // Post-destroy document is briefly empty (AJAX not yet painted).
-    if (unitEvalAttempts === 2) return [];
-    return unitRows;
+  const f = officialLoginPage({ afterClick: 'navigate' });
+  let evals = 0;
+  f.page.evaluate = async () => {
+    evals += 1;
+    if (evals === 1) throw destroyedError();
+    // Post-destroy document is briefly empty (not yet painted).
+    if (evals === 2) return [];
+    return [PAYMENT_ROW];
   };
-
   const result = await readSujainPages(f.page, job());
-  assert.ok(unitEvalAttempts >= 3);
-  assert.ok(result.rows.some((row) => row.sourcePage === 'unit-items' && row.cells[0] === 'synthetic-option'));
+  assert.ok(evals >= 3);
+  assert.ok(result.rows.some((row) => row.cells[0] === '계약금1차'));
 });
 
-test('both pages still empty after waiting is unsupported_layout, not silent empty success', async () => {
-  const f = officialLoginPage({
-    afterClick: 'navigate',
-    paymentRows: [],
-    unitItemsRows: [],
-  });
-  // Force short wait budget via env so the test does not sleep the full production timeout.
-  const previous = process.env.SUJAIN_TABLE_WAIT_MS;
-  process.env.SUJAIN_TABLE_WAIT_MS = '50';
-  try {
-    await assert.rejects(
-      () => readSujainPages(f.page, job()),
-      (error) => error instanceof SujainReadError && error.code === 'unsupported_layout',
-    );
-  } finally {
-    if (previous === undefined) delete process.env.SUJAIN_TABLE_WAIT_MS;
-    else process.env.SUJAIN_TABLE_WAIT_MS = previous;
-  }
-  assert.equal(
-    f.actions.some((row) => row[0] === 'goto' && String(row[1]).includes('unit-items')),
-    true,
-  );
+test('still empty after 조회 and waiting is unsupported_layout, not silent empty success', async () => {
+  const f = officialLoginPage({ afterClick: 'navigate', paymentRows: [] });
+  const diagnostics = { stage: 'context', layout: {} };
+  await withTableWait(50, () => assert.rejects(
+    () => readSujainPages(f.page, job(), diagnostics),
+    (error) => error instanceof SujainReadError && error.code === 'unsupported_layout',
+  ));
+  assert.equal(f.actions.some((row) => row[0] === 'search-click'), true);
+  assert.equal(diagnostics.layout.payment.searched, 1);
+  assert.equal(f.actions.some((row) => row[0] === 'goto' && String(row[1]).includes('unit-items')), false);
+});
+
+test('normalizeCapturedRows keeps section/itemLabel, caps itemLabel at 200, and drops itemLabel on payment rows', () => {
+  const rows = normalizeCapturedRows([
+    { cells: ['계'], headers: ['회차'], sourcePage: 'unit-items', section: 'payment', itemLabel: '무시' },
+    { cells: ['계약금'], headers: ['회차'], section: 'option', itemLabel: `  합성  품목 ${'x'.repeat(250)}` },
+    { cells: ['잔금'], headers: ['회차'], section: 'nope' },
+    { cells: ['잔금'], headers: ['회차'], section: 'option', itemLabel: 42 },
+  ]);
+  assert.deepEqual(rows[0], { cells: ['계'], headers: ['회차'], sourcePage: 'payment', section: 'payment' });
+  assert.equal(rows[1].section, 'option');
+  assert.equal(rows[1].itemLabel.length, 200);
+  assert.equal(rows[1].itemLabel.startsWith('합성 품목 x'), true);
+  assert.equal(rows[2].section, 'payment');
+  assert.equal(Object.hasOwn(rows[3], 'itemLabel'), false);
 });
 
 test('member-profile/contact captured rows are not eligible payment or option tables', () => {
@@ -552,15 +750,16 @@ test('member-profile/contact captured rows are not eligible payment or option ta
     isEligibleSujainCapturedRow({
       headers: ['항목', '내용'],
       cells: ['이름', '합성 회원'],
-      sourcePage: 'unit-items',
+      sourcePage: 'payment',
     }),
     false,
   );
   assert.equal(
     isEligibleSujainCapturedRow({
-      headers: ['품목', '금액'],
-      cells: ['합성 항목 A', '500,000'],
-      sourcePage: 'unit-items',
+      headers: SUJAIN_PAYMENT_HEADERS,
+      cells: ['계약금', '', '500,000'],
+      sourcePage: 'payment',
+      section: 'option',
     }),
     true,
   );
@@ -574,67 +773,40 @@ test('member-profile/contact captured rows are not eligible payment or option ta
   );
 });
 
-test('contact-only tables on both pages are unsupported_layout, not scrape success', async () => {
+test('contact-only tables after 조회 are unsupported_layout, not scrape success', async () => {
   const contactPayment = [
     { cells: ['이름', '합성 회원'], headers: ['항목', '내용'], sourcePage: 'payment' },
     { cells: ['휴대전화', '000-0000-0000'], headers: ['항목', '내용'], sourcePage: 'payment' },
   ];
-  const contactUnit = [
-    { cells: ['주소', '합성 주소'], headers: ['항목', '내용'], sourcePage: 'unit-items' },
-    { cells: ['이메일', 'synthetic@example.com'], headers: ['항목', '내용'], sourcePage: 'unit-items' },
-  ];
-  const f = officialLoginPage({
-    afterClick: 'navigate',
-    paymentRows: contactPayment,
-    unitItemsRows: contactUnit,
-  });
-  const previous = process.env.SUJAIN_TABLE_WAIT_MS;
-  process.env.SUJAIN_TABLE_WAIT_MS = '50';
-  try {
-    await assert.rejects(
-      () => readSujainPages(f.page, job()),
-      (error) => error instanceof SujainReadError && error.code === 'unsupported_layout',
-    );
-  } finally {
-    if (previous === undefined) delete process.env.SUJAIN_TABLE_WAIT_MS;
-    else process.env.SUJAIN_TABLE_WAIT_MS = previous;
-  }
+  const f = officialLoginPage({ afterClick: 'navigate', paymentRows: contactPayment });
+  await withTableWait(50, () => assert.rejects(
+    () => readSujainPages(f.page, job()),
+    (error) => error instanceof SujainReadError && error.code === 'unsupported_layout',
+  ));
 });
 
-test('unsupported_layout diagnostics include table counts and header texts only', async () => {
+test('unsupported_layout diagnostics include table counts, header texts, searched and units only', async () => {
   const contactPayment = [
     { cells: ['이름', '합성 회원'], headers: ['항목', '내용'], sourcePage: 'payment' },
     { cells: ['휴대전화', '000-0000-0000'], headers: ['항목', '내용'], sourcePage: 'payment' },
+    { cells: ['주소', '합성 주소'], headers: ['항목', '내용'], sourcePage: 'payment' },
+    { cells: ['이메일', 'synthetic@example.com'], headers: ['항목', '내용'], sourcePage: 'payment' },
   ];
-  const contactUnit = [
-    { cells: ['주소', '합성 주소'], headers: ['항목', '내용'], sourcePage: 'unit-items' },
-    { cells: ['이메일', 'synthetic@example.com'], headers: ['항목', '내용'], sourcePage: 'unit-items' },
-  ];
-  const f = officialLoginPage({
-    afterClick: 'navigate',
-    paymentRows: contactPayment,
-    unitItemsRows: contactUnit,
-  });
+  const f = officialLoginPage({ afterClick: 'navigate', paymentRows: contactPayment });
   const diagnostics = { stage: 'context', layout: {} };
-  const previous = process.env.SUJAIN_TABLE_WAIT_MS;
-  process.env.SUJAIN_TABLE_WAIT_MS = '50';
-  try {
-    await assert.rejects(
-      () => readSujainPages(f.page, job(), diagnostics),
-      (error) => error instanceof SujainReadError && error.code === 'unsupported_layout',
-    );
-  } finally {
-    if (previous === undefined) delete process.env.SUJAIN_TABLE_WAIT_MS;
-    else process.env.SUJAIN_TABLE_WAIT_MS = previous;
-  }
+  await withTableWait(50, () => assert.rejects(
+    () => readSujainPages(f.page, job(), diagnostics),
+    (error) => error instanceof SujainReadError && error.code === 'unsupported_layout',
+  ));
 
-  assert.equal(diagnostics.stage, 'scrape_unit_items');
+  assert.equal(diagnostics.stage, 'scrape_payment');
+  assert.deepEqual(Object.keys(diagnostics.layout), ['payment']);
   assert.equal(diagnostics.layout.payment.tableCount, 1);
   assert.deepEqual(diagnostics.layout.payment.tableHeaders, [['항목', '내용']]);
-  assert.equal(diagnostics.layout.payment.rawRowCount, 2);
+  assert.equal(diagnostics.layout.payment.rawRowCount, 4);
   assert.equal(diagnostics.layout.payment.eligibleRowCount, 0);
   assert.deepEqual(diagnostics.layout.payment.tables, [
-    { rawRowCount: 2, preSkipRowCount: 0, formControlCount: 0 },
+    { rawRowCount: 4, preSkipRowCount: 0, formControlCount: 0 },
   ]);
   assert.equal(diagnostics.layout.payment.outsideTableFormControlCount, 0);
   assert.deepEqual(diagnostics.layout.payment.outsideTableFormControls, {
@@ -646,17 +818,8 @@ test('unsupported_layout diagnostics include table counts and header texts only'
   });
   assert.equal(diagnostics.layout.payment.iframeCount, 0);
   assert.equal(diagnostics.layout.payment.pagePath, 'https://www.sujain.co.kr/mypage/payment');
-  assert.equal(diagnostics.layout['unit-items'].tableCount, 1);
-  assert.deepEqual(diagnostics.layout['unit-items'].tableHeaders, [['항목', '내용']]);
-  assert.equal(diagnostics.layout['unit-items'].rawRowCount, 2);
-  assert.equal(diagnostics.layout['unit-items'].eligibleRowCount, 0);
-  assert.deepEqual(diagnostics.layout['unit-items'].tables, [
-    { rawRowCount: 2, preSkipRowCount: 0, formControlCount: 0 },
-  ]);
-  assert.equal(
-    diagnostics.layout['unit-items'].pagePath,
-    'https://www.sujain.co.kr/mypage/unit-items',
-  );
+  assert.equal(diagnostics.layout.payment.searched, 1);
+  assert.equal(diagnostics.layout.payment.units, 1);
 
   const serialized = JSON.stringify(diagnostics.layout);
   const warnFragment = formatLayoutWarnFragment(diagnostics.layout);
@@ -669,21 +832,17 @@ test('unsupported_layout diagnostics include table counts and header texts only'
     '휴대전화',
     '주소',
     '이메일',
+    'synthetic-unit',
   ]) {
     assert.equal(serialized.includes(leak), false, `layout JSON leaked ${leak}`);
     assert.equal(warnFragment.includes(leak), false, `warn fragment leaked ${leak}`);
   }
   assert.match(
     warnFragment,
-    /layout=payment:t=1;h=\[항목\|내용\];raw=2;eligible=0;tables=\[r=2,p=0,i=0\];out=0\[vi=0,vs=0,vt=0,h=0,o=0\];ifr=0;path=https:\/\/www\.sujain\.co\.kr\/mypage\/payment/,
-  );
-  assert.match(
-    warnFragment,
-    /unit-items:t=1;h=\[항목\|내용\];raw=2;eligible=0;tables=\[r=2,p=0,i=0\];out=0\[vi=0,vs=0,vt=0,h=0,o=0\];ifr=0;path=https:\/\/www\.sujain\.co\.kr\/mypage\/unit-items/,
+    /^layout=payment:t=1;searched=1;units=1;h=\[항목\|내용\];raw=4;eligible=0;tables=\[r=4,p=0,i=0\];out=0\[vi=0,vs=0,vt=0,h=0,o=0\];ifr=0;path=https:\/\/www\.sujain\.co\.kr\/mypage\/payment$/,
   );
   // Layout diagnostic object never carries a cells key.
   assert.equal(Object.hasOwn(diagnostics.layout.payment, 'cells'), false);
-  assert.equal(Object.hasOwn(diagnostics.layout['unit-items'], 'cells'), false);
 });
 
 test('layout diagnostic builder never copies cell values from a capture payload', () => {
@@ -705,8 +864,11 @@ test('layout diagnostic builder never copies cell values from a capture payload'
     iframeCount: 0,
     iframePaths: [],
     pagePath: 'https://www.sujain.co.kr/mypage/payment?tok=SECRET',
+    searched: 1,
+    units: 2,
     cells: ['합성 회원', '000-0000-0000', '500,000'],
     rows: [{ cells: ['합성 회원', '500,000'], headers: ['항목', '금액'] }],
+    unitValue: 'synthetic-unit-1',
   });
   assert.ok(diagnostic);
   assert.equal(diagnostic.tableCount, 1);
@@ -725,8 +887,12 @@ test('layout diagnostic builder never copies cell values from a capture payload'
     other: 0,
   });
   assert.equal(diagnostic.pagePath, 'https://www.sujain.co.kr/mypage/payment');
+  assert.equal(diagnostic.searched, 1);
+  assert.equal(diagnostic.units, 2);
   assert.equal(Object.hasOwn(diagnostic, 'cells'), false);
   assert.equal(Object.hasOwn(diagnostic, 'rows'), false);
+  assert.equal(Object.hasOwn(diagnostic, 'unitValue'), false);
+  assert.equal(JSON.stringify(diagnostic).includes('synthetic-unit'), false);
   const text = JSON.stringify(diagnostic);
   assert.equal(text.includes('합성 회원'), false);
   assert.equal(text.includes('000-0000-0000'), false);
@@ -831,9 +997,6 @@ test('input-backed payment rows from evaluate object are kept as eligible scrape
   const f = officialLoginPage({
     afterClick: 'navigate',
     paymentRows: paymentEvaluate,
-    unitItemsRows: [
-      { cells: ['합성 항목 A', '500'], headers: ['품목', '금액'], sourcePage: 'unit-items' },
-    ],
   });
   const diagnostics = { stage: 'context', layout: {} };
   const result = await readSujainPages(f.page, job(), diagnostics);
@@ -852,36 +1015,22 @@ test('input-backed payment rows from evaluate object are kept as eligible scrape
   assert.equal(warnFragment.includes('합성 회원'), false);
 });
 
-test('contact rows do not hide a later eligible option table during the wait', async () => {
-  const f = officialLoginPage({
-    afterClick: 'navigate',
-    paymentRows: [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }],
-    unitItemsRows: [],
-  });
-  let unitEvalAttempts = 0;
-  f.page.evaluate = async (_fn, sourcePage) => {
-    if (sourcePage === 'payment') {
-      return [{ cells: ['계약금', '1,000'], headers: ['구분', '금액'], sourcePage: 'payment' }];
-    }
-    unitEvalAttempts += 1;
-    if (unitEvalAttempts === 1) {
-      return [
-        { cells: ['이름', '합성 회원'], headers: ['항목', '내용'], sourcePage: 'unit-items' },
-      ];
+test('contact rows do not end the wait or hide a later eligible table', async () => {
+  const f = officialLoginPage({ afterClick: 'navigate' });
+  let evals = 0;
+  f.page.evaluate = async () => {
+    evals += 1;
+    if (evals === 1) {
+      return [{ cells: ['이름', '합성 회원'], headers: ['항목', '내용'], sourcePage: 'payment' }];
     }
     return [
-      { cells: ['이름', '합성 회원'], headers: ['항목', '내용'], sourcePage: 'unit-items' },
-      { cells: ['합성 항목 A', '500,000'], headers: ['품목', '금액'], sourcePage: 'unit-items' },
+      { cells: ['이름', '합성 회원'], headers: ['항목', '내용'], sourcePage: 'payment' },
+      PAYMENT_ROW,
     ];
   };
 
   const result = await readSujainPages(f.page, job());
-  assert.ok(unitEvalAttempts >= 2);
-  assert.equal(
-    result.rows.some((row) => row.sourcePage === 'unit-items' && row.cells[0] === '이름'),
-    false,
-  );
-  assert.ok(
-    result.rows.some((row) => row.sourcePage === 'unit-items' && row.cells[0] === '합성 항목 A'),
-  );
+  assert.ok(evals >= 2);
+  assert.equal(result.rows.some((row) => row.cells[0] === '이름'), false);
+  assert.ok(result.rows.some((row) => row.cells[0] === '계약금1차'));
 });

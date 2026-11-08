@@ -1,5 +1,11 @@
 /**
- * Browser-side table capture for sujain mypage scrape pages.
+ * Browser-side table capture for the sujain 분양대금조회 page (/mypage/payment).
+ *
+ * 확인된 화면(2026-11-08): 단지를 고르고 조회하면 보이는 table.st1 이 3개 나온다.
+ * - caption 「아파트 분양대금」: thead th 8칸(회차|약정일자|…|실납부금), tbody 는 데이터 줄
+ *   (첫 칸 th = 회차 이름 + td 7칸)과 칸 없는 빈 tr 이 번갈아 나온다.
+ * - caption 「별도 계약 품목」(옵션 계약마다 한 표): 바로 앞 div.ect_item 에 품목 이름 목록.
+ * 숨겨진 연락처 입력 표(table.basic_table)는 읽지 않는다.
  *
  * Self-contained so Playwright can serialize this function into page.evaluate
  * (no outer closures). Optional second arg `doc` is for Node unit tests only;
@@ -11,7 +17,7 @@
  */
 
 /**
- * @param {string} pageKind 'payment' | 'unit-items'
+ * @param {string} pageKind 'payment'
  * @param {Document} [doc] defaults to the page `document` inside evaluate
  * @returns {{
  *   tableCount: number,
@@ -27,8 +33,16 @@
  *   },
  *   iframeCount: number,
  *   iframePaths: string[],
- *   rows: Array<{ cells: string[], headers: string[], sourcePage: string }>,
+ *   rows: Array<{
+ *     cells: string[],
+ *     headers: string[],
+ *     sourcePage: string,
+ *     section: 'payment' | 'option',
+ *     itemLabel?: string,
+ *   }>,
  * }}
+ *
+ * tableCount 는 숨은 표까지 센 전체 수, tableHeaders·tables 는 보이는 표만이다.
  */
 export function captureSujainTables(pageKind, doc) {
   const emptyOutsideBreakdown = {
@@ -55,6 +69,7 @@ export function captureSujainTables(pageKind, doc) {
 
   const cellMax = 200;
   const headerMax = 100;
+  const itemLabelMax = 200;
   const pathMax = 200;
   const clipText = (value, max) => {
     const clipped = String(value ?? '').replace(/\s+/gu, ' ').trim();
@@ -179,6 +194,135 @@ export function captureSujainTables(pageKind, doc) {
   };
 
   /**
+   * The element itself is hidden (hidden prop/attr, display:none, visibility:hidden).
+   * Compares tokens only — never logs style text. Ancestors are not checked here.
+   */
+  const isHiddenSelf = (el) => {
+    if (!el || typeof el !== 'object') return false;
+    if (el.hidden === true) return true;
+    if (typeof el.getAttribute === 'function') {
+      try {
+        if (el.getAttribute('hidden') !== null) return true;
+      } catch {
+        // ignore
+      }
+    }
+    try {
+      if (typeof getComputedStyle === 'function') {
+        const style = getComputedStyle(el);
+        const display = String(style?.display ?? '').toLowerCase();
+        const visibility = String(style?.visibility ?? '').toLowerCase();
+        if (display === 'none' || visibility === 'hidden') return true;
+      } else if (el.style && typeof el.style === 'object') {
+        const display = String(el.style.display ?? '').toLowerCase();
+        const visibility = String(el.style.visibility ?? '').toLowerCase();
+        if (display === 'none' || visibility === 'hidden') return true;
+      }
+    } catch {
+      // ignore missing computed style in Node fixtures
+    }
+    return false;
+  };
+
+  /**
+   * 표가 화면에 안 보이면(자신 또는 조상이 숨김) 읽지 않는다. 연락처 입력 표는 숨은 층 안에 있어
+   * 표 자신의 display 만 보면 안 걸리므로 조상까지 본다. 브라우저면 checkVisibility 를 쓴다.
+   */
+  const isHiddenTable = (table) => {
+    if (typeof table?.checkVisibility === 'function') {
+      try {
+        return !table.checkVisibility({ checkVisibilityCSS: true });
+      } catch {
+        // fall through to the ancestor walk
+      }
+    }
+    let node = table;
+    for (let depth = 0; node && depth < 50; depth += 1) {
+      if (isHiddenSelf(node)) return true;
+      node = node.parentElement ?? null;
+    }
+    return false;
+  };
+
+  const hasClass = (el, name) => {
+    if (!el || typeof el !== 'object') return false;
+    if (el.classList && typeof el.classList.contains === 'function') {
+      try {
+        return el.classList.contains(name);
+      } catch {
+        // fall through to className
+      }
+    }
+    return String(el.className ?? '').split(/\s+/u).includes(name);
+  };
+
+  const tagOf = (el) => String(el?.tagName || '').toLowerCase();
+
+  const containsTable = (el) => {
+    if (tagOf(el) === 'table') return true;
+    if (!el || typeof el.querySelectorAll !== 'function') return false;
+    try {
+      return el.querySelectorAll('table').length > 0;
+    } catch {
+      return false;
+    }
+  };
+
+  /** caption(또는 표 앞 제목 div.h_tit_wrap) 글자로 구역을 정한다. 모르면 분양대금으로 둔다. */
+  const sectionFromTitle = (value) => {
+    const compact = String(value ?? '').replace(/\s+/gu, '');
+    if (compact.includes('별도계약')) return 'option';
+    if (compact.includes('분양대금')) return 'payment';
+    return null;
+  };
+
+  const sectionOf = (table) => {
+    let caption = null;
+    try {
+      caption = table.caption ?? null;
+    } catch {
+      caption = null;
+    }
+    const byCaption = sectionFromTitle(caption?.textContent);
+    if (byCaption) return byCaption;
+    let node = table.previousElementSibling ?? null;
+    for (let i = 0; node && i < 20; i += 1) {
+      if (hasClass(node, 'h_tit_wrap')) return sectionFromTitle(node.textContent) ?? 'payment';
+      node = node.previousElementSibling ?? null;
+    }
+    return 'payment';
+  };
+
+  /**
+   * 옵션 표 바로 앞 형제 div.ect_item 글자. 앞 표·제목을 만나면 멈춰 다른 표의 품목을 가져오지 않는다.
+   * 표가 감싸개 div 안 첫 요소면 감싸개의 앞 형제를 같은 규칙으로 본다.
+   */
+  const itemLabelOf = (table) => {
+    const walk = (start) => {
+      let node = start;
+      for (let i = 0; node && i < 5; i += 1) {
+        if (containsTable(node) || hasClass(node, 'h_tit_wrap')) return '';
+        if (hasClass(node, 'ect_item')) return clipText(node.textContent, itemLabelMax);
+        node = node.previousElementSibling ?? null;
+      }
+      return '';
+    };
+    const previous = table.previousElementSibling ?? null;
+    if (previous) return walk(previous);
+    return walk(table.parentElement?.previousElementSibling ?? null);
+  };
+
+  const rowsOf = (section) => {
+    if (!section || !section.rows) return [];
+    return Array.from(section.rows);
+  };
+
+  const cellsOf = (row) => {
+    if (!row || !row.cells) return [];
+    return Array.from(row.cells);
+  };
+
+  /**
    * Classify one outside-table control for diagnostics only.
    * Never reads value/name/id/placeholder/aria/class/option text — tag + type
    * token + visibility flags only. Password always lands in `other`.
@@ -207,31 +351,8 @@ export function captureSujainTables(pageKind, doc) {
       if (type === 'hidden') return 'hidden';
     }
 
-    // Attribute / property hidden — never emit attribute strings.
-    if (el.hidden === true) return 'hidden';
-    if (typeof el.getAttribute === 'function') {
-      try {
-        if (el.getAttribute('hidden') !== null) return 'hidden';
-      } catch {
-        // ignore
-      }
-    }
-
-    // CSS display/visibility:none when readable — compare tokens only, never log style text.
-    try {
-      if (typeof getComputedStyle === 'function') {
-        const style = getComputedStyle(el);
-        const display = String(style?.display ?? '').toLowerCase();
-        const visibility = String(style?.visibility ?? '').toLowerCase();
-        if (display === 'none' || visibility === 'hidden') return 'hidden';
-      } else if (el.style && typeof el.style === 'object') {
-        const display = String(el.style.display ?? '').toLowerCase();
-        const visibility = String(el.style.visibility ?? '').toLowerCase();
-        if (display === 'none' || visibility === 'hidden') return 'hidden';
-      }
-    } catch {
-      // ignore missing computed style in Node fixtures
-    }
+    // Attribute / property / CSS hidden — never emit attribute or style strings.
+    if (isHiddenSelf(el)) return 'hidden';
 
     if (tag === 'select') return 'visibleSelect';
     if (tag === 'textarea') return 'visibleTextarea';
@@ -244,30 +365,58 @@ export function captureSujainTables(pageKind, doc) {
   const tables = [];
   const out = [];
 
-  for (const table of allTables.slice(0, 20)) {
-    const headerCells = Array.from(table.querySelectorAll('thead th, tr:first-child th'))
+  for (const table of allTables) {
+    if (tables.length >= 20) break;
+    if (isHiddenTable(table)) continue;
+
+    // 머리는 thead th 에서만. 'tr:first-child th' 는 본문 첫 줄의 회차 이름(th)까지 머리로 넣었다.
+    let headerSource = [];
+    let headerRowInBody = null;
+    const thead = table.tHead ?? null;
+    if (thead) {
+      headerSource = rowsOf(thead).flatMap((row) => cellsOf(row)).filter((cell) => tagOf(cell) === 'th');
+    } else {
+      // thead 가 없을 때만, 첫 줄이 모두 th 이면 그 줄을 머리로 본다.
+      const firstRow = rowsOf(table)[0] ?? null;
+      const firstCells = cellsOf(firstRow);
+      if (firstCells.length > 0 && firstCells.every((cell) => tagOf(cell) === 'th')) {
+        headerSource = firstCells;
+        headerRowInBody = firstRow;
+      }
+    }
+    const headerCells = headerSource
       .map((cell) => clipText(cell.textContent, headerMax))
       .filter(Boolean);
     tableHeaders.push(headerCells.slice(0, 20));
 
+    const section = sectionOf(table);
+    const itemLabel = section === 'option' ? itemLabelOf(table) : '';
+
     const formControlCount = countFormControls(table);
     let tableRawRowCount = 0;
 
-    const bodyRows = Array.from(table.querySelectorAll('tbody tr, tr')).slice(0, 50);
+    // 본문 줄은 tbody tr 에서만(thead 줄이 데이터로 섞이지 않게).
+    const allBodyRows = Array.from(table.tBodies ?? [])
+      .flatMap((body) => rowsOf(body))
+      .filter((row) => row !== headerRowInBody);
     // Count every candidate tr before empty-cell / header-only skips.
-    const preSkipRowCount = bodyRows.length;
+    const preSkipRowCount = allBodyRows.length;
 
-    for (const row of bodyRows) {
-      const cells = Array.from(row.querySelectorAll('th, td')).map((cell) => readCellText(cell));
+    for (const row of allBodyRows.slice(0, 50)) {
+      // 데이터 줄 사이의 칸 없는 빈 tr(높이 0)과 모두 빈 줄은 건너뛴다.
+      const cells = cellsOf(row).map((cell) => readCellText(cell));
       if (cells.length === 0 || cells.every((cell) => !cell)) continue;
       // Skip header-only rows.
       if (headerCells.length && cells.join('|') === headerCells.join('|')) continue;
       tableRawRowCount += 1;
-      out.push({
+      const captured = {
         cells: cells.slice(0, 20),
         headers: headerCells.slice(0, 20),
         sourcePage: pageKind,
-      });
+        section,
+      };
+      if (itemLabel) captured.itemLabel = itemLabel;
+      out.push(captured);
     }
 
     tables.push({

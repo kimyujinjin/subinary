@@ -332,6 +332,72 @@ describe('sujain runner diagnostics without credentials', () => {
     expect(coerceSujainLayoutDiagnostics(layout)).toEqual(layout);
   });
 
+  it('formats searched/units tokens from the current runner and keeps the old line shape without them', () => {
+    const base = {
+      tableCount: 4,
+      tableHeaders: [['회차', '약정일자', '약정금액', '납부일자', '납부원금', '연체료', '할인료', '실납부금']],
+      rawRowCount: 0,
+      eligibleRowCount: 0,
+      tables: [{ rawRowCount: 0, preSkipRowCount: 0, formControlCount: 0 }],
+      outsideTableFormControlCount: 1,
+      outsideTableFormControls: {
+        visibleInput: 0,
+        visibleSelect: 1,
+        visibleTextarea: 0,
+        hidden: 0,
+        other: 0,
+      },
+      iframeCount: 0,
+      iframePaths: [],
+      pagePath: 'https://www.sujain.co.kr/mypage/payment',
+    };
+    expect(formatLayoutWarnFragment({ payment: { ...base, searched: 1, units: 2 } })).toBe(
+      'layout=payment:t=4;searched=1;units=2;h=[회차|약정일자|약정금액|납부일자|납부원금|연체료|할인료|실납부금];raw=0;eligible=0;tables=[r=0,p=0,i=0];out=1[vi=0,vs=1,vt=0,h=0,o=0];ifr=0;path=https://www.sujain.co.kr/mypage/payment',
+    );
+    expect(formatLayoutWarnFragment({ payment: base })).toBe(
+      'layout=payment:t=4;h=[회차|약정일자|약정금액|납부일자|납부원금|연체료|할인료|실납부금];raw=0;eligible=0;tables=[r=0,p=0,i=0];out=1[vi=0,vs=1,vt=0,h=0,o=0];ifr=0;path=https://www.sujain.co.kr/mypage/payment',
+    );
+    // 단지 코드 같은 값이 붙거나 범위를 벗어나면 진단 전체를 버린다(허용 목록).
+    expect(coerceSujainLayoutDiagnostics({ payment: { ...base, searched: 1, units: 1, unitCode: 'synthetic-unit-1' } })).toBeNull();
+    expect(coerceSujainLayoutDiagnostics({ payment: { ...base, searched: 2, units: 1 } })).toBeNull();
+    expect(coerceSujainLayoutDiagnostics({ payment: { ...base, searched: 1, units: 101 } })).toBeNull();
+  });
+
+  it('passes unit_not_registered through as a typed runner error', () => {
+    expect(classifySujainRunnerFailure(
+      0,
+      { error: 'unit_not_registered', stage: 'scrape_payment' },
+      '',
+    )).toEqual({
+      code: 'unit_not_registered',
+      reason: null,
+      errorName: null,
+      stage: 'scrape_payment',
+      layout: null,
+    });
+  });
+
+  it('coerces section/itemLabel rows and rejects unknown sections without inventing values', () => {
+    const longLabel = `합성 품목 ${'x'.repeat(250)}`;
+    expect(coerceSujainRunnerRows([
+      { cells: ['계약금1차', '1,000'], headers: ['회차', '약정금액'], sourcePage: 'payment', section: 'payment' },
+      { cells: ['잔금', '900'], headers: ['회차', '약정금액'], sourcePage: 'payment', section: 'option', itemLabel: longLabel },
+      { cells: ['잔금', '900'], headers: ['회차', '약정금액'], sourcePage: 'payment' },
+    ])).toEqual([
+      { cells: ['계약금1차', '1,000'], headers: ['회차', '약정금액'], sourcePage: 'payment', section: 'payment' },
+      {
+        cells: ['잔금', '900'],
+        headers: ['회차', '약정금액'],
+        sourcePage: 'payment',
+        section: 'option',
+        itemLabel: longLabel.slice(0, 200),
+      },
+      { cells: ['잔금', '900'], headers: ['회차', '약정금액'], sourcePage: 'payment' },
+    ]);
+    expect(coerceSujainRunnerRows([{ cells: ['잔금'], sourcePage: 'payment', section: 'unit' }])).toBeNull();
+    expect(coerceSujainRunnerRows([{ cells: ['잔금'], sourcePage: 'payment', section: 'option', itemLabel: 7 }])).toBeNull();
+  });
+
   it('truncates synthetic overlong cells without inventing values', () => {
     const longCell = `synthetic-cell-${'x'.repeat(250)}`;
     const coerced = coerceSujainRunnerRows([{
@@ -403,6 +469,74 @@ describe('sujain child transport with synthetic streams', () => {
     expect(result.rows[0]!.cells[0]!.length).toBe(200);
     expect(result.rows[0]!.headers![0]!.length).toBe(100);
     expect(result.rows[0]!.cells[1]).toBe('1,000');
+  });
+
+  it('accepts current runner rows with section and itemLabel', async () => {
+    const test = child();
+    const pending = client().read(credentials(), new AbortController().signal);
+    test.process.stdout.write(JSON.stringify({
+      ok: true,
+      capturedAt: '2026-11-08T02:00:00.000+00:00',
+      rows: [
+        {
+          cells: ['계약금1차', '2024-01-10', '1,000'],
+          headers: ['회차', '약정일자', '약정금액'],
+          sourcePage: 'payment',
+          section: 'payment',
+        },
+        {
+          cells: ['계약금', '2024-01-10', '100'],
+          headers: ['회차', '약정일자', '약정금액'],
+          sourcePage: 'payment',
+          section: 'option',
+          itemLabel: '합성 발코니 확장, [합성벽체]-침실2.3 분리형',
+        },
+      ],
+    }));
+    test.close(0);
+    const result = await pending;
+    expect(result.rows.map((row) => row.section)).toEqual(['payment', 'option']);
+    expect(result.rows[1]?.itemLabel).toBe('합성 발코니 확장, [합성벽체]-침실2.3 분리형');
+  });
+
+  it('rejects unit_not_registered with the typed code and no stderr detail', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const test = child();
+    const pending = client().read(credentials(), new AbortController().signal);
+    test.process.stdout.write(JSON.stringify({
+      ok: false,
+      error: 'unit_not_registered',
+      stage: 'scrape_payment',
+      layout: {
+        payment: {
+          tableCount: 2,
+          tableHeaders: [],
+          rawRowCount: 0,
+          eligibleRowCount: 0,
+          tables: [],
+          outsideTableFormControlCount: 1,
+          outsideTableFormControls: {
+            visibleInput: 0,
+            visibleSelect: 1,
+            visibleTextarea: 0,
+            hidden: 0,
+            other: 0,
+          },
+          iframeCount: 0,
+          iframePaths: [],
+          pagePath: 'https://www.sujain.co.kr/mypage/payment',
+          searched: 0,
+          units: 0,
+        },
+      },
+    }));
+    test.close(0);
+    await expect(pending).rejects.toMatchObject({ code: 'unit_not_registered', reason: null });
+    const joined = warn.mock.calls.flat().join('\n');
+    expect(joined).toContain('code=unit_not_registered');
+    expect(joined).toContain('payment:t=2;searched=0;units=0;h=[]');
+    expect(joined).not.toContain('Synthetic!123');
+    warn.mockRestore();
   });
 
   it('marks oversized stdout as operation_unknown with response_too_large reason', async () => {

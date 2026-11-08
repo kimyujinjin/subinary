@@ -10,6 +10,14 @@ import { SUJAIN_URLS } from './urls.mjs';
 /** Must match apps/api sujain-browser responseSchema string caps. */
 export const SUJAIN_CELL_MAX = 200;
 export const SUJAIN_HEADER_MAX = 100;
+export const SUJAIN_ITEM_LABEL_MAX = 200;
+
+/**
+ * 분양대금조회(/mypage/payment) 확인된 구조(2026-11-08): 처음엔 표가 비어 있고, 표 밖 단지
+ * select#preInsp 에서 세대를 고른 뒤 onclick="searchPayment(); …" 버튼을 눌러야 표가 채워진다.
+ */
+export const SUJAIN_UNIT_SELECT = 'select#preInsp';
+export const SUJAIN_SEARCH_BUTTON = '[onclick*="searchPayment"]:visible';
 
 function text(value) {
   return (value ?? '').replace(/\s+/gu, ' ').trim();
@@ -23,11 +31,21 @@ function clip(value, max) {
 /** Truncate cell/header strings to API schema caps so ok:true is not discarded. */
 export function normalizeCapturedRows(rows) {
   if (!Array.isArray(rows)) return [];
-  return rows.slice(0, 100).map((row) => ({
-    cells: (Array.isArray(row?.cells) ? row.cells : []).slice(0, 20).map((cell) => clip(cell, SUJAIN_CELL_MAX)),
-    headers: (Array.isArray(row?.headers) ? row.headers : []).slice(0, 20).map((header) => clip(header, SUJAIN_HEADER_MAX)),
-    sourcePage: row?.sourcePage === 'unit-items' ? 'unit-items' : 'payment',
-  }));
+  return rows.slice(0, 100).map((row) => {
+    const section = row?.section === 'option' ? 'option' : 'payment';
+    const normalized = {
+      cells: (Array.isArray(row?.cells) ? row.cells : []).slice(0, 20).map((cell) => clip(cell, SUJAIN_CELL_MAX)),
+      headers: (Array.isArray(row?.headers) ? row.headers : []).slice(0, 20).map((header) => clip(header, SUJAIN_HEADER_MAX)),
+      // 모든 줄은 분양대금조회 화면에서 온다(세대 내 설치 품목은 입주 뒤에만 열려 읽지 않는다).
+      sourcePage: 'payment',
+      section,
+    };
+    if (section === 'option' && typeof row?.itemLabel === 'string') {
+      const itemLabel = clip(row.itemLabel, SUJAIN_ITEM_LABEL_MAX);
+      if (itemLabel) normalized.itemLabel = itemLabel;
+    }
+    return normalized;
+  });
 }
 
 /**
@@ -46,14 +64,13 @@ export function isEligibleSujainCapturedRow(row) {
 }
 
 /**
- * Safe layout snapshot for one scrape page: table counts + header texts + row
+ * Safe layout snapshot for the payment page: table counts + header texts + row
  * counts + per-table raw/pre-skip/form-control counts + outside-table input
- * count + visibility/kind breakdown + iframe count/paths + sanitized page path.
- * Never includes cell values (names, phones, amounts, dates), form-control
- * values, or query strings.
+ * count + visibility/kind breakdown + iframe count/paths + sanitized page path
+ * + searched(0/1) + units(단지 option 개수). Never includes cell values (names,
+ * phones, amounts, dates), form-control values, option values/text, or query strings.
  */
 export function buildPageLayoutDiagnostic({
-  sourcePage,
   tableCount,
   tableHeaders,
   rawRowCount,
@@ -64,9 +81,11 @@ export function buildPageLayoutDiagnostic({
   iframeCount,
   iframePaths,
   pagePath,
+  searched,
+  units,
 }) {
   return sanitizePageLayoutDiagnostic({
-    sourcePage: sourcePage === 'unit-items' ? 'unit-items' : 'payment',
+    sourcePage: 'payment',
     tableCount,
     tableHeaders,
     rawRowCount,
@@ -77,6 +96,8 @@ export function buildPageLayoutDiagnostic({
     iframeCount,
     iframePaths,
     pagePath,
+    searched,
+    units,
   });
 }
 
@@ -253,21 +274,30 @@ function isExecutionContextDestroyedError(error) {
   return /Execution context was destroyed/u.test(message);
 }
 
-async function evaluateTableRows(page, sourcePage) {
+function currentUrl(page) {
+  try {
+    return typeof page.url === 'function' ? page.url() : '';
+  } catch {
+    return '';
+  }
+}
+
+/** searched(조회 버튼을 눌렀는지 0/1)·units(단지 option 개수)만 — 값은 넣지 않는다. */
+function layoutExtra(extra) {
+  return {
+    searched: extra?.searched === 1 ? 1 : 0,
+    units: Number.isInteger(extra?.units) && extra.units > 0 ? Math.min(extra.units, 100) : 0,
+  };
+}
+
+async function evaluateTableRows(page, extra = {}) {
   // captureSujainTables is self-contained (no closures) so Playwright can
   // serialize it into the page. It reads form-control values when td text is empty.
-  const raw = await page.evaluate(captureSujainTables, sourcePage);
+  const raw = await page.evaluate(captureSujainTables, 'payment');
 
   const normalized = normalizeTableEvaluateResult(raw);
   const eligible = normalized.rows.filter(isEligibleSujainCapturedRow);
-  let pageHref = '';
-  try {
-    pageHref = typeof page.url === 'function' ? page.url() : '';
-  } catch {
-    pageHref = '';
-  }
   const layout = buildPageLayoutDiagnostic({
-    sourcePage,
     tableCount: normalized.tableCount,
     tableHeaders: normalized.tableHeaders,
     rawRowCount: normalized.rows.length,
@@ -277,9 +307,26 @@ async function evaluateTableRows(page, sourcePage) {
     outsideTableFormControls: normalized.outsideTableFormControls,
     iframeCount: normalized.iframeCount,
     iframePaths: normalized.iframePaths,
-    pagePath: pageHref,
+    pagePath: currentUrl(page),
+    ...layoutExtra(extra),
   });
   return { rows: eligible, layout };
+}
+
+function emptyPaymentLayout(page, extra = {}) {
+  return buildPageLayoutDiagnostic({
+    tableCount: 0,
+    tableHeaders: [],
+    rawRowCount: 0,
+    eligibleRowCount: 0,
+    tables: [],
+    outsideTableFormControlCount: 0,
+    outsideTableFormControls: { ...EMPTY_OUTSIDE_TABLE_FORM_CONTROLS },
+    iframeCount: 0,
+    iframePaths: [],
+    pagePath: currentUrl(page),
+    ...layoutExtra(extra),
+  });
 }
 
 /** Cap for waiting until a scrape table paints at least one non-empty data cell. */
@@ -290,6 +337,19 @@ function tableWaitMs() {
     if (Number.isFinite(n) && n >= 0) return Math.min(n, 60_000);
   }
   return 15_000;
+}
+
+/** Playwright 에서 timeout 0 은 '무한'이라 1ms 이상으로 둔다. */
+function unitSelectWaitMs() {
+  return Math.max(1, Math.min(tableWaitMs(), 10_000));
+}
+
+/**
+ * select 의 option 이 서버가 그린 것인지 스크립트가 채우는 것인지는 확인하지 못했다.
+ * 실제 option 이 0개면 잠깐(최대 3초)만 다시 센 뒤 미등록으로 본다.
+ */
+function unitOptionWaitMs() {
+  return Math.min(tableWaitMs(), 3_000);
 }
 
 function rowHasDataCell(row) {
@@ -305,47 +365,20 @@ async function pauseBetweenTablePolls(page, ms) {
 }
 
 /**
- * Read tables after a scrape goto. Some mypage targets fire a follow-up
- * same-tab navigation after DOMContentLoaded; the first evaluate then throws a
- * plain Error ("Execution context was destroyed"). Wait for load, retry evaluate
- * once after the next document settles, and keep polling until a non-empty data
- * cell appears (AJAX fill) or the wait budget expires.
+ * 조회 버튼을 누른 뒤 표를 읽는다. 사이트 조회는 동기 XHR 이라 클릭이 끝나면 대개 이미
+ * 채워져 있지만, 보이는 표의 tbody 에 칸 있는 줄이 생길 때까지 표 대기 예산 안에서 다시 읽는다.
+ * 같은 탭 후속 이동으로 evaluate 가 "Execution context was destroyed" 로 깨지면 다음 문서가
+ * 자리 잡은 뒤 한 번만 다시 읽는다.
  */
-async function tableRows(page, sourcePage) {
-  try {
-    await page.waitForLoadState('load', { timeout: 10_000 });
-  } catch {
-    // load may already have fired or never will (long-lived connections).
-  }
-
+async function tableRows(page, extra = {}) {
   const deadline = Date.now() + tableWaitMs();
+  const shouldStop = typeof extra.shouldStop === 'function' ? extra.shouldStop : () => false;
   let destroyedRetried = false;
-  let pageHref = '';
-  try {
-    pageHref = typeof page.url === 'function' ? page.url() : '';
-  } catch {
-    pageHref = '';
-  }
-  let last = {
-    rows: [],
-    layout: buildPageLayoutDiagnostic({
-      sourcePage,
-      tableCount: 0,
-      tableHeaders: [],
-      rawRowCount: 0,
-      eligibleRowCount: 0,
-      tables: [],
-      outsideTableFormControlCount: 0,
-      outsideTableFormControls: { ...EMPTY_OUTSIDE_TABLE_FORM_CONTROLS },
-      iframeCount: 0,
-      iframePaths: [],
-      pagePath: pageHref,
-    }),
-  };
+  let last = { rows: [], layout: emptyPaymentLayout(page, extra) };
 
   while (true) {
     try {
-      last = await evaluateTableRows(page, sourcePage);
+      last = await evaluateTableRows(page, extra);
     } catch (error) {
       if (!isExecutionContextDestroyedError(error) || destroyedRetried) throw error;
       destroyedRetried = true;
@@ -354,11 +387,12 @@ async function tableRows(page, sourcePage) {
       } catch {
         throw error;
       }
-      if (isLoginUrl(page.url())) throw new SujainReadError('authentication_required');
+      if (isLoginUrl(currentUrl(page))) throw new SujainReadError('authentication_required');
       continue;
     }
 
     if (last.rows.some(rowHasDataCell)) return last;
+    if (shouldStop()) break;
 
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
@@ -366,6 +400,171 @@ async function tableRows(page, sourcePage) {
   }
 
   return last;
+}
+
+/**
+ * 단지 select 안에서 값이 빈 자리표시('선택')와 비활성 option 을 뺀 실제 세대 option 수와
+ * 첫 위치만 돌려준다(단지 코드·동호수 글자는 돌려주지 않는다). locator.evaluate 로 브라우저에서
+ * 돌기 때문에 바깥 변수를 쓰지 않는다.
+ */
+export function countUnitOptions(select) {
+  const options = Array.from(select?.options ?? []);
+  let count = 0;
+  let firstIndex = -1;
+  for (let index = 0; index < options.length; index += 1) {
+    const option = options[index];
+    if (!option || option.disabled) continue;
+    if (String(option.value ?? '').trim() === '') continue;
+    count += 1;
+    if (firstIndex < 0) firstIndex = index;
+  }
+  return { count: Math.min(count, 100), firstIndex };
+}
+
+async function readUnitOptions(select) {
+  const raw = await select.evaluate(countUnitOptions);
+  const count = Number.isInteger(raw?.count) && raw.count > 0 ? Math.min(raw.count, 100) : 0;
+  const firstIndex = Number.isInteger(raw?.firstIndex) ? raw.firstIndex : -1;
+  return count > 0 && firstIndex >= 0 ? { count, firstIndex } : { count: 0, firstIndex: -1 };
+}
+
+/** 알림 글자는 분류에만 쓰고 진단·오류에 남기지 않는다. */
+function isSessionLostDialog(message) {
+  return /로그인|세션|인증|만료/u.test(message);
+}
+
+/**
+ * 사이트 알림(dialog)을 바로 닫고 뜬 적이 있는지만 기억한다. Playwright 는 dialog 리스너가
+ * 하나라도 있으면 자동으로 닫지 않는데, 로그인 단계의 waitForEvent('dialog') 가 최대 15초
+ * 남아 있을 수 있어 분양대금 화면으로 가기 전부터 붙여 화면이 알림에 묶이지 않게 한다.
+ * 오류 판단은 조회 직전에 reset() 한 뒤 뜬 알림만 본다.
+ */
+function watchDialogs(page) {
+  const state = { seen: false, sessionLost: false };
+  const onDialog = (dialog) => {
+    let message = '';
+    try {
+      message = text(typeof dialog?.message === 'function' ? dialog.message() : '');
+    } catch {
+      message = '';
+    }
+    state.seen = true;
+    if (isSessionLostDialog(message)) state.sessionLost = true;
+    message = '';
+    Promise.resolve()
+      .then(() => (typeof dialog?.dismiss === 'function' ? dialog.dismiss() : null))
+      .catch(() => null);
+  };
+  const canListen = typeof page.on === 'function';
+  if (canListen) page.on('dialog', onDialog);
+  return {
+    state,
+    reset() {
+      state.seen = false;
+      state.sessionLost = false;
+    },
+    stop() {
+      if (!canListen) return;
+      if (typeof page.off === 'function') page.off('dialog', onDialog);
+      else if (typeof page.removeListener === 'function') page.removeListener('dialog', onDialog);
+    },
+  };
+}
+
+/**
+ * 조회 뒤 알림 → 오류 코드. 세션이 끊기면 사이트가 로그인 안내를 띄우므로 다시 로그인해야 하는
+ * authentication_required. 그 밖의 알림(조회 실패 등)은 같은 흐름으로 다시 눌러도 같은 결과일
+ * 가능성이 커 unsupported_layout 으로 두고, 진단 searched=1 로 '조회는 눌렀다'를 구분한다.
+ */
+function dialogError(state) {
+  return new SujainReadError(state.sessionLost ? 'authentication_required' : 'unsupported_layout');
+}
+
+/**
+ * 분양대금조회: 단지 select 에서 첫 세대를 고르고 조회 버튼을 누른 뒤 보이는 표(아파트 분양대금 +
+ * 별도 계약 품목)를 읽는다. 실패 경로마다 값 없는 레이아웃 진단(머리 글자·개수·searched·units)을 남긴다.
+ */
+async function readPaymentPage(page, diagnostics, dialogs) {
+  const wantsLayout = Boolean(
+    diagnostics && typeof diagnostics === 'object' && diagnostics.layout && typeof diagnostics.layout === 'object',
+  );
+  const record = (layout) => {
+    if (wantsLayout && layout) diagnostics.layout.payment = layout;
+  };
+  const snapshot = async (extra) => {
+    if (!wantsLayout) return;
+    try {
+      record((await evaluateTableRows(page, extra)).layout);
+    } catch {
+      // 진단 수집 실패가 원래 오류 코드를 덮지 않게 빈 진단만 남긴다.
+      record(emptyPaymentLayout(page, extra));
+    }
+  };
+
+  const select = page.locator(SUJAIN_UNIT_SELECT).first();
+  try {
+    await select.waitFor({ state: 'attached', timeout: unitSelectWaitMs() });
+  } catch {
+    if (isLoginUrl(currentUrl(page))) throw new SujainReadError('authentication_required');
+    await snapshot({ searched: 0, units: 0 });
+    throw new SujainReadError('unsupported_layout');
+  }
+
+  let unit = await readUnitOptions(select);
+  const optionDeadline = Date.now() + unitOptionWaitMs();
+  while (unit.count === 0 && Date.now() < optionDeadline) {
+    await pauseBetweenTablePolls(page, Math.min(250, Math.max(1, optionDeadline - Date.now())));
+    unit = await readUnitOptions(select);
+  }
+  if (unit.count === 0) {
+    await snapshot({ searched: 0, units: 0 });
+    throw new SujainReadError('unit_not_registered');
+  }
+  const units = unit.count;
+
+  // 세대가 여러 개여도 이번에는 첫 번째만 읽는다(개수는 진단 units 로만 남긴다).
+  // force: searchPayment 는 #preInsp 의 선택값만 보므로 꾸밈 요소가 select 를 가려도 고를 수 있게 한다.
+  try {
+    await select.selectOption({ index: unit.firstIndex }, { force: true, timeout: 5_000 });
+  } catch (error) {
+    await snapshot({ searched: 0, units });
+    throw error;
+  }
+
+  const button = page.locator(SUJAIN_SEARCH_BUTTON).first();
+  if ((await button.count()) === 0) {
+    await snapshot({ searched: 0, units });
+    throw new SujainReadError('unsupported_layout');
+  }
+
+  // 화면을 여는 동안 뜬 안내 알림은 닫기만 하고, 조회 뒤 알림만 오류 판단에 쓴다.
+  dialogs.reset();
+  try {
+    // 사이트 조회는 동기 XHR(timeout 10초)이라 클릭이 그동안 묶일 수 있어 기본 5초보다 길게 둔다.
+    await button.click({ timeout: 15_000 });
+  } catch (error) {
+    if (!dialogs.state.seen) {
+      await snapshot({ searched: 0, units });
+      throw error;
+    }
+  }
+  if (dialogs.state.seen) {
+    await snapshot({ searched: 1, units });
+    throw dialogError(dialogs.state);
+  }
+  if (isLoginUrl(currentUrl(page))) throw new SujainReadError('authentication_required');
+
+  const captured = await tableRows(page, {
+    searched: 1,
+    units,
+    shouldStop: () => dialogs.state.seen,
+  });
+  record(captured.layout);
+  if (captured.rows.length > 0) return captured.rows;
+  if (dialogs.state.seen) throw dialogError(dialogs.state);
+  if (isLoginUrl(currentUrl(page))) throw new SujainReadError('authentication_required');
+  // 조회까지 했는데 읽을 표 줄이 없다 — 빈 확인 목록을 ok:true 로 돌리지 않는다.
+  throw new SujainReadError('unsupported_layout');
 }
 
 /**
@@ -427,9 +626,11 @@ async function fillLogin(page, credentials) {
 }
 
 /**
- * 공식 로그인 뒤 분양대금조회·세대 내 설치 품목을 한 번에 읽는다.
+ * 공식 로그인 뒤 분양대금조회 한 화면에서 분양대금·별도 계약 품목(옵션) 표를 읽는다.
+ * 세대 내 설치 품목(/mypage/unit-items)은 입주 뒤에만 메뉴가 열리고 입주 전 계정은
+ * /mypage/payment 로 되돌려지므로 가지 않는다(옵션 대금은 별도 계약 품목 표에 있다).
  * 2FA·캡차는 우회하지 않고 authentication_required로 돌린다.
- * diagnostics.stage is an allowlisted token only (login / scrape_*), never URLs.
+ * diagnostics.stage is an allowlisted token only (login / scrape_payment), never URLs.
  */
 export async function readSujainPages(page, job, diagnostics = null) {
   const setStage = (stage) => {
@@ -454,40 +655,33 @@ export async function readSujainPages(page, job, diagnostics = null) {
     throw new SujainReadError(failed > 0 ? 'credentials_invalid' : 'authentication_required');
   }
 
-  const rows = [];
   if (diagnostics && typeof diagnostics === 'object' && !Array.isArray(diagnostics)) {
     diagnostics.layout = diagnostics.layout && typeof diagnostics.layout === 'object'
       ? diagnostics.layout
       : {};
   }
 
-  for (const [url, sourcePage] of [
-    [SUJAIN_URLS.payment, 'payment'],
-    [SUJAIN_URLS.unitItems, 'unit-items'],
-  ]) {
-    setStage(sourcePage === 'payment' ? 'scrape_payment' : 'scrape_unit_items');
+  setStage('scrape_payment');
+  const dialogs = watchDialogs(page);
+  try {
     try {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20_000 });
+      await page.goto(SUJAIN_URLS.payment, { waitUntil: 'domcontentloaded', timeout: 20_000 });
     } catch {
       throw new SujainReadError('network_error');
     }
-    if (isLoginUrl(page.url())) throw new SujainReadError('authentication_required');
-    const captured = await tableRows(page, sourcePage);
-    if (diagnostics && typeof diagnostics === 'object' && diagnostics.layout
-      && captured.layout) {
-      diagnostics.layout[sourcePage] = captured.layout;
+    if (isLoginUrl(currentUrl(page))) throw new SujainReadError('authentication_required');
+    try {
+      await page.waitForLoadState('load', { timeout: 10_000 });
+    } catch {
+      // load may already have fired or never will (long-lived connections).
     }
-    for (const row of captured.rows) rows.push(row);
-  }
 
-  if (rows.length === 0) {
-    // Both scrape pages waited and still had no table data — do not report
-    // ok:true with [] (that becomes an empty confirm list that looks unchanged).
-    throw new SujainReadError('unsupported_layout');
+    const rows = await readPaymentPage(page, diagnostics, dialogs);
+    return {
+      capturedAt: new Date().toISOString(),
+      rows: normalizeCapturedRows(rows),
+    };
+  } finally {
+    dialogs.stop();
   }
-
-  return {
-    capturedAt: new Date().toISOString(),
-    rows: normalizeCapturedRows(rows),
-  };
 }

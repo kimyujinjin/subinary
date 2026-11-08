@@ -3,6 +3,14 @@ import test from 'node:test';
 import { captureSujainTables } from '../table-capture.mjs';
 import { isEligibleSujainCapturedRow } from '../collect.mjs';
 import { formatLayoutWarnFragment, sanitizePageLayoutDiagnostic } from '../policy.mjs';
+import {
+  SUJAIN_PAYMENT_HEADERS,
+  fakeDocument,
+  h,
+  sujainContactLayer,
+  sujainPaymentDocument,
+  sujainTable,
+} from './fake-dom.mjs';
 
 const EMPTY_OUTSIDE = {
   visibleInput: 0,
@@ -12,116 +20,54 @@ const EMPTY_OUTSIDE = {
   other: 0,
 };
 
-/** Minimal DOM duck-types for Node — mirrors the td/input shapes capture reads. */
+/**
+ * Fake DOM helpers (test/fake-dom.mjs) — tHead/tBodies/rows/cells like a real
+ * HTMLTableElement. All values are synthetic.
+ */
 function control(tagName, attrs = {}) {
-  const el = {
-    tagName,
-    id: attrs.id ?? '',
-    name: attrs.name ?? '',
-    type: attrs.type ?? (tagName === 'INPUT' ? 'text' : undefined),
-    value: attrs.value ?? '',
+  return h(tagName, {
+    id: attrs.id,
+    name: attrs.name,
+    type: attrs.type,
+    value: attrs.value,
     hidden: attrs.hidden === true,
-    style: attrs.style ?? {},
+    style: attrs.style,
     options: attrs.options,
-    selectedIndex: attrs.selectedIndex ?? 0,
-    parentElement: null,
-    getAttribute(key) {
-      if (key === 'type') return attrs.type ?? (tagName === 'INPUT' ? 'text' : null);
-      if (key === 'id') return attrs.id ?? null;
-      if (key === 'name') return attrs.name ?? null;
-      if (key === 'hidden') return attrs.hidden === true ? '' : null;
-      if (Object.hasOwn(attrs, key)) return attrs[key];
-      return null;
-    },
-    closest(sel) {
-      if (sel !== 'table') return null;
-      let node = this.parentElement;
-      while (node) {
-        if (String(node.tagName || '').toLowerCase() === 'table') return node;
-        node = node.parentElement;
-      }
-      return null;
-    },
-  };
-  return el;
+    selectedIndex: attrs.selectedIndex,
+    className: attrs.class,
+    attrs,
+  });
 }
 
 function cell(children, textContent = '') {
-  const controls = Array.isArray(children) ? children : [];
-  return {
-    textContent,
-    querySelectorAll(sel) {
-      if (!/input|select|textarea/i.test(sel)) return [];
-      return controls;
-    },
-  };
+  return h('td', { text: textContent }, Array.isArray(children) ? children : []);
 }
 
 function row(cells) {
-  return {
-    querySelectorAll(sel) {
-      if (sel === 'th, td') return cells;
-      return [];
-    },
-  };
+  return h('tr', {}, cells);
 }
 
+/** thead th 머리 + tbody 줄. extraControls 는 tfoot 에 넣어 칸 글자 없이 표 안 폼 수에만 잡힌다. */
 function table({ headers = [], bodyRows = [], extraControls = [] }) {
-  const headerCells = headers.map((text) => ({ textContent: text }));
-  const headerRow = {
-    querySelectorAll(sel) {
-      if (sel === 'th, td') return headerCells.map((h) => cell([], h.textContent));
-      return [];
-    },
-  };
-  const formControls = [];
-  for (const bodyRow of bodyRows) {
-    for (const c of bodyRow.querySelectorAll('th, td')) {
-      formControls.push(...c.querySelectorAll('input, select, textarea'));
-    }
+  const children = [];
+  if (headers.length > 0) {
+    children.push(h('thead', {}, [h('tr', {}, headers.map((text) => h('th', { text })))]));
   }
-  formControls.push(...extraControls);
-
-  const tableEl = {
-    tagName: 'TABLE',
-    querySelectorAll(sel) {
-      if (sel === 'thead th, tr:first-child th') return headerCells;
-      if (sel === 'tbody tr, tr') return [headerRow, ...bodyRows];
-      if (sel === 'input, select, textarea') return formControls;
-      return [];
-    },
-  };
-  for (const el of formControls) {
-    el.parentElement = tableEl;
+  children.push(h('tbody', {}, bodyRows));
+  if (extraControls.length > 0) {
+    children.push(h('tfoot', {}, [h('tr', {}, [h('td', {}, extraControls)])]));
   }
-  return tableEl;
+  return h('table', {}, children);
 }
 
 function iframe(src) {
-  return {
-    tagName: 'IFRAME',
-    src,
-    getAttribute(key) {
-      return key === 'src' ? src : null;
-    },
-  };
+  const el = h('iframe', { attrs: { src } });
+  el.src = src;
+  return el;
 }
 
 function doc(tables, { outsideControls = [], iframes = [] } = {}) {
-  return {
-    querySelectorAll(sel) {
-      if (sel === 'table') return tables;
-      if (sel === 'input, select, textarea') {
-        const inside = [];
-        for (const t of tables) {
-          inside.push(...t.querySelectorAll('input, select, textarea'));
-        }
-        return [...inside, ...outsideControls];
-      }
-      if (sel === 'iframe') return iframes;
-      return [];
-    },
-  };
+  return fakeDocument([...tables, ...outsideControls, ...iframes]);
 }
 
 test('회차/약정금액 table with amounts in inputs is captured and eligible', () => {
@@ -145,8 +91,8 @@ test('회차/약정금액 table with amounts in inputs is captured and eligible'
   assert.equal(captured.tableCount, 1);
   assert.deepEqual(captured.tableHeaders[0], paymentHeaders);
   assert.equal(captured.rows.length, 1);
-  // header row + 1 body row = preSkip 2; raw keeps the body row only.
-  assert.deepEqual(captured.tables, [{ rawRowCount: 1, preSkipRowCount: 2, formControlCount: 8 }]);
+  // thead 줄은 본문 후보가 아니다: tbody 1줄 = preSkip 1.
+  assert.deepEqual(captured.tables, [{ rawRowCount: 1, preSkipRowCount: 1, formControlCount: 8 }]);
   assert.equal(captured.outsideTableFormControlCount, 0);
   assert.deepEqual(captured.outsideTableFormControls, EMPTY_OUTSIDE);
   assert.equal(captured.iframeCount, 0);
@@ -154,6 +100,8 @@ test('회차/약정금액 table with amounts in inputs is captured and eligible'
   assert.equal(isEligibleSujainCapturedRow(captured.rows[0]), true);
   assert.equal(captured.rows[0].cells[2], '10000000');
   assert.equal(captured.rows[0].cells[0], '1');
+  assert.equal(captured.rows[0].section, 'payment');
+  assert.equal(Object.hasOwn(captured.rows[0], 'itemLabel'), false);
 });
 
 test('이름* contact table with synthetic text cells remains ineligible', () => {
@@ -169,7 +117,7 @@ test('이름* contact table with synthetic text cells remains ineligible', () =>
   const captured = captureSujainTables('payment', doc([contactTable]));
   assert.equal(captured.rows.length, 4);
   assert.equal(captured.rows.every((rowItem) => !isEligibleSujainCapturedRow(rowItem)), true);
-  assert.deepEqual(captured.tables, [{ rawRowCount: 4, preSkipRowCount: 5, formControlCount: 0 }]);
+  assert.deepEqual(captured.tables, [{ rawRowCount: 4, preSkipRowCount: 4, formControlCount: 0 }]);
 });
 
 test('layout diagnostics include per-table counts and never cell or input values', () => {
@@ -206,8 +154,8 @@ test('layout diagnostics include per-table counts and never cell or input values
   });
   assert.ok(layout);
   assert.deepEqual(layout.tables, [
-    { rawRowCount: 1, preSkipRowCount: 2, formControlCount: 8 },
-    { rawRowCount: 4, preSkipRowCount: 5, formControlCount: 0 },
+    { rawRowCount: 1, preSkipRowCount: 1, formControlCount: 8 },
+    { rawRowCount: 4, preSkipRowCount: 4, formControlCount: 0 },
   ]);
   assert.deepEqual(layout.outsideTableFormControls, EMPTY_OUTSIDE);
   assert.equal(layout.pagePath, 'https://www.sujain.co.kr/mypage/payment');
@@ -227,7 +175,7 @@ test('layout diagnostics include per-table counts and never cell or input values
   }
   assert.match(
     fragment,
-    /payment:t=2;h=\[회차\|약정일자\|약정금액\|납부일자\|납부원금\|연체료\|할인료\|실납부금\],\[이름\*\];raw=5;eligible=1;tables=\[r=1,p=2,i=8\],\[r=4,p=5,i=0\];out=0\[vi=0,vs=0,vt=0,h=0,o=0\];ifr=0;path=https:\/\/www\.sujain\.co\.kr\/mypage\/payment/,
+    /payment:t=2;searched=0;units=0;h=\[회차\|약정일자\|약정금액\|납부일자\|납부원금\|연체료\|할인료\|실납부금\],\[이름\*\];raw=5;eligible=1;tables=\[r=1,p=1,i=8\],\[r=4,p=4,i=0\];out=0\[vi=0,vs=0,vt=0,h=0,o=0\];ifr=0;path=https:\/\/www\.sujain\.co\.kr\/mypage\/payment/,
   );
 });
 
@@ -288,8 +236,8 @@ test('empty payment table with inputs still reports formControlCount for diagnos
   const captured = captureSujainTables('payment', doc([emptyBody]));
   assert.equal(captured.rows.length, 0);
   assert.deepEqual(captured.tableHeaders[0], ['회차', '약정금액']);
-  // header-only tr remains in preSkip; raw stays 0 after skips.
-  assert.deepEqual(captured.tables, [{ rawRowCount: 0, preSkipRowCount: 1, formControlCount: 2 }]);
+  // 빈 tbody: preSkip 0, raw 0 — 폼 수만 진단에 남는다.
+  assert.deepEqual(captured.tables, [{ rawRowCount: 0, preSkipRowCount: 0, formControlCount: 2 }]);
 });
 
 test('preSkipRowCount keeps empty-cell rows that rawRowCount drops', () => {
@@ -302,8 +250,8 @@ test('preSkipRowCount keeps empty-cell rows that rawRowCount drops', () => {
   });
   const captured = captureSujainTables('payment', doc([paymentTable]));
   assert.equal(captured.rows.length, 0);
-  // header + 2 empty body rows counted before skip; raw stays 0.
-  assert.deepEqual(captured.tables, [{ rawRowCount: 0, preSkipRowCount: 3, formControlCount: 0 }]);
+  // 2 empty tbody rows counted before skip; raw stays 0.
+  assert.deepEqual(captured.tables, [{ rawRowCount: 0, preSkipRowCount: 2, formControlCount: 0 }]);
 });
 
 test('outside-table form controls and iframe paths are counted without values or query strings', () => {
@@ -446,4 +394,149 @@ test('outside-table breakdown splits visibility and kind without leaking attribu
   // Password is never treated as a visible data field.
   assert.equal(layout.outsideTableFormControls.visibleInput >= 0, true);
   assert.equal(layout.outsideTableFormControls.other >= 1, true);
+});
+
+// ── 확인된 분양대금조회 화면 구조(2026-11-08)를 흉내 낸 가짜 문서 ──
+
+const PAYMENT_ROWS = [
+  ['계약금1차', '2024-01-10', '1,000,000', '2024-01-10', '1,000,000', '0', '0', '1,000,000'],
+  ['계약금2차', '2024-02-10', '2,000,000', '2024-02-09', '2,000,000', '0', '0', '2,000,000'],
+  ['중도금1차', '2024-06-10', '3,000,000', '2024-06-10', '3,000,000', '0', '0', '3,000,000'],
+  ['잔금', '2027-03-31', '9,000,000', '', '0', '0', '0', '0'],
+  ['계', '', '15,000,000', '', '6,000,000', '0', '0', '6,000,000'],
+];
+const OPTION_A_LABEL = '합성 발코니 확장, [합성벽체]-침실2.3 분리형, [합성공기청정기]-미선택';
+const OPTION_B_LABEL = '[합성에어컨]-거실,침실1,2(3개소)-합성전자, [합성가전]합성 냉장고';
+const OPTION_ROWS = [
+  ['계약금', '2024-01-10', '100,000', '2024-01-10', '100,000', '0', '0', '100,000'],
+  ['잔금', '2027-03-31', '900,000', '', '0', '0', '0', '0'],
+  ['계', '', '1,000,000', '', '100,000', '0', '0', '100,000'],
+];
+
+test('after search: reads three visible st1 tables, skips empty tr, keeps th 회차 names, 8 headers, section and itemLabel', () => {
+  const captured = captureSujainTables('payment', sujainPaymentDocument({
+    searched: true,
+    paymentRows: PAYMENT_ROWS,
+    options: [
+      { itemLabel: OPTION_A_LABEL, rows: OPTION_ROWS },
+      { itemLabel: OPTION_B_LABEL, rows: OPTION_ROWS },
+    ],
+  }));
+  // 숨은 연락처 표까지 센 전체 표 수 4, 읽은(보이는) 표 3.
+  assert.equal(captured.tableCount, 4);
+  assert.equal(captured.tableHeaders.length, 3);
+  for (const headers of captured.tableHeaders) assert.deepEqual(headers, SUJAIN_PAYMENT_HEADERS);
+  // 데이터 줄과 빈 tr 이 번갈아: preSkip = 2×데이터, raw = 데이터.
+  assert.deepEqual(captured.tables, [
+    { rawRowCount: 5, preSkipRowCount: 10, formControlCount: 0 },
+    { rawRowCount: 3, preSkipRowCount: 6, formControlCount: 0 },
+    { rawRowCount: 3, preSkipRowCount: 6, formControlCount: 0 },
+  ]);
+
+  const payment = captured.rows.filter((r) => r.section === 'payment');
+  const option = captured.rows.filter((r) => r.section === 'option');
+  assert.equal(payment.length, 5);
+  assert.equal(option.length, 6);
+  assert.deepEqual(payment.map((r) => r.cells[0]), ['계약금1차', '계약금2차', '중도금1차', '잔금', '계']);
+  for (const r of captured.rows) {
+    assert.equal(r.cells.length, 8);
+    assert.equal(r.headers.length, 8);
+    assert.equal(r.sourcePage, 'payment');
+    assert.equal(isEligibleSujainCapturedRow(r), true);
+  }
+  assert.equal(payment.some((r) => Object.hasOwn(r, 'itemLabel')), false);
+  assert.deepEqual(option.slice(0, 3).map((r) => r.itemLabel), [OPTION_A_LABEL, OPTION_A_LABEL, OPTION_A_LABEL]);
+  assert.deepEqual(option.slice(3).map((r) => r.itemLabel), [OPTION_B_LABEL, OPTION_B_LABEL, OPTION_B_LABEL]);
+  // 안 낸 잔금: 납부일자 빈 칸 그대로.
+  assert.equal(payment[3].cells[3], '');
+  // 숨은 연락처 표 값은 읽지 않는다.
+  const serialized = JSON.stringify(captured.rows);
+  for (const leak of ['합성 회원', '000-0000-0000', '합성 주소', 'synthetic@example.com', '이름*']) {
+    assert.equal(serialized.includes(leak), false, `rows leaked ${leak}`);
+  }
+});
+
+test('before search: hidden #paymentDiv with empty tbody yields no rows (wait keeps polling)', () => {
+  const captured = captureSujainTables('payment', sujainPaymentDocument({ searched: false }));
+  assert.equal(captured.rows.length, 0);
+  assert.equal(captured.tableCount, 2);
+  // 숨은 표는 머리도 진단에 올리지 않는다.
+  assert.deepEqual(captured.tableHeaders, []);
+  // 표 밖 단지 select 는 개수만.
+  assert.equal(captured.outsideTableFormControls.visibleSelect, 1);
+});
+
+test('without thead, the first row is a header only when every cell is th', () => {
+  const allTh = h('table', {}, [
+    h('tbody', {}, [
+      h('tr', {}, [h('th', { text: '회차' }), h('th', { text: '약정금액' })]),
+      h('tr', {}, [h('th', { text: '중도금2차' }), h('td', { text: '5,000,000' })]),
+    ]),
+  ]);
+  const mixed = h('table', {}, [
+    h('tbody', {}, [
+      h('tr', {}, [h('th', { text: '중도금3차' }), h('td', { text: '6,000,000' })]),
+    ]),
+  ]);
+  const captured = captureSujainTables('payment', fakeDocument([allTh, mixed]));
+  assert.deepEqual(captured.tableHeaders, [['회차', '약정금액'], []]);
+  assert.deepEqual(captured.rows.map((r) => r.cells), [['중도금2차', '5,000,000'], ['중도금3차', '6,000,000']]);
+  assert.deepEqual(captured.rows[0].headers, ['회차', '약정금액']);
+  assert.deepEqual(captured.tables, [
+    { rawRowCount: 1, preSkipRowCount: 1, formControlCount: 0 },
+    { rawRowCount: 1, preSkipRowCount: 1, formControlCount: 0 },
+  ]);
+});
+
+test('thead row never becomes a data row and body th 회차 name never joins the headers', () => {
+  const t = sujainTable('아파트 분양대금', [PAYMENT_ROWS[0]], { emptyRowsBetween: false });
+  const captured = captureSujainTables('payment', fakeDocument([t]));
+  assert.deepEqual(captured.tableHeaders, [SUJAIN_PAYMENT_HEADERS]);
+  assert.equal(captured.rows.length, 1);
+  assert.equal(captured.rows[0].cells[0], '계약금1차');
+  assert.equal(captured.rows[0].headers.includes('계약금1차'), false);
+});
+
+test('section falls back to the nearest preceding h_tit_wrap when caption is missing; unknown stays payment', () => {
+  const noCaption = (rows) => h('table', {}, [
+    h('thead', {}, [h('tr', {}, SUJAIN_PAYMENT_HEADERS.map((text) => h('th', { text })))]),
+    h('tbody', {}, rows.map(([name, ...rest]) => h('tr', {}, [h('th', { text: name }), ...rest.map((v) => h('td', { text: v }))]))),
+  ]);
+  const captured = captureSujainTables('payment', fakeDocument([
+    h('div', { className: 'h_tit_wrap', text: '합성 안내' }),
+    noCaption([PAYMENT_ROWS[0]]),
+    h('div', { className: 'h_tit_wrap', text: '별도  계약 품목' }),
+    h('div', { className: 'ect_item', text: `  ${OPTION_A_LABEL}\n ` }),
+    noCaption([OPTION_ROWS[0]]),
+    h('div', { className: 'ect_item', text: OPTION_B_LABEL }),
+    noCaption([OPTION_ROWS[1]]),
+  ]));
+  assert.deepEqual(captured.rows.map((r) => r.section), ['payment', 'option', 'option']);
+  assert.equal(captured.rows[1].itemLabel, OPTION_A_LABEL);
+  assert.equal(captured.rows[2].itemLabel, OPTION_B_LABEL);
+});
+
+test('option itemLabel is whitespace-normalized, capped at 200, and never borrowed from an earlier table', () => {
+  const long = `합성 품목 ${'가'.repeat(260)}`;
+  const captured = captureSujainTables('payment', fakeDocument([
+    h('div', { className: 'ect_item', text: long }),
+    sujainTable('별도 계약 품목', [OPTION_ROWS[0]], { emptyRowsBetween: false }),
+    // 두 번째 옵션 표 앞에 ect_item 이 없으면 앞 표의 품목을 빌려 오지 않는다.
+    sujainTable('별도 계약 품목', [OPTION_ROWS[1]], { emptyRowsBetween: false }),
+  ]));
+  assert.equal(captured.rows[0].itemLabel.length, 200);
+  assert.equal(captured.rows[0].itemLabel.startsWith('합성 품목 가'), true);
+  assert.equal(captured.rows[1].section, 'option');
+  assert.equal(Object.hasOwn(captured.rows[1], 'itemLabel'), false);
+});
+
+test('a table inside a hidden ancestor is counted but not read', () => {
+  const captured = captureSujainTables('payment', fakeDocument([
+    sujainContactLayer(),
+    h('div', { hidden: true }, [sujainTable('아파트 분양대금', [PAYMENT_ROWS[0]])]),
+  ]));
+  assert.equal(captured.tableCount, 2);
+  assert.deepEqual(captured.tableHeaders, []);
+  assert.deepEqual(captured.tables, []);
+  assert.deepEqual(captured.rows, []);
 });

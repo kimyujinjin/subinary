@@ -94,7 +94,8 @@ test('sanitizeRunnerErrorName keeps letters-only capped tokens and drops message
 test('sanitizeRunnerStage allowlists runner stages only', () => {
   assert.equal(sanitizeRunnerStage('login'), 'login');
   assert.equal(sanitizeRunnerStage('scrape_payment'), 'scrape_payment');
-  assert.equal(sanitizeRunnerStage('scrape_unit_items'), 'scrape_unit_items');
+  // 세대 내 설치 품목 단계는 없어졌다 — 러너는 더 내보내지 않는다.
+  assert.equal(sanitizeRunnerStage('scrape_unit_items'), null);
   assert.equal(sanitizeRunnerStage('launch'), 'launch');
   assert.equal(sanitizeRunnerStage('context'), 'context');
   assert.equal(sanitizeRunnerStage('not-a-stage'), null);
@@ -186,9 +187,13 @@ test('layout sanitizer keeps header texts and counts, drops cell values and URL-
       iframeCount: 1,
       iframePaths: ['https://www.sujain.co.kr/embed?token=SECRET_IFRAME#x'],
       pagePath: 'https://www.sujain.co.kr/mypage/payment?session=SECRET_TOKEN#top',
+      searched: true,
+      units: 250,
+      unitValue: 'synthetic-unit-1',
       cells: ['합성 회원', '000-0000-0000'],
       rows: [{ cells: ['이름', '합성 회원'] }],
     },
+    // 옛 러너의 세대 내 설치 품목 페이지는 더 허용하지 않는다.
     'unit-items': {
       tableCount: 1,
       tableHeaders: [['품목', '금액'], ['https://leak.example/?id=1']],
@@ -221,24 +226,8 @@ test('layout sanitizer keeps header texts and counts, drops cell values and URL-
       iframeCount: 1,
       iframePaths: ['https://www.sujain.co.kr/embed'],
       pagePath: 'https://www.sujain.co.kr/mypage/payment',
-    },
-    'unit-items': {
-      tableCount: 1,
-      tableHeaders: [['품목', '금액'], []],
-      rawRowCount: 1,
-      eligibleRowCount: 1,
-      tables: [{ rawRowCount: 1, preSkipRowCount: 2, formControlCount: 3 }],
-      outsideTableFormControlCount: 0,
-      outsideTableFormControls: {
-        visibleInput: 0,
-        visibleSelect: 0,
-        visibleTextarea: 0,
-        hidden: 0,
-        other: 0,
-      },
-      iframeCount: 0,
-      iframePaths: [],
-      pagePath: 'https://www.sujain.co.kr/mypage/unit-items',
+      searched: 1,
+      units: 100,
     },
   });
   const text = JSON.stringify(sanitized);
@@ -250,6 +239,8 @@ test('layout sanitizer keeps header texts and counts, drops cell values and URL-
   assert.equal(text.includes('?session='), false);
   assert.equal(text.includes('secretType'), false);
   assert.equal(text.includes('password'), false);
+  assert.equal(text.includes('synthetic-unit'), false);
+  assert.equal(text.includes('unit-items'), false);
 
   const page = sanitizePageLayoutDiagnostic({
     sourcePage: 'payment',
@@ -265,6 +256,9 @@ test('layout sanitizer keeps header texts and counts, drops cell values and URL-
     cells: ['합성 항목 A', '500,000'],
   });
   assert.equal(Object.hasOwn(page, 'cells'), false);
+  // searched/units 가 없으면 0 으로 둔다.
+  assert.equal(page.searched, 0);
+  assert.equal(page.units, 0);
   assert.deepEqual(page.outsideTableFormControls, {
     visibleInput: 0,
     visibleSelect: 0,
@@ -275,13 +269,9 @@ test('layout sanitizer keeps header texts and counts, drops cell values and URL-
   assert.equal(JSON.stringify(page).includes('합성 항목 A'), false);
 
   const fragment = formatLayoutWarnFragment(sanitized);
-  assert.match(
+  assert.equal(
     fragment,
-    /^layout=payment:t=1;h=\[항목\|내용\];raw=2;eligible=0;tables=\[r=2,p=3,i=0\];out=2\[vi=1,vs=1,vt=0,h=0,o=0\];ifr=1;path=https:\/\/www\.sujain\.co\.kr\/mypage\/payment\|/,
-  );
-  assert.match(
-    fragment,
-    /unit-items:t=1;h=\[품목\|금액\],\[\];raw=1;eligible=1;tables=\[r=1,p=2,i=3\];out=0\[vi=0,vs=0,vt=0,h=0,o=0\];ifr=0;path=https:\/\/www\.sujain\.co\.kr\/mypage\/unit-items/,
+    'layout=payment:t=1;searched=1;units=100;h=[항목|내용];raw=2;eligible=0;tables=[r=2,p=3,i=0];out=2[vi=1,vs=1,vt=0,h=0,o=0];ifr=1;path=https://www.sujain.co.kr/mypage/payment',
   );
   assert.equal(fragment.includes('합성 회원'), false);
   assert.equal(fragment.includes('SECRET_TOKEN'), false);

@@ -35,13 +35,19 @@ const failureReasonSchema = z.enum([
 /** Match tools/sujain-web-runner collect.mjs caps and responseSchema below. */
 export const SUJAIN_CELL_MAX = 200;
 export const SUJAIN_HEADER_MAX = 100;
+/** 별도 계약 품목 표 앞 품목 이름 목록(div.ect_item) — runner collect.mjs SUJAIN_ITEM_LABEL_MAX. */
+export const SUJAIN_ITEM_LABEL_MAX = 200;
 /** Must fit schema-max JSON after cell/header truncation (100×20×200 + headers). */
 export const SUJAIN_STDOUT_MAX_BYTES = 1_048_576;
 
 /** Letters-only capped error.name from the runner — never message/stack. */
 const runnerErrorNameSchema = z.string().regex(/^[A-Za-z]{1,40}$/u);
 
-/** Allowlisted runner stage tokens — never URLs or page path text. */
+/**
+ * Allowlisted runner stage tokens — never URLs or page path text.
+ * 지금 러너는 scrape_unit_items 를 내보내지 않지만(세대 내 설치 품목은 입주 뒤에만 열린다),
+ * 이미지 교체 사이 옛 러너 응답이 typed 오류로 남도록 허용 목록에는 둔다.
+ */
 const runnerStageSchema = z.enum([
   'stdin',
   'validate',
@@ -94,10 +100,15 @@ const pageLayoutSchema = z.object({
   iframePaths: z.array(layoutPagePathSchema).max(20),
   /** Final scrape URL as origin+pathname (or null when unavailable). */
   pagePath: layoutPagePathSchema.nullable(),
+  /** 조회 버튼을 눌렀는지(0/1). 옛 러너는 보내지 않는다. */
+  searched: z.union([z.literal(0), z.literal(1)]).optional(),
+  /** 단지 select 의 실제 세대 option 개수 — 단지 코드·동호수 글자는 받지 않는다. 옛 러너는 보내지 않는다. */
+  units: z.number().int().min(0).max(100).optional(),
 }).strict();
 
 const layoutDiagnosticsSchema = z.object({
   payment: pageLayoutSchema.optional(),
+  /** 옛 러너(세대 내 설치 품목 화면) 호환. 지금 러너는 payment 만 보낸다. */
   'unit-items': pageLayoutSchema.optional(),
 }).strict();
 
@@ -115,6 +126,9 @@ const rowSchema = z.object({
   cells: z.array(z.string().max(SUJAIN_CELL_MAX)).max(20),
   headers: z.array(z.string().max(SUJAIN_HEADER_MAX)).max(20).optional(),
   sourcePage: z.enum(['payment', 'unit-items']),
+  /** 표 caption 으로 정한 구역(아파트 분양대금 / 별도 계약 품목). 없으면 옛 러너 — payment. */
+  section: z.enum(['payment', 'option']).optional(),
+  itemLabel: z.string().max(SUJAIN_ITEM_LABEL_MAX).optional(),
 }).strict();
 
 const responseSchema = z.discriminatedUnion('ok', [
@@ -167,7 +181,20 @@ export function coerceSujainRunnerRows(rows: unknown): SujainRawRow[] | null {
         headers.push(clipped);
       }
     }
-    out.push({ cells, headers, sourcePage: record.sourcePage });
+    if (record.section !== undefined && record.section !== 'payment' && record.section !== 'option') return null;
+    let itemLabel: string | undefined;
+    if (record.itemLabel !== undefined) {
+      const clipped = clipText(record.itemLabel, SUJAIN_ITEM_LABEL_MAX);
+      if (clipped === null) return null;
+      if (clipped) itemLabel = clipped;
+    }
+    out.push({
+      cells,
+      headers,
+      sourcePage: record.sourcePage,
+      ...(record.section !== undefined ? { section: record.section } : {}),
+      ...(itemLabel !== undefined ? { itemLabel } : {}),
+    });
   }
   return out;
 }
@@ -271,8 +298,11 @@ export function formatLayoutWarnFragment(
       entry.outsideTableFormControlCount,
       entry.outsideTableFormControls,
     );
+    // searched/units 는 지금 러너만 보낸다 — 옛 러너 응답이면 토큰을 빼서 예전 줄 모양을 지킨다.
+    const searchText = entry.searched !== undefined ? `;searched=${entry.searched}` : '';
+    const unitsText = entry.units !== undefined ? `;units=${entry.units}` : '';
     parts.push(
-      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount};tables=${tableText || '[]'};${outText};ifr=${entry.iframeCount};path=${pathText}`,
+      `${page}:t=${entry.tableCount}${searchText}${unitsText};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount};tables=${tableText || '[]'};${outText};ifr=${entry.iframeCount};path=${pathText}`,
     );
   }
   if (parts.length === 0) return '';

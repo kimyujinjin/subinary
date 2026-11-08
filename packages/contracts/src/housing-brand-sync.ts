@@ -51,6 +51,8 @@ export const housingBrandSyncErrorSchema = z.enum([
   'runtime_unavailable',
   'operation_unknown',
   'not_connected',
+  /** 수자인 'My 분양단지'에 등록된 세대가 없어 분양대금조회에서 고를 단지가 없다. */
+  'unit_not_registered',
 ]);
 export type HousingBrandSyncError = z.infer<typeof housingBrandSyncErrorSchema>;
 

@@ -126,6 +126,9 @@ export function publicErrorMessage(code: string, reason: string | null = null): 
     case 'unsupported_layout':
       // Login chrome failures and post-login pages with no readable table after waiting.
       return '수자인 화면 구성을 읽지 못했어요. 공식 페이지 레이아웃이 바뀌었을 수 있어요.';
+    case 'unit_not_registered':
+      // 분양대금조회의 단지 select 에 고를 세대가 없다 — 사이트에서 사용자가 먼저 등록해야 풀린다.
+      return '수자인 사이트의 My 분양단지에 등록된 세대가 없어요. 사이트에서 먼저 등록해 주세요.';
     case 'runtime_unavailable':
       return reason === 'chromium_launch_failed'
         ? '신축 조회 브라우저를 시작하지 못했어요.'

@@ -7,6 +7,8 @@ export const ERRORS = new Set([
   'unsupported_layout',
   'runtime_unavailable',
   'operation_unknown',
+  // 분양대금조회의 단지 select(#preInsp)에 자리표시 말고 고를 세대가 없다 = 'My 분양단지' 미등록.
+  'unit_not_registered',
 ]);
 
 export class SujainReadError extends Error {
@@ -24,8 +26,9 @@ export const RUNNER_STAGES = new Set([
   'launch',
   'context',
   'login',
+  // 세대 내 설치 품목(/mypage/unit-items)은 입주 뒤에만 열려 읽지 않는다. 이 러너는
+  // scrape_unit_items 를 더 내보내지 않는다(API 허용 목록에는 옛 러너 호환으로 남아 있다).
   'scrape_payment',
-  'scrape_unit_items',
 ]);
 
 /**
@@ -45,7 +48,9 @@ export function sanitizeRunnerStage(stage) {
   return typeof stage === 'string' && RUNNER_STAGES.has(stage) ? stage : null;
 }
 
-const LAYOUT_PAGES = new Set(['payment', 'unit-items']);
+/** 분양대금조회 한 화면만 읽는다(옵션 대금도 같은 화면의 「별도 계약 품목」 표에 있다). */
+const LAYOUT_PAGES = new Set(['payment']);
+const LAYOUT_UNITS_MAX = 100;
 const LAYOUT_HEADER_MAX = 100;
 const LAYOUT_TABLE_MAX = 20;
 const LAYOUT_HEADER_CELLS_MAX = 20;
@@ -140,8 +145,9 @@ export function sanitizeOutsideTableFormControls(value) {
  * One scrape page: tableCount + header texts + raw/eligible row counts +
  * per-table raw/pre-skip/form-control counts + outside-table input count +
  * outside-table visibility/kind breakdown + iframe count/paths + sanitized
- * page path. Never includes cell values, form-control values, query strings,
- * or arbitrary extra keys.
+ * page path + searched(0/1, 조회 버튼을 눌렀는지) + units(단지 select 의 실제
+ * option 개수). Never includes cell values, form-control values, option
+ * values/text (단지 코드·동호수), query strings, or arbitrary extra keys.
  */
 export function sanitizePageLayoutDiagnostic(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -173,11 +179,13 @@ export function sanitizePageLayoutDiagnostic(value) {
     iframeCount: sanitizeNonNegInt(value.iframeCount, 100),
     iframePaths: sanitizeIframePaths(value.iframePaths),
     pagePath: sanitizeLayoutPagePath(value.pagePath),
+    searched: value.searched === 1 || value.searched === true ? 1 : 0,
+    units: sanitizeNonNegInt(value.units, LAYOUT_UNITS_MAX),
   };
 }
 
 /**
- * `{ payment?: PageLayout, 'unit-items'?: PageLayout }` with allowlisted keys only.
+ * `{ payment?: PageLayout }` with allowlisted keys only.
  */
 export function sanitizeLayoutDiagnostics(layout) {
   if (!layout || typeof layout !== 'object' || Array.isArray(layout)) return null;
@@ -202,6 +210,8 @@ export function sanitizeLayoutDiagnostics(layout) {
       iframeCount: sanitized.iframeCount,
       iframePaths: sanitized.iframePaths,
       pagePath: sanitized.pagePath,
+      searched: sanitized.searched,
+      units: sanitized.units,
     };
   }
   return Object.keys(out).length > 0 ? out : null;
@@ -219,13 +229,13 @@ export function formatOutsideTableFormControlsFragment(count, breakdown) {
 /**
  * Compact warn-line fragment. Header texts + counts + sanitized path only —
  * never cell values, form values, or query strings.
- * Example: layout=payment:t=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,p=3,i=0];out=0[vi=0,vs=0,vt=0,h=0,o=0];ifr=0;path=https://www.sujain.co.kr/mypage/payment|unit-items:…
+ * Example: layout=payment:t=1;searched=1;units=1;h=[항목|내용];raw=2;eligible=0;tables=[r=2,p=3,i=0];out=0[vi=0,vs=0,vt=0,h=0,o=0];ifr=0;path=https://www.sujain.co.kr/mypage/payment
  */
 export function formatLayoutWarnFragment(layout) {
   const sanitized = sanitizeLayoutDiagnostics(layout);
   if (!sanitized) return '';
   const parts = [];
-  for (const page of ['payment', 'unit-items']) {
+  for (const page of LAYOUT_PAGES) {
     const entry = sanitized[page];
     if (!entry) continue;
     const headerText = entry.tableHeaders
@@ -240,7 +250,7 @@ export function formatLayoutWarnFragment(layout) {
       entry.outsideTableFormControls,
     );
     parts.push(
-      `${page}:t=${entry.tableCount};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount};tables=${tableText || '[]'};${outText};ifr=${entry.iframeCount};path=${pathText}`,
+      `${page}:t=${entry.tableCount};searched=${entry.searched};units=${entry.units};h=${headerText || '[]'};raw=${entry.rawRowCount};eligible=${entry.eligibleRowCount};tables=${tableText || '[]'};${outText};ifr=${entry.iframeCount};path=${pathText}`,
     );
   }
   if (parts.length === 0) return '';
